@@ -1,6 +1,6 @@
 # Story 2.4: PerimeterGuard PII Filtering & Agency Tier Enforcement
 
-Status: review
+Status: done
 
 ## Story
 
@@ -61,3 +61,5 @@ Antigravity (Claude 3.5 Sonnet)
 - Enhanced `PerimeterGuard` to handle both security (redaction) and policy (tiers).
 - Redacted payload is now passed to all processors, ensuring zero-trust by default.
 - ✅ All 34 tests passing across agent package.
+- **Code Review Fix (AI):** Added missing `topic` column to tasks table in migration `20260118000000`.
+- **Code Review Fix (AI):** Synced `database.types.ts` with schema changes.

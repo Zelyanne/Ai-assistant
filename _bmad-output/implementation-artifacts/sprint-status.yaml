@@ -52,7 +52,7 @@ development_status:
   2-1-agent-controller-initialization-langgraph-foundation: done
   2-2-task-processor-with-domain-action-routing: done
   2-3-mcp-sdk-integration-with-google-workspace-server: done
-  2-4-perimeterguard-pii-filtering-agency-tier-enforcement: review
+  2-4-perimeterguard-pii-filtering-agency-tier-enforcement: done
   2-5-llm-reasoning-integration-openai-anthropic: backlog
   2-6-immutable-audit-logging-to-agent-activity-log: backlog
   2-7-protocol-execution-engine: backlog
