@@ -1,0 +1,17 @@
+{
+  "name": "ai-assistant",
+  "private": true,
+  "description": "Multi-tenant AI Assistant Monorepo",
+  "scripts": {
+    "dev": "pnpm -r --filter \"./apps/*\" dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@vitest/coverage-v8": "^4.0.17",
+    "supabase": "^2.72.4",
+    "typescript": "^5.4.0",
+    "vitest": "^4.0.17"
+  }
+}

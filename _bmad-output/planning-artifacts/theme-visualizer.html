@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ai Assistant Visual Foundation - Theme Explorer</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #f8fafc;
+            --text-color: #0f172a;
+            --primary: #0f172a;
+            --primary-foreground: #ffffff;
+            --card-bg: #ffffff;
+            --card-border: #e2e8f0;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --info: #3b82f6;
+            --radius: 12px;
+        }
+
+        /* Theme 1: Executive Calm */
+        .theme-calm {
+            --bg-color: #f1f5f9;
+            --text-color: #1e293b;
+            --primary: #334155;
+            --primary-foreground: #f8fafc;
+            --card-bg: #ffffff;
+            --card-border: #cbd5e1;
+            --success: #059669;
+            --warning: #d97706;
+            --info: #2563eb;
+            --accent: #64748b;
+        }
+
+        /* Theme 2: Momentum Pulse (Expressive/MUI3) */
+        .theme-pulse {
+            --bg-color: #fefce8; /* Soft buttery yellow base */
+            --text-color: #422006;
+            --primary: #854d0e;
+            --primary-foreground: #fefce8;
+            --card-bg: #ffffff;
+            --card-border: #fef08a;
+            --success: #166534;
+            --warning: #9a3412;
+            --info: #1e40af;
+            --accent: #eab308;
+            --radius: 24px; /* More rounded Duolingo feel */
+        }
+
+        /* Theme 3: Modern Minimalist */
+        .theme-minimal {
+            --bg-color: #ffffff;
+            --text-color: #000000;
+            --primary: #000000;
+            --primary-foreground: #ffffff;
+            --card-bg: #fafafa;
+            --card-border: #eeeeee;
+            --success: #00ff00;
+            --warning: #ffff00;
+            --info: #0000ff;
+            --accent: #888888;
+            --radius: 0px; /* Sharp and precise */
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 40px;
+            transition: all 0.3s ease;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        header {
+            margin-bottom: 40px;
+            border-bottom: 1px solid var(--card-border);
+            padding-bottom: 20px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 40px;
+        }
+
+        button {
+            padding: 10px 20px;
+            border: 1px solid var(--card-border);
+            background: var(--card-bg);
+            color: var(--text-color);
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+
+        button.active {
+            background: var(--primary);
+            color: var(--primary-foreground);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 24px;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius);
+            padding: 24px;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .status-success { background: var(--success); }
+        .status-warning { background: var(--warning); }
+        .status-info { background: var(--info); }
+
+        h1, h2, h3 { margin: 0; font-family: 'Inter', sans-serif; }
+        p { line-height: 1.6; color: var(--accent, #64748b); }
+
+        .brief-item {
+            padding: 12px;
+            border-radius: 8px;
+            margin-top: 12px;
+            background: rgba(0,0,0,0.02);
+            font-size: 0.9rem;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: var(--primary-foreground);
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            margin-top: 20px;
+            width: 100%;
+        }
+
+        .token-swatch {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .swatch {
+            width: 30px;
+            height: 30px;
+            border-radius: 4px;
+            border: 1px solid rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body class="theme-calm">
+    <div class="container">
+        <header>
+            <h1>Ai Assistant: Visual Foundation</h1>
+            <p>Exploring themes for "Proactive Calm" and "Total Cognitive Offloading"</p>
+        </header>
+
+        <div class="controls">
+            <button onclick="setTheme('theme-calm', this)" class="active">1. Executive Calm</button>
+            <button onclick="setTheme('theme-pulse', this)">2. Momentum Pulse</button>
+            <button onclick="setTheme('theme-minimal', this)">3. Modern Minimalist</button>
+        </div>
+
+        <div class="grid">
+            <!-- Morning Brief Card: Success -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="status-dot status-success"></div>
+                    <h3>Silent Win</h3>
+                </div>
+                <p><strong>NDA Request Resolved</strong></p>
+                <p>The legal query from 'Venture Capital X' was handled autonomously.</p>
+                <div class="brief-item">
+                    <em>Reasoning:</em> Tier 1 topic, 98% confidence match with your Legal Protocol.
+                </div>
+                <div class="token-swatch">
+                    <div class="swatch" style="background: var(--primary)"></div>
+                    <div class="swatch" style="background: var(--success)"></div>
+                    <div class="swatch" style="background: var(--bg-color)"></div>
+                </div>
+            </div>
+
+            <!-- Morning Brief Card: Warning -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="status-dot status-warning"></div>
+                    <h3>Escalation Needed</h3>
+                </div>
+                <p><strong>Partnership Proposal</strong></p>
+                <p>Incoming request from 'Globex Corp' exceeds current agency tier.</p>
+                <button class="btn-primary">View & Decide</button>
+            </div>
+
+            <!-- Morning Brief Card: Info -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="status-dot status-info"></div>
+                    <h3>Weekly Momentum</h3>
+                </div>
+                <p><strong>5.2 Hours Reclaimed</strong></p>
+                <p>You are on track to exceed your strategic focus goal this week!</p>
+                <div class="brief-item">
+                    "Doing great! Your Chief of Staff has your back."
+                </div>
+            </div>
+        </div>
+
+        <section style="margin-top: 60px;">
+            <h2>Typography System</h2>
+            <p style="font-family: 'Inter';">Primary: <strong>Inter</strong> (Clean, Precise, Modern)</p>
+            <p style="font-family: 'Roboto';">Secondary: <strong>Roboto</strong> (Reliable, Familiar, Technical)</p>
+            <div style="margin-top: 20px;">
+                <h1>Heading 1 - The Morning Brief</h1>
+                <h2>Heading 2 - Section Title</h2>
+                <p>Body text is designed for long-term readability and calm focus. We use generous line heights and balanced contrast ratios.</p>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        function setTheme(themeName, btn) {
+            document.body.className = themeName;
+            document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        }
+    </script>
+</body>
+</html>

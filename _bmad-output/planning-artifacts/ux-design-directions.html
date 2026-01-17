@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ai Assistant Design Directions Showcase</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #F1F5F9;
+            --text: #1E293B;
+            --primary: #334155;
+            --primary-fg: #F8FAF6;
+            --card-bg: #FFFFFF;
+            --card-border: #CBD5E1;
+            --success: #059669;
+            --warning: #D97706;
+            --info: #2563EB;
+            --accent: #64748B;
+            --radius: 12px;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 0;
+            overflow-x: hidden;
+        }
+
+        .showcase-header {
+            background: var(--primary);
+            color: var(--primary-fg);
+            padding: 40px 20px;
+            text-align: center;
+        }
+
+        .showcase-nav {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            background: #fff;
+            padding: 15px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            flex-wrap: wrap;
+        }
+
+        .nav-btn {
+            padding: 8px 16px;
+            border: 1px solid var(--card-border);
+            background: white;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .nav-btn.active {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+
+        .direction-section {
+            padding: 60px 20px;
+            display: none;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .direction-section.active {
+            display: block;
+            animation: fadeIn 0.4s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .mockup-container {
+            background: var(--bg);
+            border: 12px solid #334155;
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            min-height: 600px;
+            position: relative;
+        }
+
+        /* Mockup Common Elements */
+        .app-shell {
+            display: flex;
+            height: 600px;
+        }
+
+        .sidebar {
+            width: 240px;
+            background: #F8FAFC;
+            border-right: 1px solid #E2E8F0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .main-content {
+            flex: 1;
+            padding: 32px;
+            overflow-y: auto;
+            background: white;
+        }
+
+        .brief-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+        }
+
+        .ui-card {
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius);
+            padding: 20px;
+            background: white;
+            transition: transform 0.2s;
+        }
+
+        .ui-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0,0,0,0.05);
+        }
+
+        .ui-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .dot { width: 8px; height: 8px; border-radius: 50%; }
+        .dot-success { background: var(--success); }
+        .dot-warning { background: var(--warning); }
+        .dot-info { background: var(--info); }
+
+        /* Direction 1: The Structured Hub */
+        .dir-1 .ui-card { border-left: 4px solid var(--primary); }
+
+        /* Direction 2: The Conversational Partner */
+        .dir-2 .main-content { background: #F1F5F9; display: flex; flex-direction: column; }
+        .chat-area { flex: 1; display: flex; flex-direction: column; gap: 15px; }
+        .bubble { padding: 12px 16px; border-radius: 16px; max-width: 80%; }
+        .bubble-ai { background: white; border: 1px solid #E2E8F0; align-self: flex-start; }
+        .bubble-user { background: var(--primary); color: white; align-self: flex-end; }
+
+        /* Direction 3: The Outcome Board (Spatial) */
+        .dir-3 .main-content { background: #f0f2f5; }
+        .board-column { background: #EBEDF0; padding: 15px; border-radius: 8px; min-width: 250px; }
+
+        /* Direction 4: The Minimalist Pulse */
+        .dir-4 .main-content { padding: 60px 120px; }
+        .pulse-item { border-bottom: 1px solid #EEE; padding: 20px 0; display: flex; justify-content: space-between; align-items: center; }
+
+        .desc {
+            margin-top: 20px;
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid var(--info);
+        }
+    </style>
+</head>
+<body>
+
+<div class="showcase-header">
+    <h1>Ai Assistant Design Directions</h1>
+    <p>Exploring the "Executive Calm" aesthetic for Sarah's digital Chief of Staff.</p>
+</div>
+
+<div class="showcase-nav">
+    <button class="nav-btn active" onclick="showDir(1, this)">1. Structured Hub</button>
+    <button class="nav-btn" onclick="showDir(2, this)">2. Conversational Partner</button>
+    <button class="nav-btn" onclick="showDir(3, this)">3. Outcome Board</button>
+    <button class="nav-btn" onclick="showDir(4, this)">4. Minimalist Pulse</button>
+</div>
+
+<!-- Direction 1 -->
+<div id="dir-1" class="direction-section dir-1 active">
+    <h2>Direction 1: The Structured Hub</h2>
+    <p>A classic, high-efficiency dashboard layout focused on organizational clarity and status tracking.</p>
+    <div class="mockup-container">
+        <div class="app-shell">
+            <div class="sidebar">
+                <div style="height:30px; background:#E2E8F0; border-radius:4px; margin-bottom:20px;"></div>
+                <div style="height:20px; background:#E2E8F0; border-radius:4px; width:70%;"></div>
+                <div style="height:20px; background:#E2E8F0; border-radius:4px; width:60%;"></div>
+                <div style="height:20px; background:#E2E8F0; border-radius:4px; width:80%;"></div>
+            </div>
+            <div class="main-content">
+                <h1 style="margin-bottom:30px;">Morning Brief - Friday, Jan 9</h1>
+                <div class="brief-grid">
+                    <div class="ui-card">
+                        <div class="ui-header" style="color:var(--success)"><div class="dot dot-success"></div> Silent Win</div>
+                        <h3>NDA Resolved</h3>
+                        <p style="font-size:14px;">Handled autonomously with Venture Capital X.</p>
+                    </div>
+                    <div class="ui-card">
+                        <div class="ui-header" style="color:var(--warning)"><div class="dot dot-warning"></div> Escalation</div>
+                        <h3>Globex Proposal</h3>
+                        <p style="font-size:14px;">Partnership request requires tier approval.</p>
+                    </div>
+                    <div class="ui-card">
+                        <div class="ui-header" style="color:var(--info)"><div class="dot dot-info"></div> Insight</div>
+                        <h3>5.2 Hours Saved</h3>
+                        <p style="font-size:14px;">You are ahead of your strategic goal.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="desc">
+        <strong>Key Features:</strong> Persistent sidebar for navigation, structured outcome cards, clear hierarchy of information.
+    </div>
+</div>
+
+<!-- Direction 2 -->
+<div id="dir-2" class="direction-section dir-2">
+    <h2>Direction 2: The Conversational Partner</h2>
+    <p>A layout that leans into the 'Chief of Staff' dialogue, emphasizing natural language and relationship.</p>
+    <div class="mockup-container">
+        <div class="app-shell">
+            <div class="main-content">
+                <div class="chat-area">
+                    <div class="bubble bubble-ai">
+                        <strong>Ai Assistant:</strong> Good morning, Sarah. I've prepared your brief. We had a productive night—I resolved that NDA issue for you.
+                    </div>
+                    <div class="bubble bubble-ai">
+                        I also received a partnership proposal from Globex Corp. It's a bit complex, so I've flagged it for your review. How would you like to handle it?
+                    </div>
+                    <div class="bubble bubble-user">
+                        Thanks. Let's send a standard info request to Globex first.
+                    </div>
+                    <div class="bubble bubble-ai">
+                        Done. I'll add that to our momentum log. Anything else?
+                    </div>
+                </div>
+                <div style="margin-top:20px; padding:15px; border:1px solid #CBD5E1; border-radius:24px; background:white; color:#94A3B8;">
+                    Type a command or request...
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="desc">
+        <strong>Key Features:</strong> Focus on chat history, conversational context, and effortless text-based delegation.
+    </div>
+</div>
+
+<!-- Direction 3 -->
+<div id="dir-3" class="direction-section dir-3">
+    <h2>Direction 3: The Outcome Board</h2>
+    <p>A spatial, Trello-inspired approach focusing on the movement of tasks from "Pending" to "Outcome."</p>
+    <div class="mockup-container">
+        <div class="app-shell">
+            <div class="main-content" style="display:flex; gap:20px;">
+                <div class="board-column">
+                    <h4 style="margin:0 0 15px 0">RESOLVED</h4>
+                    <div class="ui-card" style="margin-bottom:10px;">
+                        <div class="ui-header" style="color:var(--success)">Silent Win</div>
+                        <p>NDA Request</p>
+                    </div>
+                    <div class="ui-card">
+                        <div class="ui-header" style="color:var(--success)">Silent Win</div>
+                        <p>Weekly Sync Cancelled</p>
+                    </div>
+                </div>
+                <div class="board-column">
+                    <h4 style="margin:0 0 15px 0">REQUIRES ACTION</h4>
+                    <div class="ui-card" style="border-top:4px solid var(--warning)">
+                        <div class="ui-header" style="color:var(--warning)">Escalation</div>
+                        <p>Globex Partnership</p>
+                    </div>
+                </div>
+                <div class="board-column">
+                    <h4 style="margin:0 0 15px 0">IN PROGRESS</h4>
+                    <div class="ui-card">
+                        <div class="ui-header" style="color:var(--info)">Nudging</div>
+                        <p>Chasing Dev Report</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="desc">
+        <strong>Key Features:</strong> Visualizes business momentum spatially, clear separation of resolved vs. pending tasks.
+    </div>
+</div>
+
+<!-- Direction 4 -->
+<div id="dir-4" class="direction-section dir-4">
+    <h2>Direction 4: The Minimalist Pulse</h2>
+    <p>A high-precision, low-noise interface for the busiest executives who want only the critical signals.</p>
+    <div class="mockup-container">
+        <div class="main-content">
+            <h1 style="font-weight:400; font-size:42px; margin-bottom:60px;">Good Morning, Sarah.</h1>
+            <div class="pulse-item">
+                <div>
+                    <span style="color:var(--success); font-weight:600;">Win</span>
+                    <span style="margin-left:20px;">Venture Capital X NDA resolved autonomously.</span>
+                </div>
+                <span style="color:#94A3B8; font-size:12px;">08:14 AM</span>
+            </div>
+            <div class="pulse-item">
+                <div>
+                    <span style="color:var(--warning); font-weight:600;">Action</span>
+                    <span style="margin-left:20px;">Globex Partnership proposal requires review.</span>
+                </div>
+                <button style="border:none; background:none; color:var(--info); font-weight:600; cursor:pointer;">Decision Needed</button>
+            </div>
+            <div class="pulse-item">
+                <div>
+                    <span style="color:var(--info); font-weight:600;">Momentum</span>
+                    <span style="margin-left:20px;">You've reclaimed 5.2 hours this week.</span>
+                </div>
+                <span style="color:#94A3B8; font-size:12px;">Update</span>
+            </div>
+        </div>
+    </div>
+    <div class="desc">
+        <strong>Key Features:</strong> Large typography, single-column focus, absolute minimum UI noise.
+    </div>
+</div>
+
+<script>
+    function showDir(n, btn) {
+        document.querySelectorAll('.direction-section').forEach(s => s.classList.remove('active'));
+        document.getElementById('dir-' + n).classList.add('active');
+        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+    }
+</script>
+
+</body>
+</html>
