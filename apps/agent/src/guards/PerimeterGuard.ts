@@ -1,3 +1,11 @@
+import { AgencyTier } from '@ai-assistant/shared';
+
+export interface FilterResult {
+  redactedText: string;
+  isEscalated: boolean;
+  reason?: string;
+}
+
 export class PerimeterGuard {
   private placeholderMap: Map<string, string> = new Map();
   private reverseMap: Map<string, string> = new Map();
@@ -10,11 +18,40 @@ export class PerimeterGuard {
   };
 
   /**
+   * Filters data for LLM consumption: redacts PII and enforces agency tier boundaries.
+   * 
+   * @param text The text to filter
+   * @param agencyTier The authorized agency tier for this topic
+   * @param requiredTier The minimum tier required for the intended action (e.g. 'Public' for autonomous execution)
+   * @returns FilterResult containing redacted text and escalation status
+   */
+  public filter(text: string, agencyTier: AgencyTier, requiredTier: AgencyTier = 'Public'): FilterResult {
+    // 1. Check Agency Tier Enforcement
+    const tierPriority: Record<AgencyTier, number> = { 'Public': 2, 'Controlled': 1, 'Restricted': 0 };
+    
+    if (tierPriority[agencyTier] < tierPriority[requiredTier]) {
+      return {
+        redactedText: text, // Or maybe return empty?
+        isEscalated: true,
+        reason: `Action requires ${requiredTier} tier, but topic is ${agencyTier}`
+      };
+    }
+
+    // 2. Redact PII
+    const redacted = this.redactPII(text);
+
+    return {
+      redactedText: redacted,
+      isEscalated: false
+    };
+  }
+
+  /**
    * Redacts Personally Identifiable Information (PII) from the given text.
    * Replaces sensitive data with semantic placeholders like [NAME_1], [EMAIL_1], etc.
    * 
    * @param text The text to redact
-   * @returns An object containing the redacted text and the count of entities replaced
+   * @returns The redacted text
    */
   public redactPII(text: string): string {
     return this.redactPIIWithMetadata(text).redactedText;

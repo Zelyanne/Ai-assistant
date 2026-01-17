@@ -1,32 +1,49 @@
 import { BaseProcessor, ProcessorResult } from './BaseProcessor.js';
 import { Task } from '@ai-assistant/shared';
 import { supabase } from "../services/supabase.js";
+import { MCPService } from '../services/mcp.js';
 
 /**
- * Stub processor for calendar event creation.
+ * Processor for calendar event creation using MCP.
  */
 export class CalendarCreateProcessor extends BaseProcessor {
+  private mcpService: MCPService;
+
+  constructor() {
+    super();
+    this.mcpService = new MCPService();
+  }
+
   async process(task: Task): Promise<ProcessorResult> {
     console.log(`[CalendarCreateProcessor][${task.id}] Processing calendar.create...`);
 
-    // Log action
-    await supabase.from('agent_activity_log').insert({
-      organization_id: task.organization_id,
-      agent_id: 'agent-controller',
-      task_id: task.id,
-      action_taken: 'calendar_create_execution',
-      reasoning_trace: {
-        event: 'processor_started',
-        domain_action: task.domain_action
-      },
-      citations: []
-    });
+    const { summary, description, startTime, endTime, location } = task.payload as any;
 
-    // Stub implementation
+    if (!summary || !startTime || !endTime) {
+      throw new Error('Missing required calendar fields: summary, startTime, or endTime');
+    }
+
+    // Execute MCP tool
+    const result = await this.mcpService.executeTool(
+      task.organization_id,
+      'create_calendar_event',
+      {
+        calendarId: 'primary',
+        event: {
+          summary,
+          description,
+          start: { dateTime: startTime },
+          end: { dateTime: endTime },
+          location
+        }
+      }
+    );
+
     return {
-      message: "Calendar event created (stub)",
+      message: "Calendar event created successfully via MCP",
       task_id: task.id,
-      domain_action: task.domain_action
+      domain_action: task.domain_action,
+      result: result
     };
   }
 }

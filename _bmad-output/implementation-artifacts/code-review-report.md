@@ -1,22 +1,23 @@
 **🔥 CODE REVIEW FINDINGS, Alexis!**
 
-**Story:** `_bmad-output/implementation-artifacts/1-1-multi-tenant-monorepo-initialization.md`
-**Git vs Story Discrepancies:** 2 found
-**Issues Found:** 1 High, 2 Medium, 1 Low
+**Story:** 2-4-perimeterguard-pii-filtering-agency-tier-enforcement.md
+**Git vs Story Discrepancies:** 3 found (Untracked files)
+**Issues Found:** 2 High, 1 Medium, 0 Low
 
 ## 🔴 CRITICAL ISSUES
-- **AC4 Violation (Type Safety)**: `apps/web/tsconfig.app.json` extends `@vue/tsconfig/tsconfig.dom.json`, **NOT** `../../tsconfig.base.json`. The acceptance criterion explicitly demands: "Extend root tsconfig.json in all workspaces." The web app is currently detached from the monorepo's global type governance.
+- **Tasks marked [x] but not actually implemented:** The story claims "- [x] Update `Task` schema to include `topic`", but the migration `20260118000000_agency_perimeters_and_escalation.sql` **DOES NOT** contain the `ALTER TABLE tasks ADD COLUMN topic TEXT;` statement.
+- **Database Schema Mismatch:** The `tasks` table in the database is missing the `topic` column, which is critical for `PerimeterGuard` to function correctly (it defaults to 'General' if missing). `database.types.ts` also confirms this column is missing.
 
 ## 🟡 MEDIUM ISSUES
-- **Undocumented Implementation**: `packages/shared/src/schemas.ts` exists and contains critical Zod schemas (`TaskSchema`, `AgentActivityLogSchema`) but is **missing** from the story's File List.
-- **Incomplete Architecture Compliance**: The Dev Notes require "prepare the `agent_activity_log` type in `shared`". While the Zod schema exists, `database.types.ts` is missing this type because the table hasn't been created yet. This is a "Technical Debt" warning for the next story.
+- **Type Sync:** `packages/shared/src/database.types.ts` is out of sync with `packages/shared/src/schemas.ts`. The schema expects a `topic` field, but the generated types do not have it.
 
 ## 🟢 LOW ISSUES
-- **Reference Confusion**: The story lists `apps/web/tsconfig.json` (which is just a reference file) but the actual logic lives in `tsconfig.app.json`. Clarify this in the File List.
+- None found. Code quality and tests look good otherwise.
 
-I can fix the Critical TSConfig issue and update the documentation for you.
+What should I do with these issues?
 
-Choose:
-1. **Fix them automatically** - I'll reparent the web config and update the story.
-2. **Create action items** - Add to story Tasks.
-3. **Show me details** - See the config diffs.
+1. **Fix them automatically** - I'll update the migration file to add the missing column, update `database.types.ts`, and ensure everything is synced.
+2. **Create action items** - Add to story Tasks/Subtasks for later
+3. **Show me details** - Deep dive into specific issues
+
+Choose [1], [2], or specify which issue to examine:

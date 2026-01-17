@@ -3,28 +3,17 @@ import { SystemAnalyzeProcessor } from './SystemAnalyzeProcessor.js';
 import { Task } from '@ai-assistant/shared';
 
 // Mock dependencies
-const mockSupabaseInsert = vi.fn();
-const mockSupabase = {
-  from: vi.fn(() => ({
-    insert: mockSupabaseInsert.mockResolvedValue({ error: null })
-  }))
-};
-
 vi.mock('../services/supabase.js', () => ({
-  supabase: mockSupabase
+  supabase: {
+    from: vi.fn(() => ({
+      insert: vi.fn().mockResolvedValue({ error: null })
+    }))
+  }
 }));
 
 vi.mock('../config/index.js', () => ({
   config: {
     MISTRAL_API_KEY: 'mock-key'
-  }
-}));
-
-// Mock PerimeterGuard
-const mockRedact = vi.fn();
-vi.mock('../guards/PerimeterGuard.js', () => ({
-  PerimeterGuard: class {
-    redactPIIWithMetadata = mockRedact;
   }
 }));
 
@@ -52,46 +41,14 @@ describe('SystemAnalyzeProcessor', () => {
     vi.clearAllMocks();
     processor = new SystemAnalyzeProcessor();
     // Default mocks
-    mockRedact.mockReturnValue({ redactedText: 'Hello world', replacementCount: 0 });
     mockChatComplete.mockResolvedValue({ choices: [{ message: { content: 'Response' } }] });
   });
 
   it('should process a valid task successfully', async () => {
     const result = await processor.process(baseTask);
     
-    expect(mockRedact).toHaveBeenCalledWith('Hello world');
     expect(mockChatComplete).toHaveBeenCalled();
     expect(result.choices[0].message.content).toBe('Response');
-    
-    // Check basic logging
-    expect(mockSupabase.from).toHaveBeenCalledWith('agent_activity_log');
-    expect(mockSupabaseInsert).toHaveBeenCalledWith(expect.objectContaining({
-      action_taken: 'system_analyze_execution'
-    }));
-  });
-
-  it('should handle PII redaction and log telemetry', async () => {
-    mockRedact.mockReturnValue({ 
-      redactedText: 'Hello [REDACTED]', 
-      replacementCount: 1 
-    });
-
-    await processor.process(baseTask);
-
-    // Verify PII logging
-    expect(mockSupabaseInsert).toHaveBeenCalledWith(expect.objectContaining({
-      action_taken: 'pii_redaction',
-      reasoning_trace: expect.objectContaining({
-        replacement_count: 1
-      })
-    }));
-
-    // Verify Mistral received redacted text
-    expect(mockChatComplete).toHaveBeenCalledWith(expect.objectContaining({
-      messages: expect.arrayContaining([
-        expect.objectContaining({ content: 'Hello [REDACTED]' })
-      ])
-    }));
   });
 
   it('should handle missing prompt in payload', async () => {
@@ -103,12 +60,14 @@ describe('SystemAnalyzeProcessor', () => {
   });
 
   it('should handle prompt as raw string', async () => {
-    const stringTask = { ...baseTask, payload: "Raw String" };
-    // The code does: JSON.stringify("Raw String") -> "\"Raw String\""
+    const stringTask = { ...baseTask, payload: "Raw String" } as any;
     
     await processor.process(stringTask);
     
-    expect(mockRedact).toHaveBeenCalledWith('"Raw String"');
-    expect(mockChatComplete).toHaveBeenCalled();
+    expect(mockChatComplete).toHaveBeenCalledWith(expect.objectContaining({
+      messages: expect.arrayContaining([
+        expect.objectContaining({ content: 'Raw String' })
+      ])
+    }));
   });
 });

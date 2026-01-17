@@ -14,6 +14,41 @@ export type Database = {
   }
   public: {
     Tables: {
+      agency_perimeters: {
+        Row: {
+          created_at: string
+          id: string
+          organization_id: string
+          tier: Database["public"]["Enums"]["agency_tier"]
+          topic_name: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          organization_id: string
+          tier?: Database["public"]["Enums"]["agency_tier"]
+          topic_name: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          organization_id?: string
+          tier?: Database["public"]["Enums"]["agency_tier"]
+          topic_name?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agency_perimeters_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       agent_activity_log: {
         Row: {
           action_taken: string
@@ -113,6 +148,13 @@ export type Database = {
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "calendar_events_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
         ]
       }
       ingested_threads: {
@@ -158,6 +200,13 @@ export type Database = {
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingested_threads_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -275,6 +324,7 @@ export type Database = {
           payload: Json
           result: Json
           status: Database["public"]["Enums"]["task_status"]
+          topic: string | null
           updated_at: string
           user_id: string | null
         }
@@ -286,6 +336,7 @@ export type Database = {
           payload?: Json
           result?: Json
           status?: Database["public"]["Enums"]["task_status"]
+          topic?: string | null
           updated_at?: string
           user_id?: string | null
         }
@@ -297,6 +348,7 @@ export type Database = {
           payload?: Json
           result?: Json
           status?: Database["public"]["Enums"]["task_status"]
+          topic?: string | null
           updated_at?: string
           user_id?: string | null
         }
@@ -306,6 +358,13 @@ export type Database = {
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -459,6 +518,13 @@ export type Database = {
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "workspace_integrations_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
         ]
       }
     }
@@ -467,9 +533,18 @@ export type Database = {
     }
     Functions: {
       get_user_organization: { Args: never; Returns: string }
+      get_user_role: {
+        Args: never
+        Returns: Database["public"]["Enums"]["user_role"]
+      }
+      has_principal_access: {
+        Args: { item_user_id: string; org_id: string }
+        Returns: boolean
+      }
     }
     Enums: {
-      task_status: "queued" | "processing" | "done" | "error"
+      agency_tier: "Public" | "Controlled" | "Restricted"
+      task_status: "queued" | "processing" | "done" | "error" | "escalation"
       user_role: "CEO" | "PM" | "Team Member"
     }
     CompositeTypes: {
@@ -598,7 +673,8 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      task_status: ["queued", "processing", "done", "error"],
+      agency_tier: ["Public", "Controlled", "Restricted"],
+      task_status: ["queued", "processing", "done", "error", "escalation"],
       user_role: ["CEO", "PM", "Team Member"],
     },
   },

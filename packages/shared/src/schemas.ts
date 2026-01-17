@@ -1,7 +1,21 @@
 import { z } from 'zod';
 
-export const TaskStatusSchema = z.enum(['queued', 'processing', 'done', 'error']);
+export const TaskStatusSchema = z.enum(['queued', 'processing', 'done', 'error', 'escalation']);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
+
+export const AgencyTierSchema = z.enum(['Public', 'Controlled', 'Restricted']);
+export type AgencyTier = z.infer<typeof AgencyTierSchema>;
+
+export const AgencyPerimeterSchema = z.object({
+  id: z.string().uuid().optional(),
+  organization_id: z.string().uuid(),
+  topic_name: z.string(),
+  tier: AgencyTierSchema.default('Restricted'),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
+});
+
+export type AgencyPerimeter = z.infer<typeof AgencyPerimeterSchema>;
 
 export const UserRoleSchema = z.enum(['CEO', 'PM', 'Team Member']);
 export type UserRole = z.infer<typeof UserRoleSchema>;
@@ -11,6 +25,7 @@ export const TaskSchema = z.object({
   organization_id: z.string().uuid(),
   user_id: z.string().uuid().nullable().optional(),
   domain_action: z.string().regex(/^[a-z]+\.[a-z]+$/, 'Action must be in domain.action format (e.g., email.ingest)'),
+  topic: z.string().optional(),
   status: TaskStatusSchema.default('queued'),
   payload: z.record(z.any()),
   result: z.record(z.any()).optional(),

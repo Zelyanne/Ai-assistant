@@ -1,7 +1,6 @@
 import { BaseProcessor, ProcessorResult } from './BaseProcessor.js';
 import { Task } from '@ai-assistant/shared';
 import { Mistral } from "mistralai";
-import { PerimeterGuard } from "../guards/PerimeterGuard.js";
 import { config } from "../config/index.js";
 import { supabase } from "../services/supabase.js";
 
@@ -25,43 +24,19 @@ export class SystemAnalyzeProcessor extends BaseProcessor {
       citations: []
     });
 
-    // 0. Instantiate Guard per-request
-    const guard = new PerimeterGuard();
+    let prompt: string | undefined;
     
-    const rawPrompt = task.payload && typeof task.payload === 'object' && 'prompt' in task.payload 
-      ? (task.payload as any).prompt 
-      : JSON.stringify(task.payload);
+    if (task.payload && typeof task.payload === 'object' && 'prompt' in task.payload) {
+      prompt = (task.payload as any).prompt;
+    } else if (task.payload && typeof task.payload === 'string') {
+      prompt = task.payload;
+    }
 
-    if (!rawPrompt) {
+    if (!prompt) {
       return { message: "No prompt found in task payload." };
     }
 
-    // 1. Redact PII
-    const { redactedText, replacementCount } = guard.redactPIIWithMetadata(rawPrompt);
-
-    // 2. Log redaction telemetry
-    if (replacementCount > 0) {
-       const { error } = await supabase.from('agent_activity_log').insert({
-        organization_id: task.organization_id,
-        agent_id: 'agent-controller', 
-        task_id: task.id,
-        action_taken: 'pii_redaction',
-        reasoning_trace: {
-          event: 'prompt_redacted',
-          replacement_count: replacementCount,
-          original_length: rawPrompt.length,
-          redacted_length: redactedText.length
-        },
-        citations: []
-      });
-
-      if (error) {
-        console.error('Failed to log redaction telemetry:', error);
-        // We continue even if logging fails, but we log the error
-      }
-    }
-
-    // 3. Call Mistral
+    // Call Mistral
     const mistral = new Mistral({
         apiKey: config.MISTRAL_API_KEY
     });
@@ -71,7 +46,7 @@ export class SystemAnalyzeProcessor extends BaseProcessor {
         messages: [
           {
             role: "user",
-            content: redactedText,
+            content: prompt,
           },
         ],
     });
@@ -79,3 +54,4 @@ export class SystemAnalyzeProcessor extends BaseProcessor {
     return { ...result };
   }
 }
+
