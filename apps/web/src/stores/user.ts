@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { supabase } from '../services/supabase';
-import type { Profile, UserRole } from '@ai-assistant/shared';
+import type { Profile } from '@ai-assistant/shared';
 
 export const useUserStore = defineStore('user', () => {
   const profile = ref<Profile | null>(null);

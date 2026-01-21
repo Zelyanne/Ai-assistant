@@ -1,7 +1,7 @@
-import { ref, onUnmounted } from 'vue';
+import { ref } from 'vue';
 import { supabase } from '../services/supabase';
 import { useUserStore } from '../stores/user';
-import { Task, TaskStatus } from '@ai-assistant/shared';
+import { Task } from '@ai-assistant/shared';
 
 export function useAgent() {
   const userStore = useUserStore();
@@ -67,6 +67,35 @@ export function useAgent() {
 
     return () => {
       channel.unsubscribe();
+      supabase.removeChannel(channel);
+    };
+  }
+
+  /**
+   * Subscribes to changes in a specific table for the user's organization.
+   */
+  function subscribeToTable(table: string, onUpdate: (payload: any) => void) {
+    if (!userStore.profile?.organization_id) return null;
+
+    const channel = supabase
+      .channel(`${table}:org:${userStore.profile.organization_id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: table,
+          filter: `organization_id=eq.${userStore.profile.organization_id}`
+        },
+        (payload) => {
+          onUpdate(payload);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      channel.unsubscribe();
+      supabase.removeChannel(channel);
     };
   }
 
@@ -74,6 +103,7 @@ export function useAgent() {
     loading,
     error,
     submitTask,
-    monitorTask
+    monitorTask,
+    subscribeToTable
   };
 }
