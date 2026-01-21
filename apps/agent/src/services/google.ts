@@ -58,6 +58,9 @@ export class GoogleIngestionService {
       // Fetch Calendar events
       await this.ingestCalendar(integration.organization_id, integration.user_id, oauth2Client);
 
+      // CRITICAL: Trigger email triage after ingestion
+      await this.triggerEmailTriage(integration.organization_id, integration.user_id);
+
       // Update sync status
       await supabase
         .from('workspace_integrations')
@@ -73,6 +76,31 @@ export class GoogleIngestionService {
         .from('workspace_integrations')
         .update({ sync_status: 'error' })
         .eq('id', integration.id);
+    }
+  }
+
+  /**
+   * Triggers the email triage processor after ingestion completes.
+   * This ensures all newly ingested emails are classified.
+   */
+  private async triggerEmailTriage(organizationId: string, userId: string | null) {
+    try {
+      const { error } = await supabase.from('tasks').insert({
+        organization_id: organizationId,
+        user_id: userId,
+        domain_action: 'email.triage',
+        status: 'queued',
+        payload: {},
+        created_at: new Date().toISOString()
+      } as any);
+
+      if (error) {
+        console.error(`Failed to queue triage task for org ${organizationId}:`, error);
+      } else {
+        console.log(`Queued email.triage task for org ${organizationId}`);
+      }
+    } catch (err) {
+      console.error(`Error triggering triage for org ${organizationId}:`, err);
     }
   }
 

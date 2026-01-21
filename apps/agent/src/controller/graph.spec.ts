@@ -6,7 +6,28 @@ vi.mock('../config/index.js', () => ({
   config: {
     SUPABASE_URL: 'http://localhost:54321',
     SUPABASE_SERVICE_ROLE_KEY: 'mock-key',
-    MISTRAL_API_KEY: 'mock-mistral-key'
+    MISTRAL_API_KEY: 'mock-mistral-key',
+    CONFIDENCE_THRESHOLD: 0.8
+  }
+}));
+
+// Mock LLMProviderFactory
+const mockProvider = {
+  generateText: vi.fn().mockResolvedValue({
+    data: 'Mocked response',
+    usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+    model: 'mistral-small'
+  }),
+  generateStructured: vi.fn().mockResolvedValue({
+    data: { summary: 'Mocked response', confidence: 0.9, ambiguity_detected: false },
+    usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+    model: 'mistral-small'
+  })
+};
+
+vi.mock('../services/llm/factory.js', () => ({
+  LLMProviderFactory: {
+    getProvider: vi.fn(() => mockProvider)
   }
 }));
 
@@ -29,14 +50,14 @@ vi.mock('../services/supabase.js', () => ({
   }
 }));
 
-// Mock Mistral
-vi.mock('mistralai', () => ({
-  Mistral: class {
-    chat = {
-      complete: vi.fn(() => Promise.resolve({
-        choices: [{ message: { content: 'Mocked response' } }]
-      }))
-    };
+// Remove Mistral mock since we mock the factory now
+// vi.mock('mistralai', ...);
+
+// Mock ProtocolService
+vi.mock('../services/ProtocolService.js', () => ({
+  ProtocolService: {
+    fetchProtocol: vi.fn().mockResolvedValue('# Mock Protocol'),
+    extractRules: vi.fn().mockResolvedValue('1. Rule One')
   }
 }));
 
@@ -48,6 +69,7 @@ vi.mock('../services/mcp.js', () => ({
 }));
 
 describe('Agent Controller Graph Routing', () => {
+
   const baseTask = {
     id: '123e4567-e89b-12d3-a456-426614174000',
     organization_id: '123e4567-e89b-12d3-a456-426614174001',
@@ -94,13 +116,13 @@ describe('Agent Controller Graph Routing', () => {
     expect(result.result.message).toContain('Calendar event created');
   });
 
-  it('should route system.analyze to SystemAnalyzeProcessor', async () => {
+  it('should route system.analyze to reasoning node', async () => {
     const mockTask = { ...baseTask, domain_action: 'system.analyze', payload: { prompt: "Analyze this" } };
 
     const result = await graph.invoke({ task: mockTask as any });
 
     expect(result.error).toBeUndefined();
-    expect(result.result.choices).toBeDefined();
+    expect(result.result).toBe('Mocked response');
   });
 
   it('should handle unsupported domain.action', async () => {
@@ -119,7 +141,50 @@ describe('Agent Controller Graph Routing', () => {
 
     const result = await graph.invoke({ task: mockTask as any });
 
-    expect(result.task.status).toBe('escalation');
-    expect(result.error).toContain('Action requires Public tier, but topic is Restricted');
+    expect(result.task.status).toBe('error');
+    expect(result.task.result.escalation).toBe(true);
+    expect(result.error).toContain('Restricted topic requires human intervention');
+  });
+
+  it('should load protocol rules and pass them to reasoning', async () => {
+    const mockTask = { ...baseTask, domain_action: 'system.analyze', payload: { prompt: "Analyze this" } };
+
+    const result = await graph.invoke({ task: mockTask as any });
+
+    expect(result.active_protocol_rules).toBe('1. Rule One');
+    expect(result.citations).toBeDefined();
+    expect(result.citations.some((c: any) => c.source_type === 'protocol')).toBe(true);
+  });
+
+  it('should escalate when confidence is below threshold', async () => {
+    const mockTask = { ...baseTask, domain_action: 'system.analyze', payload: { prompt: "Analyze this" } };
+    
+    mockProvider.generateStructured.mockResolvedValueOnce({
+      data: { summary: 'Low confidence', confidence: 0.5, ambiguity_detected: false },
+      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      model: 'mistral-small'
+    });
+
+    const result = await graph.invoke({ task: { ...mockTask, payload: { ...mockTask.payload, schemaKey: 'default_analysis' } } as any });
+
+    expect(result.task.status).toBe('error');
+    expect(result.task.result.escalation).toBe(true);
+    expect(result.trace.some((s: any) => s.step_name === 'Escalation')).toBe(true);
+  });
+
+  it('should escalate when ambiguity is detected', async () => {
+    const mockTask = { ...baseTask, domain_action: 'system.analyze', payload: { prompt: "Analyze this" } };
+    
+    mockProvider.generateStructured.mockResolvedValueOnce({
+      data: { summary: 'Ambiguous', confidence: 0.9, ambiguity_detected: true },
+      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      model: 'mistral-small'
+    });
+
+    const result = await graph.invoke({ task: { ...mockTask, payload: { ...mockTask.payload, schemaKey: 'default_analysis' } } as any });
+
+    expect(result.task.status).toBe('error');
+    expect(result.task.result.escalation).toBe(true);
   });
 });
+

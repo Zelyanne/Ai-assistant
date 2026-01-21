@@ -53,15 +53,16 @@ development_status:
   2-2-task-processor-with-domain-action-routing: done
   2-3-mcp-sdk-integration-with-google-workspace-server: done
   2-4-perimeterguard-pii-filtering-agency-tier-enforcement: done
-  2-5-llm-reasoning-integration-openai-anthropic: backlog
-  2-6-immutable-audit-logging-to-agent-activity-log: backlog
-  2-7-protocol-execution-engine: backlog
-  2-8-confidence-evaluation-escalation-logic: backlog
+  2-5-llm-reasoning-integration-mistral: done
+  2-6-immutable-audit-logging-to-agent-activity-log: done
+  2-7-protocol-execution-engine: done
+  2-8-confidence-evaluation-escalation-logic: done
   epic-2-retrospective: optional
 
-  epic-3: backlog  # RENAMED: Personalized Triage & The "Brain" Setup (was Epic 2)
-  3-1-natural-language-protocol-generation: backlog
-  3-2-semantic-email-triage-keyword-classification: backlog
+  epic-3: in-progress  # RENAMED: Personalized Triage & The "Brain" Setup (was Epic 2)
+  3-0-ui-design-system-app-shell: done  # NEW: UI Foundation (Added via Correct-Course)
+  3-1-natural-language-protocol-generation: done
+  3-2-semantic-email-triage-keyword-classification: done
   3-3-outcome-centric-morning-brief-ui: backlog
   3-4-smart-thread-summarization-with-action-items: backlog
   3-5-reasoning-trace-source-citation-engine: backlog

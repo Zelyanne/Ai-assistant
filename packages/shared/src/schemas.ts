@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const TaskStatusSchema = z.enum(['queued', 'processing', 'done', 'error', 'escalation']);
+export const TaskStatusSchema = z.enum(['queued', 'processing', 'done', 'error', 'escalation', 'paused']);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
 export const AgencyTierSchema = z.enum(['Public', 'Controlled', 'Restricted']);
@@ -35,18 +35,44 @@ export const TaskSchema = z.object({
 
 export type Task = z.infer<typeof TaskSchema>;
 
+export const ReasoningStepSchema = z.object({
+  timestamp: z.string(),
+  step_name: z.string(),
+  message: z.string(),
+  confidence_score: z.number().min(0).max(1).optional(),
+  ambiguity_detected: z.boolean().optional(),
+  input_summary: z.string().optional(),
+  output_summary: z.string().optional(),
+});
+
+export type ReasoningStep = z.infer<typeof ReasoningStepSchema>;
+
+export const ReasoningTraceSchema = z.array(ReasoningStepSchema);
+
+export type ReasoningTrace = z.infer<typeof ReasoningTraceSchema>;
+
+export const CitationSchema = z.object({
+  source_type: z.string(),
+  source_id: z.string(),
+  link: z.string().url().optional().or(z.literal('')),
+  description: z.string(),
+});
+
+export type Citation = z.infer<typeof CitationSchema>;
+
 export const AgentActivityLogSchema = z.object({
   id: z.string().uuid().optional(),
   organization_id: z.string().uuid(),
   task_id: z.string().uuid().nullable().optional(),
   agent_id: z.string(),
   action_taken: z.string(),
-  reasoning_trace: z.record(z.any()),
-  citations: z.array(z.any()),
+  reasoning_trace: ReasoningTraceSchema,
+  citations: z.array(CitationSchema),
   created_at: z.string().optional(),
 });
 
 export type AgentActivityLog = z.infer<typeof AgentActivityLogSchema>;
+
 
 export const OrganizationSchema = z.object({
   id: z.string().uuid().optional(),
@@ -152,3 +178,28 @@ export const UserProtocolSchema = z.object({
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
 });
+
+export type UserProtocol = z.infer<typeof UserProtocolSchema>;
+
+export const ProtocolGeneratePayloadSchema = z.object({
+  philosophy: z.string(),
+});
+
+export type ProtocolGeneratePayload = z.infer<typeof ProtocolGeneratePayloadSchema>;
+
+export const ProtocolMetadataSchema = z.object({
+  nudging_frequency_hours: z.number(),
+  tone: z.string(),
+  escalation_threshold: z.number(),
+  preferred_channels: z.array(z.string()),
+});
+
+export type ProtocolMetadata = z.infer<typeof ProtocolMetadataSchema>;
+
+export const ProtocolGenerationResultSchema = z.object({
+  markdown: z.string(),
+  metadata: ProtocolMetadataSchema,
+});
+
+export type ProtocolGenerationResult = z.infer<typeof ProtocolGenerationResultSchema>;
+

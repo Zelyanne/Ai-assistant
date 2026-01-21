@@ -1,23 +1,45 @@
-**🔥 CODE REVIEW FINDINGS, Alexis!**
+# Code Review Report: Story 2.8
 
-**Story:** 2-4-perimeterguard-pii-filtering-agency-tier-enforcement.md
-**Git vs Story Discrepancies:** 3 found (Untracked files)
-**Issues Found:** 2 High, 1 Medium, 0 Low
+**Date:** 2026-01-20
+**Reviewer:** Antigravity (Senior Software Engineer)
+**Story:** `2-8-confidence-evaluation-escalation-logic.md`
+**Status:** PASSED
 
-## 🔴 CRITICAL ISSUES
-- **Tasks marked [x] but not actually implemented:** The story claims "- [x] Update `Task` schema to include `topic`", but the migration `20260118000000_agency_perimeters_and_escalation.sql` **DOES NOT** contain the `ALTER TABLE tasks ADD COLUMN topic TEXT;` statement.
-- **Database Schema Mismatch:** The `tasks` table in the database is missing the `topic` column, which is critical for `PerimeterGuard` to function correctly (it defaults to 'General' if missing). `database.types.ts` also confirms this column is missing.
+## Summary
+The implementation of confidence evaluation and escalation logic has been verified against all acceptance criteria. The solution correctly integrates with the LangGraph architecture, ensuring that low-confidence actions or restricted topics are safely escalated to human intervention.
 
-## 🟡 MEDIUM ISSUES
-- **Type Sync:** `packages/shared/src/database.types.ts` is out of sync with `packages/shared/src/schemas.ts`. The schema expects a `topic` field, but the generated types do not have it.
+## Acceptance Criteria Verification
 
-## 🟢 LOW ISSUES
-- None found. Code quality and tests look good otherwise.
+| AC ID | Requirement | Status | Verification Evidence |
+|-------|-------------|--------|-----------------------|
+| 1 | **Confidence Score Implementation** | ✅ Verified | `reasoning.ts` implements `default_analysis` schema with `confidence` field (0-1). |
+| 2 | **Ambiguity Detection** | ✅ Verified | `ambiguity_detected` boolean added to schema and logic. |
+| 3 | **Escalation Threshold** | ✅ Verified | `graph.ts` uses `CONFIDENCE_THRESHOLD` for conditional routing. |
+| 4 | **Escalation Node** | ✅ Verified | `escalate.ts` created and wired into graph. |
+| 5 | **Status Update** | ✅ Verified | Updates task status to `error` with `escalation: true` payload. |
+| 6 | **Reasoning Trace** | ✅ Verified | Audit logs include confidence metrics and escalation reasons. |
+| 7 | **Agency Tier Integration** | ✅ Verified | `checkPerimeter` enforces "Restricted" tier escalation. |
 
-What should I do with these issues?
+## Test Verification
+- **Unit Tests**: `reasoning.spec.ts` passes (5 tests).
+- **Integration Tests**: `graph.spec.ts` passes (8 tests), covering:
+    - Standard routing (email, calendar, analyze)
+    - Escalation on Low Confidence
+    - Escalation on Ambiguity
+    - Escalation on Restricted Tier
+    - Unsupported domains
 
-1. **Fix them automatically** - I'll update the migration file to add the missing column, update `database.types.ts`, and ensure everything is synced.
-2. **Create action items** - Add to story Tasks/Subtasks for later
-3. **Show me details** - Deep dive into specific issues
+## Code Quality Notes
+- **Strengths**: 
+    - Modular design using LangGraph nodes.
+    - Strong typing with Zod schemas.
+    - Comprehensive audit logging.
+- **Fixed Issues**:
+    - Corrected type casting in `reasoning.ts` for citations to ensure TypeScript compliance.
 
-Choose [1], [2], or specify which issue to examine:
+## Conclusion
+The story is **Complete**. Implementation matches requirements and passes all tests.
+
+## Action Items
+- [x] Mark Story 2.8 as `done`.
+- [x] Sync Sprint Status.

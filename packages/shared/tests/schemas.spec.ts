@@ -47,11 +47,38 @@ describe('Zod Schemas', () => {
         organization_id: '550e8400-e29b-41d4-a716-446655440000',
         agent_id: '550e8400-e29b-41d4-a716-446655440001',
         action_taken: 'Analyzed email',
-        reasoning_trace: { step1: 'Reading' },
-        citations: [{ source: 'email', id: '123' }]
+        reasoning_trace: [
+          {
+            timestamp: new Date().toISOString(),
+            step_name: 'Perimeter Check',
+            message: 'Checking access to email topic',
+            confidence_score: 1.0
+          }
+        ],
+        citations: [
+          {
+            source_type: 'email',
+            source_id: 'gmail-123',
+            link: 'https://mail.google.com',
+            description: 'Original email thread'
+          }
+        ]
       };
       const result = AgentActivityLogSchema.safeParse(log);
       expect(result.success).toBe(true);
     });
+
+    it('fails on invalid reasoning_trace', () => {
+      const log = {
+        organization_id: '550e8400-e29b-41d4-a716-446655440000',
+        agent_id: '550e8400-e29b-41d4-a716-446655440001',
+        action_taken: 'Analyzed email',
+        reasoning_trace: { invalid: 'format' },
+        citations: []
+      };
+      const result = AgentActivityLogSchema.safeParse(log);
+      expect(result.success).toBe(false);
+    });
   });
+
 });

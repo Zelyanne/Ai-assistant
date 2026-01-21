@@ -114,194 +114,22 @@ Implement the core Agent Controller service that orchestrates autonomous executi
 **NFRs covered:** NFR2 (zero-training), NFR3 (PII filtering), NFR5 (shadow mode), NFR6 (emergency brake), NFR7 (audit logs), NFR8-10 (performance).
 
 ### Epic 3: Personalized Triage & The "Brain" Setup
-Define leadership "nudging" protocols and custom keywords to receive the first semantically categorized Morning Brief.
-**FRs covered:** FR1, FR2, FR3, FR12, FR17, FR18, FR20, FR28, FR29 (UI/Frontend), NFR8, NFR9.
-**Dependencies:** Requires Epic 2 (Agent Controller) for protocol execution and LLM reasoning.
-
-### Epic 4: Autonomous Proxy & Actionable Trust
-Activate autonomous responses for "Public" topics within defined Agency Tiers, protected by the Emergency Brake.
-**FRs covered:** FR6, FR7, FR8, FR9, FR10, FR11 (UI/Frontend), NFR5, NFR10.
-**Dependencies:** Requires Epic 2 (Agent Controller) for autonomous execution and confidence evaluation.
-
-### Epic 5: Adaptive Relancing & Team Alignment
-Implement bidirectional nudge loops that gather status and detect blockers without disrupting team focus.
-**FRs covered:** FR4, FR5, FR19 (UI/Frontend).
-**Dependencies:** Requires Epic 2 (Agent Controller) for task processing and MCP integration.
-
-### Epic 6: Operational Mastery & Transparency
-Enable complex logistical resolution (Calendar/Docs) with complete reasoning traces and human-readable audit logs.
-**FRs covered:** FR13, FR14, FR15, FR16, FR25, FR26, FR27 (UI/Frontend), NFR7.
-**Dependencies:** Requires Epic 2 (Agent Controller) for MCP integration and audit logging.
-
-## Epic 1: The Secure Hub & Ingestion Foundation
-
-Establish the secure, multi-tenant workspace with PII filtering and the Google Workspace ingestion layer.
-
-### Story 1.1: Multi-tenant Monorepo Initialization
-As a Developer,
-I want a unified monorepo structure with Vue 3, Node.js Agent, and Shared types,
-So that I can build the system with end-to-end type safety and consistent patterns.
-
-**Acceptance Criteria:**
-**Given** the architecture specification
-**When** the project is initialized
-**Then** it includes `apps/web`, `apps/agent`, and `packages/shared` in a pnpm/npm workspace
-**And** `packages/shared` exports Supabase database types.
-
-### Story 1.2: Database-as-Queue Schema & RLS Policies
-As a System Architect,
-I want a secure PostgreSQL schema with `tasks` and `agent_activity_log` tables,
-So that the UI and Agent can communicate securely via Supabase Realtime.
-
-**Acceptance Criteria:**
-**Given** a Supabase project
-**When** migrations are applied
-**Then** the `tasks` table supports the `domain.action` naming pattern
-**And** Row Level Security (RLS) ensures organization-level isolation (FR21).
-
-### Story 1.3: Secure Google Workspace Ingestion
-As an SME Leader,
-I want to securely connect my Google Workspace account,
-So that the assistant can access my calendar and email data under my control.
-
-**Acceptance Criteria:**
-**Given** the Hub's integration settings
-**When** the user completes Google OAuth
-**Then** the system obtains tokens with restricted scopes (Calendar, Gmail, Docs)
-**And** the Agent can successfully fetch recent threads and events.
-
-### Story 1.4: Principal-Driven Permission System
-As an Admin,
-I want to assign roles (CEO, PM, Team Member) to my organization's users,
-So that I can control who has access to sensitive agency perimeters.
-
-**Acceptance Criteria:**
-**Given** the Admin Hub
-**When** a user's role is set to "Team Member"
-**Then** they cannot view the CEO's private triage feeds or agency perimeters (FR23).
-
-### Story 1.5: PerimeterGuard PII Redaction Service
-As a Privacy Officer,
-I want PII to be masked before it is sent to external LLMs,
-So that we maintain executive trust and SOC2 compliance (NFR3).
-
-**Acceptance Criteria:**
-**Given** the Agent's reasoning loop
-**When** data is prepared for an LLM prompt
-**Then** the `PerimeterGuard` utility redacts names, phone numbers, and sensitive IDs
-**And** the reasoning remains logically coherent for the AI.
-
-## Epic 2: Agent Controller Foundation & Task Orchestration
-
-Implement the core Agent Controller service that orchestrates autonomous execution, LLM reasoning, and MCP-based Google Workspace automation.
-
-### Story 2.1: Agent Controller Initialization & Realtime Subscription
-As a System Architect,
-I want a Node.js Agent Controller that listens to the Supabase `tasks` table via Realtime,
-So that the agent can consume queued tasks from the frontend and process them asynchronously.
-
-**Acceptance Criteria:**
-**Given** a Supabase project with the `tasks` table
-**When** the Agent Controller starts
-**Then** it establishes a Realtime subscription to monitor `INSERT` events on `tasks` where `status = 'queued'`
-**And** it updates task status to `processing` when picked up
-**And** it writes results to the `result` JSONB field and updates status to `done` or `error`.
-
-### Story 2.2: Task Processor with Domain.Action Routing
-As a Developer,
-I want a task processor that routes tasks based on the `domain.action` naming pattern,
-So that different task types (email.draft, calendar.create, system.analyze) are handled by appropriate processors.
-
-**Acceptance Criteria:**
-**Given** a task with `type = 'email.draft'`
-**When** the Task Processor receives it
-**Then** it routes to the EmailDraftProcessor
-**And** each processor follows the standard interface (process, validate, execute)
-**And** unsupported task types return an error with `status = 'error'`.
-
-### Story 2.3: MCP SDK Integration with Google Workspace Server
-As a Developer,
-I want the Agent Controller to communicate with the Google Workspace MCP Server via the MCP SDK,
-So that it can read emails, manage calendar events, and access Google Docs programmatically.
-
-**Acceptance Criteria:**
-**Given** the Python Google Workspace MCP Server is available
-**When** the Agent Controller needs to access Gmail or Calendar
-**Then** it spawns the MCP server as a subprocess using the MCP SDK
-**And** it sends MCP protocol requests (stdio or SSE transport)
-**And** it receives structured responses for email threads, calendar events, and docs.
-
-### Story 2.4: PerimeterGuard PII Filtering & Agency Tier Enforcement
-As a Privacy Officer,
-I want all data to pass through PerimeterGuard before being sent to external LLMs,
-So that PII is redacted and agency tier boundaries are enforced (NFR3).
-
-**Acceptance Criteria:**
-**Given** the Agent Controller prepares a prompt for an LLM
-**When** it calls `PerimeterGuard.filter(data, agencyTier)`
-**Then** the utility redacts names, phone numbers, emails, and sensitive IDs
-**And** it checks the requested action against the user's defined Agency Tier (Public/Controlled/Restricted)
-**And** it escalates to the user if the action exceeds the authorized tier.
-
-### Story 2.5: LLM Reasoning Integration (OpenAI/Anthropic)
-As a Developer,
-I want the Agent Controller to integrate with LLM providers for reasoning tasks,
-So that it can generate protocols, draft emails, and make autonomous decisions.
-
-**Acceptance Criteria:**
-**Given** a task requiring LLM reasoning (e.g., `protocol.generate`)
-**When** the Agent Controller processes it
-**Then** it constructs a prompt using filtered context from PerimeterGuard
-**And** it calls the configured LLM provider (OpenAI or Anthropic) via API
-**And** it parses the structured response and stores it in the task result
-**And** all interactions are logged with token usage and latency metrics.
-
-### Story 2.6: Immutable Audit Logging to agent_activity_log
-As an SME Leader,
-I want every autonomous action logged with reasoning traces and source citations,
-So that I have complete transparency into what the assistant is doing (FR25, FR26).
-
-**Acceptance Criteria:**
-**Given** any autonomous action taken by the Agent Controller
-**When** the action completes
-**Then** it writes to the `agent_activity_log` table with:
-  - Action type and timestamp
-  - Input data and output/result
-  - Reasoning trace (step-by-step logic)
-  - Confidence score
-  - Source citations (deep links to Gmail/Calendar/Docs)
-**And** the log is append-only (never updated or deleted).
-
-### Story 2.7: Protocol Execution Engine
-As an SME Leader,
-I want the Agent Controller to load and execute my personalized `.md` protocols,
-So that nudging behavior and autonomous actions align with my leadership style (FR2, FR3).
-
-**Acceptance Criteria:**
-**Given** a user has defined a protocol in the `user_protocols` table
-**When** the Agent Controller processes a relancing or autonomous proxy task
-**Then** it loads the relevant protocol from the database
-**And** it parses the Markdown structure to extract rules and timing
-**And** it applies the protocol logic to determine nudge intervals, tone, and escalation conditions.
-
-### Story 2.8: Confidence Evaluation & Escalation Logic
-As a Developer,
-I want the Agent Controller to evaluate its confidence before autonomous actions,
-So that low-confidence tasks are escalated to the user for review (FR10).
-
-**Acceptance Criteria:**
-**Given** a task requiring autonomous execution (Agency Tier: Public)
-**When** the Agent Controller processes it
-**Then** it evaluates confidence based on:
-  - LLM response certainty
-  - Availability of source data
-  - Ambiguity in the request
-**And** if confidence is below the configured threshold, it sets `status = 'escalation'` instead of executing
-**And** the UI displays an "Escalation Card" for user review.
-
-## Epic 3: Personalized Triage & The "Brain" Setup
 
 Define leadership "nudging" protocols and custom keywords to receive the first semantically categorized Morning Brief.
+
+### Story 3.0: UI Design System & App Shell Implementation
+As a Developer,
+I want to set up the core UI framework, Design System, Application Shell, and foundational pages (Login & Home),
+So that the application has a secure, consistent, and "Executive Calm" entry point and layout.
+
+**Acceptance Criteria:**
+**Given** the UX Design Specification (Executive Calm palette, Typography)
+**When** the frontend application is configured
+**Then** Material UI (or PrimeVue) is installed with a custom Theme Provider using the specified colors (Indigo #334155, Deep Teal #059669)
+**And** the "Executive Calm" Login page is implemented with Supabase Auth
+**And** the "Structured Hub" layout is implemented (Persistent Sidebar, Header, Main Content Area)
+**And** the layout is responsive (Collapsible sidebar on mobile)
+**And** basic routing is set up for Login, Dashboard, and Settings.
 
 ### Story 3.1: Natural Language Protocol Generation
 As an SME Leader,

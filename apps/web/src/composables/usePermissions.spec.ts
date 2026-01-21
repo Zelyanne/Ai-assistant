@@ -1,4 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Mock Supabase before importing stores/composables
+vi.mock('../services/supabase', () => ({
+  supabase: {
+    auth: {
+      getUser: vi.fn(),
+      getSession: vi.fn(),
+    },
+    from: vi.fn(),
+  },
+}));
+
 import { usePermissions } from './usePermissions';
 import { createPinia, setActivePinia } from 'pinia';
 import { useUserStore } from '../stores/user';
