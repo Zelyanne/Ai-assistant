@@ -106,6 +106,14 @@ export const WorkspaceIntegrationSchema = z.object({
 
 export type WorkspaceIntegration = z.infer<typeof WorkspaceIntegrationSchema>;
 
+export const ThreadSummarySchema = z.object({
+  context: z.string().describe('High-level purpose of the thread.'),
+  decisions: z.array(z.string()).describe('Key updates or decisions made.'),
+  action_items: z.array(z.string()).describe('Specific tasks required from the user.'),
+});
+
+export type ThreadSummary = z.infer<typeof ThreadSummarySchema>;
+
 export const IngestedThreadSchema = z.object({
   id: z.string().uuid().optional(),
   organization_id: z.string().uuid(),
@@ -115,10 +123,12 @@ export const IngestedThreadSchema = z.object({
   category: z.string().nullable().optional(),
   priority_score: z.number().nullable().optional(),
   summary: z.string().nullable().optional(),
+  summary_json: ThreadSummarySchema.nullable().optional(),
   metadata: z.record(z.any()),
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
 });
+
 
 export type IngestedThread = z.infer<typeof IngestedThreadSchema>;
 

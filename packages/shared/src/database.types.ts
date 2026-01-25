@@ -160,40 +160,53 @@ export type Database = {
       ingested_threads: {
         Row: {
           category: string | null
+          classification: Json | null
           created_at: string
           external_id: string
           id: string
+          is_highlighted: boolean | null
           metadata: Json
           organization_id: string
           priority_score: number | null
+          subject: string | null
           summary: string | null
+          summary_json: Json | null
           updated_at: string
           user_id: string | null
         }
         Insert: {
           category?: string | null
+          classification?: Json | null
           created_at?: string
           external_id: string
           id?: string
+          is_highlighted?: boolean | null
           metadata?: Json
           organization_id: string
           priority_score?: number | null
+          subject?: string | null
           summary?: string | null
+          summary_json?: Json | null
           updated_at?: string
           user_id?: string | null
         }
         Update: {
           category?: string | null
+          classification?: Json | null
           created_at?: string
           external_id?: string
           id?: string
+          is_highlighted?: boolean | null
           metadata?: Json
           organization_id?: string
           priority_score?: number | null
+          subject?: string | null
           summary?: string | null
+          summary_json?: Json | null
           updated_at?: string
           user_id?: string | null
         }
+
         Relationships: [
           {
             foreignKeyName: "ingested_threads_organization_id_fkey"

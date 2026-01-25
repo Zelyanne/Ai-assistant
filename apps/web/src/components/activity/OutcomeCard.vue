@@ -3,16 +3,22 @@ import { computed } from 'vue';
 import Card from 'primevue/card';
 import Badge from 'primevue/badge';
 import Button from 'primevue/button';
+import { type ThreadSummary } from '@ai-assistant/shared';
+import ThreadSummaryComponent from './ThreadSummary.vue';
 
 interface Props {
   title: string;
   summary: string;
+  summaryJson?: ThreadSummary;
+  externalId?: string;
+  taskId?: string;
   status: 'done' | 'escalation' | 'processing' | 'queued' | 'error' | 'insight';
   agencyTier?: 'Public' | 'Controlled' | 'Restricted';
   timestamp: string;
 }
 
 const props = defineProps<Props>();
+const emit = defineEmits(['open-trace']);
 
 const cardStyle = computed(() => {
   switch (props.status) {
@@ -72,14 +78,27 @@ const tierSeverity = computed(() => {
       </div>
     </template>
     <template #content>
-      <p class="text-slate-600 text-sm leading-relaxed font-technical">
+      <ThreadSummaryComponent 
+        v-if="summaryJson" 
+        :summary="summaryJson" 
+        :external-id="externalId" 
+      />
+      <p v-else class="text-slate-600 text-sm leading-relaxed font-technical">
         {{ summary }}
       </p>
     </template>
     <template #footer>
       <div class="flex justify-end gap-2">
         <slot name="actions">
-          <Button label="View Trace" icon="pi pi-search" text size="small" class="p-button-technical" />
+          <Button 
+            v-if="taskId"
+            label="View Trace" 
+            icon="pi pi-search" 
+            text 
+            size="small" 
+            class="p-button-technical" 
+            @click="emit('open-trace', taskId)"
+          />
         </slot>
       </div>
     </template>

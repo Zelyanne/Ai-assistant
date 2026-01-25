@@ -6,8 +6,17 @@ import { useAgent } from '../composables/useAgent';
 import { supabase } from '../services/supabase';
 import type { Tables } from '@ai-assistant/shared';
 import OutcomeCard from '../components/activity/OutcomeCard.vue';
+import ReasoningTracePane from '../components/activity/ReasoningTracePane.vue';
 import Button from 'primevue/button';
 import Card from 'primevue/card';
+
+const isTraceVisible = ref(false);
+const selectedTaskId = ref<string | null>(null);
+
+function openTrace(taskId: string) {
+  selectedTaskId.value = taskId;
+  isTraceVisible.value = true;
+}
 
 type IngestedThread = Tables<'ingested_threads'>;
 type Task = Tables<'tasks'>;
@@ -84,6 +93,8 @@ interface OutcomeItem {
   type: 'task' | 'thread';
   title: string;
   summary: string;
+  summaryJson?: any;
+  externalId?: string;
   status: 'done' | 'escalation' | 'processing' | 'queued' | 'error' | 'insight';
   agencyTier: 'Public' | 'Controlled' | 'Restricted';
   timestamp: string;
@@ -126,6 +137,8 @@ const outcomeItems = computed((): OutcomeItem[] => {
       type: 'thread',
       title: threadMetadata?.subject || 'Incoming Communication',
       summary: thread.summary || 'New priority thread detected and classified.',
+      summaryJson: thread.summary_json,
+      externalId: thread.external_id,
       status: isEscalation ? 'escalation' : 'insight',
       agencyTier: 'Public', // Threads are usually Public tier until actioned
       timestamp: new Date(thread.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -246,9 +259,13 @@ onUnmounted(() => {
         :key="item.id"
         :title="item.title"
         :summary="item.summary"
+        :summary-json="item.summaryJson"
+        :external-id="item.externalId"
+        :task-id="item.type === 'task' ? item.id : undefined"
         :status="item.status"
         :agency-tier="item.agencyTier"
         :timestamp="item.timestamp"
+        @open-trace="openTrace"
       >
         <template #actions>
           <Button 
@@ -260,18 +277,22 @@ onUnmounted(() => {
             class="p-button-technical"
           />
           <Button 
+            v-if="item.type === 'task'"
             label="View Trace" 
             icon="pi pi-search" 
             text 
             size="small" 
             class="p-button-technical"
-            @click="router.push(`/activity?task=${item.id}`)"
-            disabled
-            title="TODO: Story 3.5 (Reasoning Trace) not yet implemented"
+            @click="openTrace(item.id)"
           />
         </template>
       </OutcomeCard>
     </main>
+
+    <ReasoningTracePane 
+      v-model:visible="isTraceVisible" 
+      :task-id="selectedTaskId" 
+    />
 
     <!-- Empty State -->
     <section v-else class="bg-white p-12 rounded-executive border border-dashed border-slate-300 flex flex-col items-center justify-center text-center">
