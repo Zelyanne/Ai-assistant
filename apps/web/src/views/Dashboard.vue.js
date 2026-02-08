@@ -1,13 +1,18 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue';
-import { useRouter } from 'vue-router';
 import { useUserStore } from '../stores/user';
 import { useAgent } from '../composables/useAgent';
 import { supabase } from '../services/supabase';
 import OutcomeCard from '../components/activity/OutcomeCard.vue';
+import ReasoningTracePane from '../components/activity/ReasoningTracePane.vue';
 import Button from 'primevue/button';
 import Card from 'primevue/card';
+const isTraceVisible = ref(false);
+const selectedTaskId = ref(null);
+function openTrace(taskId) {
+    selectedTaskId.value = taskId;
+    isTraceVisible.value = true;
+}
 const TIME_SAVED_PER_WIN_MINUTES = 15;
-const router = useRouter();
 const userStore = useUserStore();
 const { subscribeToTable } = useAgent();
 const threads = ref([]);
@@ -32,8 +37,7 @@ const stats = computed(() => {
     }
     let threadEscalations = 0;
     for (const thread of threads.value) {
-        const meta = thread.metadata;
-        if (meta?.is_escalation === true)
+        if (thread.metadata?.is_escalation === true)
             threadEscalations++;
     }
     const escalations = taskEscalations + threadEscalations;
@@ -62,28 +66,27 @@ const outcomeItems = computed(() => {
             status = 'error';
         else
             status = 'queued';
-        const taskPayload = task.payload;
-        const taskResult = task.result;
         items.push({
             id: task.id,
             type: 'task',
             title: task.domain_action.split('.').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' '),
-            summary: taskResult?.summary || `Action executed: ${task.domain_action}`,
+            summary: task.result?.summary || `Action executed: ${task.domain_action}`,
             status,
-            agencyTier: taskPayload?.agency_tier || 'Controlled',
+            agencyTier: task.payload?.agency_tier || 'Controlled',
             timestamp: new Date(task.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             original: task
         });
     });
     // Map Threads (Insights & High-Priority)
     threads.value.forEach(thread => {
-        const threadMetadata = thread.metadata;
-        const isEscalation = threadMetadata?.is_escalation === true;
+        const isEscalation = thread.metadata?.is_escalation === true;
         items.push({
             id: thread.id,
             type: 'thread',
-            title: threadMetadata?.subject || 'Incoming Communication',
+            title: thread.metadata?.subject || thread.subject || 'Incoming Communication',
             summary: thread.summary || 'New priority thread detected and classified.',
+            summaryJson: thread.summary_json,
+            externalId: thread.external_id,
             status: isEscalation ? 'escalation' : 'insight',
             agencyTier: 'Public', // Threads are usually Public tier until actioned
             timestamp: new Date(thread.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -120,8 +123,8 @@ async function fetchData() {
             throw threadsRes.error;
         if (tasksRes.error)
             throw tasksRes.error;
-        threads.value = threadsRes.data;
-        tasks.value = tasksRes.data;
+        threads.value = threadsRes.data || [];
+        tasks.value = tasksRes.data || [];
     }
     catch (err) {
         console.error('Error fetching dashboard data:', err);
@@ -245,79 +248,93 @@ else if (__VLS_ctx.outcomeItems.length > 0) {
         /** @type {[typeof OutcomeCard, typeof OutcomeCard, ]} */ ;
         // @ts-ignore
         const __VLS_4 = __VLS_asFunctionalComponent(OutcomeCard, new OutcomeCard({
+            ...{ 'onOpenTrace': {} },
             key: (item.id),
             title: (item.title),
             summary: (item.summary),
+            summaryJson: (item.summaryJson),
+            externalId: (item.externalId),
+            taskId: (item.type === 'task' ? item.id : undefined),
             status: (item.status),
             agencyTier: (item.agencyTier),
             timestamp: (item.timestamp),
         }));
         const __VLS_5 = __VLS_4({
+            ...{ 'onOpenTrace': {} },
             key: (item.id),
             title: (item.title),
             summary: (item.summary),
+            summaryJson: (item.summaryJson),
+            externalId: (item.externalId),
+            taskId: (item.type === 'task' ? item.id : undefined),
             status: (item.status),
             agencyTier: (item.agencyTier),
             timestamp: (item.timestamp),
         }, ...__VLS_functionalComponentArgsRest(__VLS_4));
+        let __VLS_7;
+        let __VLS_8;
+        let __VLS_9;
+        const __VLS_10 = {
+            onOpenTrace: (__VLS_ctx.openTrace)
+        };
         __VLS_6.slots.default;
         {
             const { actions: __VLS_thisSlot } = __VLS_6.slots;
             if (item.status === 'escalation') {
-                const __VLS_7 = {}.Button;
+                const __VLS_11 = {}.Button;
                 /** @type {[typeof __VLS_components.Button, ]} */ ;
                 // @ts-ignore
-                const __VLS_8 = __VLS_asFunctionalComponent(__VLS_7, new __VLS_7({
+                const __VLS_12 = __VLS_asFunctionalComponent(__VLS_11, new __VLS_11({
                     label: "Take Action",
                     icon: "pi pi-bolt",
                     severity: "warning",
                     size: "small",
                     ...{ class: "p-button-technical" },
                 }));
-                const __VLS_9 = __VLS_8({
+                const __VLS_13 = __VLS_12({
                     label: "Take Action",
                     icon: "pi pi-bolt",
                     severity: "warning",
                     size: "small",
                     ...{ class: "p-button-technical" },
-                }, ...__VLS_functionalComponentArgsRest(__VLS_8));
+                }, ...__VLS_functionalComponentArgsRest(__VLS_12));
             }
-            const __VLS_11 = {}.Button;
-            /** @type {[typeof __VLS_components.Button, ]} */ ;
-            // @ts-ignore
-            const __VLS_12 = __VLS_asFunctionalComponent(__VLS_11, new __VLS_11({
-                ...{ 'onClick': {} },
-                label: "View Trace",
-                icon: "pi pi-search",
-                text: true,
-                size: "small",
-                ...{ class: "p-button-technical" },
-                disabled: true,
-                title: "TODO: Story 3.5 (Reasoning Trace) not yet implemented",
-            }));
-            const __VLS_13 = __VLS_12({
-                ...{ 'onClick': {} },
-                label: "View Trace",
-                icon: "pi pi-search",
-                text: true,
-                size: "small",
-                ...{ class: "p-button-technical" },
-                disabled: true,
-                title: "TODO: Story 3.5 (Reasoning Trace) not yet implemented",
-            }, ...__VLS_functionalComponentArgsRest(__VLS_12));
-            let __VLS_15;
-            let __VLS_16;
-            let __VLS_17;
-            const __VLS_18 = {
-                onClick: (...[$event]) => {
-                    if (!!(__VLS_ctx.loading))
-                        return;
-                    if (!(__VLS_ctx.outcomeItems.length > 0))
-                        return;
-                    __VLS_ctx.router.push(`/activity?task=${item.id}`);
-                }
-            };
-            var __VLS_14;
+            if (item.type === 'task') {
+                const __VLS_15 = {}.Button;
+                /** @type {[typeof __VLS_components.Button, ]} */ ;
+                // @ts-ignore
+                const __VLS_16 = __VLS_asFunctionalComponent(__VLS_15, new __VLS_15({
+                    ...{ 'onClick': {} },
+                    label: "View Trace",
+                    icon: "pi pi-search",
+                    text: true,
+                    size: "small",
+                    ...{ class: "p-button-technical" },
+                }));
+                const __VLS_17 = __VLS_16({
+                    ...{ 'onClick': {} },
+                    label: "View Trace",
+                    icon: "pi pi-search",
+                    text: true,
+                    size: "small",
+                    ...{ class: "p-button-technical" },
+                }, ...__VLS_functionalComponentArgsRest(__VLS_16));
+                let __VLS_19;
+                let __VLS_20;
+                let __VLS_21;
+                const __VLS_22 = {
+                    onClick: (...[$event]) => {
+                        if (!!(__VLS_ctx.loading))
+                            return;
+                        if (!(__VLS_ctx.outcomeItems.length > 0))
+                            return;
+                        if (!(item.type === 'task'))
+                            return;
+                        __VLS_ctx.openTrace(item.id);
+                    }
+                };
+                var __VLS_18;
+            }
         }
         var __VLS_6;
     }
@@ -339,31 +356,41 @@ else {
     __VLS_asFunctionalElement(__VLS_intrinsicElements.p, __VLS_intrinsicElements.p)({
         ...{ class: "text-slate-500 font-technical max-w-md" },
     });
-    const __VLS_19 = {}.Button;
+    const __VLS_23 = {}.Button;
     /** @type {[typeof __VLS_components.Button, ]} */ ;
     // @ts-ignore
-    const __VLS_20 = __VLS_asFunctionalComponent(__VLS_19, new __VLS_19({
+    const __VLS_24 = __VLS_asFunctionalComponent(__VLS_23, new __VLS_23({
         ...{ 'onClick': {} },
         label: "Refresh Brief",
         icon: "pi pi-refresh",
         text: true,
         ...{ class: "mt-6" },
     }));
-    const __VLS_21 = __VLS_20({
+    const __VLS_25 = __VLS_24({
         ...{ 'onClick': {} },
         label: "Refresh Brief",
         icon: "pi pi-refresh",
         text: true,
         ...{ class: "mt-6" },
-    }, ...__VLS_functionalComponentArgsRest(__VLS_20));
-    let __VLS_23;
-    let __VLS_24;
-    let __VLS_25;
-    const __VLS_26 = {
+    }, ...__VLS_functionalComponentArgsRest(__VLS_24));
+    let __VLS_27;
+    let __VLS_28;
+    let __VLS_29;
+    const __VLS_30 = {
         onClick: (__VLS_ctx.fetchData)
     };
-    var __VLS_22;
+    var __VLS_26;
 }
+/** @type {[typeof ReasoningTracePane, ]} */ ;
+// @ts-ignore
+const __VLS_31 = __VLS_asFunctionalComponent(ReasoningTracePane, new ReasoningTracePane({
+    visible: (__VLS_ctx.isTraceVisible),
+    taskId: (__VLS_ctx.selectedTaskId),
+}));
+const __VLS_32 = __VLS_31({
+    visible: (__VLS_ctx.isTraceVisible),
+    taskId: (__VLS_ctx.selectedTaskId),
+}, ...__VLS_functionalComponentArgsRest(__VLS_31));
 /** @type {__VLS_StyleScopedClasses['space-y-8']} */ ;
 /** @type {__VLS_StyleScopedClasses['p-6']} */ ;
 /** @type {__VLS_StyleScopedClasses['lg:p-10']} */ ;
@@ -503,9 +530,12 @@ const __VLS_self = (await import('vue')).defineComponent({
     setup() {
         return {
             OutcomeCard: OutcomeCard,
+            ReasoningTracePane: ReasoningTracePane,
             Button: Button,
             Card: Card,
-            router: router,
+            isTraceVisible: isTraceVisible,
+            selectedTaskId: selectedTaskId,
+            openTrace: openTrace,
             userStore: userStore,
             loading: loading,
             greeting: greeting,

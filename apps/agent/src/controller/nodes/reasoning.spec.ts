@@ -1,11 +1,35 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { reasoningNode } from './reasoning.js';
-import { LLMProviderFactory } from '../../services/llm/factory.js';
 import { supabase } from '../../services/supabase.js';
 
-vi.mock('../../services/llm/factory.js', () => ({
-  LLMProviderFactory: {
-    getProvider: vi.fn(),
+// Mock Config
+vi.mock('../../config/index.js', () => ({
+  config: {
+    MISTRAL_API_KEY: 'mock-key',
+    DEFAULT_LLM_MODEL: 'mistral-small-latest',
+  },
+}));
+
+const { mockInvoke, mockWithStructuredOutput } = vi.hoisted(() => ({
+  mockInvoke: vi.fn(),
+  mockWithStructuredOutput: vi.fn(),
+}));
+
+vi.mock('@langchain/mistralai', () => {
+  return {
+    ChatMistralAI: vi.fn().mockImplementation(() => ({
+      invoke: mockInvoke,
+      withStructuredOutput: mockWithStructuredOutput.mockReturnThis(),
+    })),
+  };
+});
+
+// Mock tracing service
+vi.mock('../../services/llm/tracing.js', () => ({
+  tracingService: {
+    getHandler: vi.fn().mockReturnValue(null),
+    handleSuccess: vi.fn(),
+    handleFailure: vi.fn(),
   },
 }));
 
@@ -31,23 +55,21 @@ describe('reasoningNode', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockInvoke.mockReset();
+    mockWithStructuredOutput.mockClear();
   });
 
-  it('should call generateText and append to trace', async () => {
-    const mockProvider = {
-      generateText: vi.fn().mockResolvedValue({
-        data: 'I am the AI assistant',
-        usage: { promptTokens: 5, completionTokens: 10, totalTokens: 15, latencyMs: 100 },
-        model: 'mistral-small',
-      }),
-    };
-
-    (LLMProviderFactory.getProvider as any).mockReturnValue(mockProvider);
+  it('should call generateText (via invoke) and append to trace', async () => {
+    mockInvoke.mockResolvedValue({
+      content: 'I am the AI assistant',
+      additional_kwargs: {},
+      response_metadata: {},
+    });
 
     const result = await reasoningNode(mockState);
 
     expect(result.result).toBe('I am the AI assistant');
-    expect(mockProvider.generateText).toHaveBeenCalledWith('Who are you?');
+    expect(mockInvoke).toHaveBeenCalled();
     expect(result.trace).toHaveLength(1);
     expect(result.trace![0].step_name).toBe('LLM Reasoning');
     expect(supabase.from).not.toHaveBeenCalled();
@@ -63,16 +85,8 @@ describe('reasoningNode', () => {
     expect(result.error).toBe('No prompt provided for reasoning node');
   });
 
-  it('should call generateStructured when valid schemaKey is provided', async () => {
-    const mockProvider = {
-      generateStructured: vi.fn().mockResolvedValue({
-        data: { summary: 'Test summary', key_points: ['A', 'B'], confidence: 0.9 },
-        usage: { promptTokens: 5, completionTokens: 10, totalTokens: 15, latencyMs: 100 },
-        model: 'mistral-small',
-      }),
-    };
-
-    (LLMProviderFactory.getProvider as any).mockReturnValue(mockProvider);
+  it('should call generateStructured (via withStructuredOutput) when valid schemaKey is provided', async () => {
+    mockInvoke.mockResolvedValue({ summary: 'Test summary', key_points: ['A', 'B'], confidence: 0.9 });
 
     const structuredState: any = {
       task: {
@@ -84,24 +98,17 @@ describe('reasoningNode', () => {
     const result = await reasoningNode(structuredState);
 
     expect(result.result).toEqual({ summary: 'Test summary', key_points: ['A', 'B'], confidence: 0.9 });
-    expect(mockProvider.generateStructured).toHaveBeenCalled();
+    expect(mockWithStructuredOutput).toHaveBeenCalled();
+    expect(mockInvoke).toHaveBeenCalled();
   });
 
   it('should require confidence and ambiguity_detected in structured output', async () => {
-    const mockProvider = {
-      generateStructured: vi.fn().mockResolvedValue({
-        data: { 
-          summary: 'Test summary', 
-          key_points: ['A'], 
-          confidence: 0.95, 
-          ambiguity_detected: false 
-        },
-        usage: { promptTokens: 5, completionTokens: 10, totalTokens: 15, latencyMs: 100 },
-        model: 'mistral-small',
-      }),
-    };
-
-    (LLMProviderFactory.getProvider as any).mockReturnValue(mockProvider);
+    mockInvoke.mockResolvedValue({ 
+      summary: 'Test summary', 
+      key_points: ['A'], 
+      confidence: 0.95, 
+      ambiguity_detected: false 
+    });
 
     const structuredState: any = {
       task: {
@@ -118,11 +125,6 @@ describe('reasoningNode', () => {
   });
 
   it('should return error when invalid schemaKey is provided', async () => {
-    const mockProvider = {
-      generateText: vi.fn(),
-    };
-    (LLMProviderFactory.getProvider as any).mockReturnValue(mockProvider);
-
     const invalidSchemaState: any = {
       task: {
         ...mockTask,

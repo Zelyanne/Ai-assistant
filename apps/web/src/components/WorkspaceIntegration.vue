@@ -1,19 +1,59 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, onMounted } from 'vue';
 import Button from 'primevue/button';
 import Card from 'primevue/card';
 import Message from 'primevue/message';
-import { useAuth } from '../composables/useAuth';
+import Tag from 'primevue/tag';
+import { supabase } from '../services/supabase';
+import { useUserStore } from '../stores/user';
 
-const { signInWithGoogle } = useAuth();
+const userStore = useUserStore();
 const loading = ref(false);
 const error = ref<string | null>(null);
+const connectionStatus = ref<'connected' | 'disconnected' | 'error'>('disconnected');
+const lastSync = ref<string | null>(null);
+
+const fetchStatus = async () => {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return;
+
+  const organizationId = userStore.profile?.organization_id;
+  if (!organizationId) return;
+
+  const { data } = await supabase
+    .from('workspace_integrations')
+    .select('sync_status, last_sync_at')
+    .eq('organization_id', organizationId)
+    .eq('provider', 'google')
+    .single();
+
+  if (data) {
+    connectionStatus.value = data.sync_status === 'error' ? 'error' : 'connected';
+    lastSync.value = data.last_sync_at;
+  }
+};
+
+onMounted(fetchStatus);
 
 const handleConnect = async () => {
   loading.value = true;
   error.value = null;
   try {
-    await signInWithGoogle();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('You must be logged in');
+
+    const organizationId = userStore.profile?.organization_id;
+    if (!organizationId) throw new Error('Organization ID not found in user profile');
+
+    const agentUrl = import.meta.env.VITE_AGENT_URL || 'http://localhost:3001';
+    const response = await fetch(`${agentUrl}/api/auth/google/url?organizationId=${organizationId}&userId=${user.id}`);
+    const { url } = await response.json();
+
+    if (url) {
+      window.location.href = url;
+    } else {
+      throw new Error('Failed to get authorization URL');
+    }
   } catch (err: any) {
     error.value = err.message || 'Failed to connect to Google Workspace';
     console.error('Connection error:', err);
@@ -27,9 +67,13 @@ const handleConnect = async () => {
   <div class="p-4">
     <Card class="max-w-md mx-auto shadow-lg">
       <template #title>
-        <div class="flex items-center gap-3">
-          <i class="pi pi-google text-blue-500 text-3xl" />
-          <span class="font-bold text-xl text-gray-800">Google Workspace</span>
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <i class="pi pi-google text-blue-500 text-3xl" />
+            <span class="font-bold text-xl text-gray-800">Google Workspace</span>
+          </div>
+          <Tag v-if="connectionStatus === 'connected'" severity="success" value="Connected" />
+          <Tag v-else-if="connectionStatus === 'error'" severity="danger" value="Error" />
         </div>
       </template>
       <template #content>
@@ -39,14 +83,18 @@ const handleConnect = async () => {
             This data is used to populate your personalized morning briefs.
           </p>
           
+          <div v-if="lastSync" class="mt-2 text-xs text-slate-400 italic">
+            Last synced: {{ new Date(lastSync).toLocaleString() }}
+          </div>
+
           <div class="mt-4 flex flex-col gap-2">
             <div class="flex items-center gap-2 text-sm text-gray-500">
               <i class="pi pi-check-circle text-green-500" />
-              <span>Read-only access to Gmail</span>
+              <span>Full Gmail access (Read/Write)</span>
             </div>
             <div class="flex items-center gap-2 text-sm text-gray-500">
               <i class="pi pi-check-circle text-green-500" />
-              <span>Read-only access to Calendar</span>
+              <span>Calendar management</span>
             </div>
             <div class="flex items-center gap-2 text-sm text-gray-500">
               <i class="pi pi-shield text-blue-500" />
@@ -62,12 +110,12 @@ const handleConnect = async () => {
       <template #footer>
         <div class="flex justify-end pt-2">
           <Button 
-            label="Connect Workspace" 
+            :label="connectionStatus === 'connected' ? 'Reconnect Workspace' : 'Connect Workspace'" 
             icon="pi pi-external-link" 
             iconPos="right"
             :loading="loading" 
             @click="handleConnect"
-            severity="primary"
+            :severity="connectionStatus === 'connected' ? 'secondary' : 'primary'"
             class="px-6 py-2"
           />
         </div>
@@ -75,6 +123,7 @@ const handleConnect = async () => {
     </Card>
   </div>
 </template>
+
 
 <style scoped>
 :deep(.p-card-title) {

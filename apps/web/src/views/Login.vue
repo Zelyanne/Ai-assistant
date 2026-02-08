@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import { supabase } from '../services/supabase';
+import { supabase, signInWithGoogle } from '../services/supabase';
 import { useRouter } from 'vue-router';
 import Button from 'primevue/button';
 import InputText from 'primevue/inputtext';
@@ -29,6 +29,17 @@ const handleLogin = async () => {
   } catch (error: any) {
     errorMessage.value = error.message || 'Failed to sign in';
   } finally {
+    loading.value = false;
+  }
+};
+
+const handleGoogleLogin = async () => {
+  loading.value = true;
+  errorMessage.value = '';
+  try {
+    await signInWithGoogle();
+  } catch (error: unknown) {
+    errorMessage.value = error instanceof Error ? error.message : 'Failed to sign in with Google';
     loading.value = false;
   }
 };
@@ -84,9 +95,33 @@ const handleLogin = async () => {
             class="w-full py-3"
             severity="contrast"
           />
+
+          <div class="relative my-6">
+            <div class="absolute inset-0 flex items-center">
+              <span class="w-full border-t border-slate-200"></span>
+            </div>
+            <div class="relative flex justify-center text-xs uppercase">
+              <span class="bg-white px-2 text-slate-500 font-technical">Or continue with</span>
+            </div>
+          </div>
+
+          <Button 
+            type="button"
+            label="Google" 
+            icon="pi pi-google"
+            :loading="loading" 
+            class="w-full py-3"
+            severity="secondary"
+            outlined
+            @click="handleGoogleLogin"
+          />
         </form>
 
-        <div class="mt-8 pt-8 border-t border-slate-100 text-center">
+        <div class="mt-8 pt-8 border-t border-slate-100 text-center space-y-4">
+          <p class="text-sm text-slate-600">
+            Don't have an account? 
+            <router-link to="/register" class="text-executive-primary font-semibold hover:underline">Register</router-link>
+          </p>
           <p class="text-xs text-slate-400">
             Secure enterprise access governed by PerimeterGuard™
           </p>

@@ -1,5 +1,5 @@
 import { ref } from 'vue';
-import { supabase } from '../services/supabase';
+import { supabase, signInWithGoogle } from '../services/supabase';
 import { useRouter } from 'vue-router';
 import Button from 'primevue/button';
 import InputText from 'primevue/inputtext';
@@ -26,6 +26,17 @@ const handleLogin = async () => {
         errorMessage.value = error.message || 'Failed to sign in';
     }
     finally {
+        loading.value = false;
+    }
+};
+const handleGoogleLogin = async () => {
+    loading.value = true;
+    errorMessage.value = '';
+    try {
+        await signInWithGoogle();
+    }
+    catch (error) {
+        errorMessage.value = error.message || 'Failed to sign in with Google';
         loading.value = false;
     }
 };
@@ -155,8 +166,69 @@ const __VLS_14 = __VLS_13({
     severity: "contrast",
 }, ...__VLS_functionalComponentArgsRest(__VLS_13));
 __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
-    ...{ class: "mt-8 pt-8 border-t border-slate-100 text-center" },
+    ...{ class: "relative my-6" },
 });
+__VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+    ...{ class: "absolute inset-0 flex items-center" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({
+    ...{ class: "w-full border-t border-slate-200" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+    ...{ class: "relative flex justify-center text-xs uppercase" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({
+    ...{ class: "bg-white px-2 text-slate-500 font-technical" },
+});
+const __VLS_16 = {}.Button;
+/** @type {[typeof __VLS_components.Button, ]} */ ;
+// @ts-ignore
+const __VLS_17 = __VLS_asFunctionalComponent(__VLS_16, new __VLS_16({
+    ...{ 'onClick': {} },
+    type: "button",
+    label: "Google",
+    icon: "pi pi-google",
+    loading: (__VLS_ctx.loading),
+    ...{ class: "w-full py-3" },
+    severity: "secondary",
+    outlined: true,
+}));
+const __VLS_18 = __VLS_17({
+    ...{ 'onClick': {} },
+    type: "button",
+    label: "Google",
+    icon: "pi pi-google",
+    loading: (__VLS_ctx.loading),
+    ...{ class: "w-full py-3" },
+    severity: "secondary",
+    outlined: true,
+}, ...__VLS_functionalComponentArgsRest(__VLS_17));
+let __VLS_20;
+let __VLS_21;
+let __VLS_22;
+const __VLS_23 = {
+    onClick: (__VLS_ctx.handleGoogleLogin)
+};
+var __VLS_19;
+__VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+    ...{ class: "mt-8 pt-8 border-t border-slate-100 text-center space-y-4" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.p, __VLS_intrinsicElements.p)({
+    ...{ class: "text-sm text-slate-600" },
+});
+const __VLS_24 = {}.RouterLink;
+/** @type {[typeof __VLS_components.RouterLink, typeof __VLS_components.routerLink, typeof __VLS_components.RouterLink, typeof __VLS_components.routerLink, ]} */ ;
+// @ts-ignore
+const __VLS_25 = __VLS_asFunctionalComponent(__VLS_24, new __VLS_24({
+    to: "/register",
+    ...{ class: "text-executive-primary font-semibold hover:underline" },
+}));
+const __VLS_26 = __VLS_25({
+    to: "/register",
+    ...{ class: "text-executive-primary font-semibold hover:underline" },
+}, ...__VLS_functionalComponentArgsRest(__VLS_25));
+__VLS_27.slots.default;
+var __VLS_27;
 __VLS_asFunctionalElement(__VLS_intrinsicElements.p, __VLS_intrinsicElements.p)({
     ...{ class: "text-xs text-slate-400" },
 });
@@ -223,11 +295,37 @@ __VLS_asFunctionalElement(__VLS_intrinsicElements.p, __VLS_intrinsicElements.p)(
 /** @type {__VLS_StyleScopedClasses['font-technical']} */ ;
 /** @type {__VLS_StyleScopedClasses['w-full']} */ ;
 /** @type {__VLS_StyleScopedClasses['py-3']} */ ;
+/** @type {__VLS_StyleScopedClasses['relative']} */ ;
+/** @type {__VLS_StyleScopedClasses['my-6']} */ ;
+/** @type {__VLS_StyleScopedClasses['absolute']} */ ;
+/** @type {__VLS_StyleScopedClasses['inset-0']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex']} */ ;
+/** @type {__VLS_StyleScopedClasses['items-center']} */ ;
+/** @type {__VLS_StyleScopedClasses['w-full']} */ ;
+/** @type {__VLS_StyleScopedClasses['border-t']} */ ;
+/** @type {__VLS_StyleScopedClasses['border-slate-200']} */ ;
+/** @type {__VLS_StyleScopedClasses['relative']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex']} */ ;
+/** @type {__VLS_StyleScopedClasses['justify-center']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
+/** @type {__VLS_StyleScopedClasses['uppercase']} */ ;
+/** @type {__VLS_StyleScopedClasses['bg-white']} */ ;
+/** @type {__VLS_StyleScopedClasses['px-2']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-slate-500']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-technical']} */ ;
+/** @type {__VLS_StyleScopedClasses['w-full']} */ ;
+/** @type {__VLS_StyleScopedClasses['py-3']} */ ;
 /** @type {__VLS_StyleScopedClasses['mt-8']} */ ;
 /** @type {__VLS_StyleScopedClasses['pt-8']} */ ;
 /** @type {__VLS_StyleScopedClasses['border-t']} */ ;
 /** @type {__VLS_StyleScopedClasses['border-slate-100']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-center']} */ ;
+/** @type {__VLS_StyleScopedClasses['space-y-4']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-slate-600']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-executive-primary']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-semibold']} */ ;
+/** @type {__VLS_StyleScopedClasses['hover:underline']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-slate-400']} */ ;
 var __VLS_dollars;
@@ -243,6 +341,7 @@ const __VLS_self = (await import('vue')).defineComponent({
             loading: loading,
             errorMessage: errorMessage,
             handleLogin: handleLogin,
+            handleGoogleLogin: handleGoogleLogin,
         };
     },
 });

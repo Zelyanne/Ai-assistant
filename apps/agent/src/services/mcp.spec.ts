@@ -18,13 +18,21 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
   };
 });
 
-vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => {
+vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => {
   return {
-    StdioClientTransport: vi.fn().mockImplementation(function() {
+    SSEClientTransport: vi.fn().mockImplementation(function() {
       return {};
     })
   };
 });
+
+vi.mock('../config/index.js', () => ({
+  config: {
+    ENCRYPTION_SECRET: 'a'.repeat(32),
+    GOOGLE_OAUTH_CLIENT_ID: 'client-id',
+    GOOGLE_OAUTH_CLIENT_SECRET: 'client-secret',
+  }
+}));
 
 vi.mock('./supabase.js', () => ({
   supabase: {
@@ -53,7 +61,6 @@ describe('MCPService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.ENCRYPTION_SECRET = 'a'.repeat(32);
     mcpService = new MCPService();
     
     // Reset mock defaults
@@ -98,12 +105,6 @@ describe('MCPService', () => {
     
     await expect(mcpService.executeTool('org-123', 'invalid.tool', {}))
       .rejects.toThrow('Tool failed');
-    
-    // Should NOT close automatically in the catch block of executeTool? 
-    // The current implementation removes from cache but doesn't explicitly call close() on the client instance 
-    // inside the catch block to avoid race conditions or if it's already closed?
-    // Let's check the code: "this.clientCache.delete(orgId);"
-    // It doesn't call close() in the catch block. Ideally it should, but for this test we check cache invalidation.
     
     // Verify it's removed from cache by making another call which should trigger a new connect
     mockClientInstance.callTool.mockResolvedValueOnce({ content: [] }); // Reset to success

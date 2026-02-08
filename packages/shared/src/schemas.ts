@@ -17,7 +17,7 @@ export const AgencyPerimeterSchema = z.object({
 
 export type AgencyPerimeter = z.infer<typeof AgencyPerimeterSchema>;
 
-export const UserRoleSchema = z.enum(['CEO', 'PM', 'Team Member']);
+export const UserRoleSchema = z.enum(['CEO', 'PM', 'Team Member', 'Simple User']);
 export type UserRole = z.infer<typeof UserRoleSchema>;
 
 export const TaskSchema = z.object({
@@ -99,6 +99,7 @@ export const WorkspaceIntegrationSchema = z.object({
   provider: z.string(),
   encrypted_creds: z.any(),
   sync_status: z.string(),
+  label_preferences: z.array(z.string()).default([]),
   last_sync_at: z.string().nullable().optional(),
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
@@ -124,6 +125,7 @@ export const IngestedThreadSchema = z.object({
   priority_score: z.number().nullable().optional(),
   summary: z.string().nullable().optional(),
   summary_json: ThreadSummarySchema.nullable().optional(),
+  body: z.string().optional(),
   metadata: z.record(z.any()),
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
@@ -168,13 +170,24 @@ export const WatchTopicSchema = z.object({
   updated_at: z.string().optional(),
 });
 
+export const TopicDeepDiveSchema = z.object({
+  topic: z.string(),
+  count: z.number(),
+  summaries: z.array(z.string()),
+});
+
+export type TopicDeepDive = z.infer<typeof TopicDeepDiveSchema>;
+
 export const MorningBriefSchema = z.object({
   id: z.string().uuid().optional(),
   organization_id: z.string().uuid(),
   user_id: z.string().uuid(),
-  brief_date: z.string(),
-  content_json: z.record(z.any()),
-  is_read: z.boolean(),
+  generated_at: z.string(),
+  summary_text: z.string(),
+  blockers: z.array(z.string()),
+  risks: z.array(z.string()),
+  topic_deep_dives: z.array(TopicDeepDiveSchema),
+  is_read: z.boolean().default(false),
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
 });

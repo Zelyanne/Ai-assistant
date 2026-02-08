@@ -8,6 +8,8 @@ export const useUserStore = defineStore('user', () => {
     const isCEO = computed(() => role.value === 'CEO');
     const isPM = computed(() => role.value === 'PM');
     const isTeamMember = computed(() => role.value === 'Team Member');
+    const isSimpleUser = computed(() => role.value === 'Simple User');
+    const hasOrganization = computed(() => !!profile.value?.organization_id);
     async function fetchProfile() {
         loading.value = true;
         try {
@@ -40,6 +42,8 @@ export const useUserStore = defineStore('user', () => {
         isCEO,
         isPM,
         isTeamMember,
+        isSimpleUser,
+        hasOrganization,
         fetchProfile,
     };
 });

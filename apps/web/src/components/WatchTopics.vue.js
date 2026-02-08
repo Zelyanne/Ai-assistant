@@ -20,18 +20,22 @@ const priorityOptions = [
     { label: 'Low', value: 'Low' }
 ];
 async function fetchTopics() {
-    if (!userStore.profile?.id)
+    if (!userStore.profile?.organization_id)
         return;
     loading.value = true;
     try {
         const { data, error: err } = await supabase
             .from('watch_topics')
-            .select('*')
-            .eq('user_id', userStore.profile.id)
+            .select('id, topic, priority')
+            .eq('organization_id', userStore.profile.organization_id)
             .order('created_at', { ascending: false });
         if (err)
             throw err;
-        topics.value = data || [];
+        topics.value = (data || []).map((row) => ({
+            id: row.id,
+            topic: row.topic,
+            priority: row.priority || 'Medium'
+        }));
     }
     catch (err) {
         error.value = err.message;
@@ -41,22 +45,30 @@ async function fetchTopics() {
     }
 }
 async function addTopic() {
-    if (!newTopic.value.trim() || !userStore.profile?.id)
+    if (!newTopic.value.trim() || !userStore.profile?.organization_id)
         return;
     loading.value = true;
     try {
         const { data, error: err } = await supabase
             .from('watch_topics')
             .insert({
-            user_id: userStore.profile.id,
+            organization_id: userStore.profile.organization_id,
             topic: newTopic.value.trim(),
-            priority: newPriority.value
+            priority: newPriority.value,
+            keywords_array: []
         })
             .select()
             .single();
         if (err)
             throw err;
-        topics.value.unshift(data);
+        if (data) {
+            const row = data;
+            topics.value.unshift({
+                id: row.id,
+                topic: row.topic,
+                priority: row.priority || 'Medium'
+            });
+        }
         newTopic.value = '';
         newPriority.value = 'Medium';
     }

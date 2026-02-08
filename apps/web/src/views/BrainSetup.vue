@@ -158,7 +158,6 @@ onUnmounted(() => {
       <Message v-if="saveSuccess" severity="success" class="font-technical">
         Protocol saved successfully! Antigravity will now follow these guidelines for all future tasks.
       </Message>
-      </section>
     </section>
 
     <WatchTopics />

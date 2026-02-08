@@ -1,4 +1,4 @@
-import { Database } from '@ai-assistant/shared';
+import type { Database } from '@ai-assistant/shared';
 export declare const supabase: import("@supabase/supabase-js").SupabaseClient<Database, "public", "public", {
     Tables: {
         agency_perimeters: {
@@ -139,37 +139,49 @@ export declare const supabase: import("@supabase/supabase-js").SupabaseClient<Da
         ingested_threads: {
             Row: {
                 category: string | null;
+                classification: import("@ai-assistant/shared").Json | null;
                 created_at: string;
                 external_id: string;
                 id: string;
+                is_highlighted: boolean | null;
                 metadata: import("@ai-assistant/shared").Json;
                 organization_id: string;
                 priority_score: number | null;
+                subject: string | null;
                 summary: string | null;
+                summary_json: import("@ai-assistant/shared").Json | null;
                 updated_at: string;
                 user_id: string | null;
             };
             Insert: {
                 category?: string | null;
+                classification?: import("@ai-assistant/shared").Json | null;
                 created_at?: string;
                 external_id: string;
                 id?: string;
+                is_highlighted?: boolean | null;
                 metadata?: import("@ai-assistant/shared").Json;
                 organization_id: string;
                 priority_score?: number | null;
+                subject?: string | null;
                 summary?: string | null;
+                summary_json?: import("@ai-assistant/shared").Json | null;
                 updated_at?: string;
                 user_id?: string | null;
             };
             Update: {
                 category?: string | null;
+                classification?: import("@ai-assistant/shared").Json | null;
                 created_at?: string;
                 external_id?: string;
                 id?: string;
+                is_highlighted?: boolean | null;
                 metadata?: import("@ai-assistant/shared").Json;
                 organization_id?: string;
                 priority_score?: number | null;
+                subject?: string | null;
                 summary?: string | null;
+                summary_json?: import("@ai-assistant/shared").Json | null;
                 updated_at?: string;
                 user_id?: string | null;
             };
@@ -509,9 +521,10 @@ export declare const supabase: import("@supabase/supabase-js").SupabaseClient<Da
     Enums: {
         agency_tier: "Public" | "Controlled" | "Restricted";
         task_status: "queued" | "processing" | "done" | "error" | "escalation";
-        user_role: "CEO" | "PM" | "Team Member";
+        user_role: "CEO" | "PM" | "Team Member" | "Simple User";
     };
     CompositeTypes: { [_ in never]: never; };
 }, {
     PostgrestVersion: "14.1";
 }>;
+export declare const signInWithGoogle: () => Promise<void>;

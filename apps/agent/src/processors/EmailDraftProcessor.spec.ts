@@ -1,9 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EmailDraftProcessor } from './EmailDraftProcessor.js';
-import { MCPService } from '../services/mcp.js';
+import { mcpService } from '../services/mcp.js';
 
 // Mock dependencies
-vi.mock('../services/mcp.js');
+const { mockExecuteTool } = vi.hoisted(() => ({
+  mockExecuteTool: vi.fn()
+}));
+
+vi.mock('../services/mcp.js', () => ({
+  MCPService: class {
+    executeTool = mockExecuteTool;
+  },
+  mcpService: {
+    executeTool: mockExecuteTool
+  }
+}));
+
 
 // Mock Supabase to prevent config validation error
 vi.mock('../services/supabase.js', () => ({
@@ -12,19 +24,17 @@ vi.mock('../services/supabase.js', () => ({
 
 describe('EmailDraftProcessor', () => {
   let processor: EmailDraftProcessor;
-  let mockExecuteTool: any;
 
   beforeEach(() => {
+
     vi.clearAllMocks();
-    mockExecuteTool = vi.fn().mockResolvedValue({ 
+    mockExecuteTool.mockResolvedValue({ 
       content: [{ type: 'text', text: 'Draft created' }] 
     });
     
-    // Mock the MCPService class method
-    MCPService.prototype.executeTool = mockExecuteTool;
-    
     processor = new EmailDraftProcessor();
   });
+
 
   it('should successfully create an email draft via MCP', async () => {
     const task = {

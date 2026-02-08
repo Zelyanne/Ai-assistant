@@ -1,18 +1,41 @@
 import { z } from 'zod';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-dotenv.config();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const envPath = path.resolve(__dirname, '../../.env');
+
+// Check if .env exists, if not, try current dir (dist/ or src/)
+import { existsSync } from 'fs';
+const activeEnvPath = existsSync(envPath) ? envPath : path.resolve(process.cwd(), '.env');
+
+dotenv.config({ path: activeEnvPath, override: true });
 
 const envSchema = z.object({
-  SUPABASE_URL: z.string().url(),
-  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
-  MISTRAL_API_KEY: z.string().min(1),
+  SUPABASE_URL: z.string().url().transform((val) => val.trim()),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).transform((val) => val.trim()),
+  MISTRAL_API_KEY: z.string().min(1).transform((val) => val.trim()),
   DEFAULT_LLM_MODEL: z.string().default('mistral-small-latest'),
-  OPENAI_API_KEY: z.string().min(1).optional(),
-  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  OPENAI_API_KEY: z.string().min(1).optional().transform((val) => val?.trim()),
+  ANTHROPIC_API_KEY: z.string().min(1).optional().transform((val) => val?.trim()),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.string().default('3001'),
   CONFIDENCE_THRESHOLD: z.coerce.number().default(0.8),
+  GOOGLE_OAUTH_CLIENT_ID: z.string().min(1).transform((val) => val.trim()),
+  GOOGLE_OAUTH_CLIENT_SECRET: z.string().min(1).transform((val) => val.trim()),
+  GOOGLE_OAUTH_REDIRECT_URI: z.string().url().transform((val) => val.trim()),
+  ENCRYPTION_SECRET: z.string().length(32),
+  // Langfuse Tracing Variables (NEW - Primary)
+  ENABLE_LANGFUSE_TRACING: z.string().default('false').transform((val) => val === 'true'),
+  LANGFUSE_PUBLIC_KEY: z.string().min(1).optional().transform((val) => val?.trim()),
+  LANGFUSE_SECRET_KEY: z.string().min(1).optional().transform((val) => val?.trim()),
+  LANGFUSE_HOST: z.string().url().default('https://cloud.langfuse.com').transform((val) => val.trim()),
+  // Legacy LangSmith Tracing Variables (DEPRECATED - kept for rollback)
+  LANGSMITH_TRACING: z.string().default('false').transform((val) => val === 'true'),
+  LANGSMITH_ENDPOINT: z.string().url().default('https://api.smith.langchain.com').transform((val) => val.trim()),
+  LANGSMITH_API_KEY: z.string().min(1).optional().transform((val) => val?.trim()),
+  LANGSMITH_PROJECT: z.string().min(1).default('ai-assistant').transform((val) => val.trim()),
 });
 
 const _env = envSchema.safeParse(process.env);
@@ -23,3 +46,22 @@ if (!_env.success) {
 }
 
 export const config = _env.data;
+
+// Validate Langfuse configuration if enabled
+if (config.ENABLE_LANGFUSE_TRACING) {
+  if (!config.LANGFUSE_PUBLIC_KEY || !config.LANGFUSE_SECRET_KEY) {
+    console.warn('[Config Warning] ENABLE_LANGFUSE_TRACING is enabled but LANGFUSE_PUBLIC_KEY or LANGFUSE_SECRET_KEY is missing');
+  }
+}
+
+// Legacy LangSmith validation (deprecated)
+if (config.LANGSMITH_TRACING && !config.LANGSMITH_API_KEY) {
+  console.warn('[Config Warning] LANGSMITH_TRACING is enabled but LANGSMITH_API_KEY is missing (LangSmith is deprecated)');
+}
+
+console.log(`[Config] Loaded configuration for Supabase URL: ${config.SUPABASE_URL}`);
+console.log(`[Config] Langfuse tracing: ${config.ENABLE_LANGFUSE_TRACING ? 'ENABLED' : 'DISABLED'}`);
+if (config.LANGSMITH_TRACING) {
+  console.log('[Config] ⚠️  LangSmith tracing is DEPRECATED - consider migrating to Langfuse');
+}
+

@@ -12,8 +12,8 @@ vi.mock('../config/index.js', () => ({
 
 import { EmailTriageProcessor } from './EmailTriageProcessor.js';
 import { supabase } from "../services/supabase.js";
-import { LLMProviderFactory } from '../services/llm/factory.js';
 import { PerimeterGuard } from '../guards/PerimeterGuard.js';
+import { mcpService } from '../services/mcp.js';
 
 vi.mock('../services/supabase.js', () => ({
   supabase: {
@@ -21,37 +21,48 @@ vi.mock('../services/supabase.js', () => ({
   }
 }));
 
-vi.mock('../services/llm/factory.js');
+vi.mock('../services/mcp.js', () => ({
+  mcpService: {
+    getLangChainTools: vi.fn().mockResolvedValue([])
+  }
+}));
+
 vi.mock('../guards/PerimeterGuard.js', () => {
-  class MockPerimeterGuard {
+  const MockPerimeterGuard = class {
     redactPII(text: string) {
       return text;
     }
     recoverPII(text: string) {
       return text;
     }
-  }
+    static wrapToolWithSecurity(tool: any) {
+      return tool;
+    }
+  };
   return { PerimeterGuard: MockPerimeterGuard };
 });
 
 describe('EmailTriageProcessor', () => {
   let processor: EmailTriageProcessor;
-  let mockLLM: any;
+  let mockAgent: any;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockLLM = {
-      generateStructured: vi.fn().mockResolvedValue({
-        data: {
-          matches: [{ topic: 'Urgent', reason: 'Contains word urgent', priority_score: 90 }],
-          overall_priority_score: 90,
-          is_highlighted: true
-        },
-        usage: { promptTokens: 10, completionTokens: 10, totalTokens: 20, latencyMs: 100 }
+    mockAgent = {
+      invoke: vi.fn().mockResolvedValue({
+        messages: [{
+          role: 'assistant',
+          content: JSON.stringify({
+            matches: [{ topic: 'Urgent', reason: 'Contains word urgent', priority_score: 90 }],
+            overall_priority_score: 90,
+            is_highlighted: true
+          })
+        }]
       })
     };
-    (LLMProviderFactory.getProvider as any).mockReturnValue(mockLLM);
     processor = new EmailTriageProcessor();
+    // @ts-ignore - access protected method for mocking
+    vi.spyOn(processor, 'createAgentInstance').mockReturnValue(mockAgent);
   });
 
   const createMockChain = (data: any) => {
@@ -61,6 +72,8 @@ describe('EmailTriageProcessor', () => {
       update: vi.fn().mockReturnThis(),
       insert: vi.fn().mockReturnThis(),
       order: vi.fn().mockReturnThis(),
+      or: vi.fn().mockReturnThis(),
+      is: vi.fn().mockReturnThis(),
       // Final result
       then: (resolve: any) => resolve({ data, error: null }),
       catch: (reject: any) => reject(null)
@@ -96,7 +109,7 @@ describe('EmailTriageProcessor', () => {
     const result = await processor.process(task as any);
 
     expect(result.processed_count).toBe(1);
-    expect(mockLLM.generateStructured).toHaveBeenCalled();
+    expect(mockAgent.invoke).toHaveBeenCalled();
     expect(mockFrom).toHaveBeenCalledWith('ingested_threads');
     expect(mockFrom).toHaveBeenCalledWith('watch_topics');
   });
@@ -114,5 +127,52 @@ describe('EmailTriageProcessor', () => {
     const result = await processor.process(task as any);
     expect(result.processed_count).toBe(0);
     expect(result.message).toContain('No unclassified threads found');
+  });
+
+  it('should fallback to body or summary_json if metadata.snippet is missing', async () => {
+    const mockThreads = [
+      { id: 'thread-body', subject: 'Body only', metadata: {}, body: 'Snippet from body' },
+      { id: 'thread-summary', subject: 'Summary only', metadata: {}, summary_json: { snippet: 'Snippet from summary' } }
+    ];
+    const mockTopics = [{ topic: 'Urgent', priority: 'High' }];
+
+    const mockFrom = vi.mocked(supabase.from);
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'ingested_threads') return createMockChain(mockThreads) as any;
+      if (table === 'watch_topics') return createMockChain(mockTopics) as any;
+      return createMockChain([]) as any;
+    });
+
+    const task = {
+      id: 'task-123',
+      organization_id: 'org-1',
+      domain_action: 'email.triage'
+    };
+
+    await processor.process(task as any);
+
+    // Verify first thread used body
+    expect(mockAgent.invoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          expect.objectContaining({
+            content: expect.stringContaining('EMAIL SNIPPET: Snippet from body')
+          })
+        ]
+      }),
+      expect.anything()
+    );
+
+    // Verify second thread used summary_json.snippet
+    expect(mockAgent.invoke).toHaveBeenNthCalledWith(2,
+      expect.objectContaining({
+        messages: [
+          expect.objectContaining({
+            content: expect.stringContaining('EMAIL SNIPPET: Snippet from summary')
+          })
+        ]
+      }),
+      expect.anything()
+    );
   });
 });

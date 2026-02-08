@@ -1,17 +1,14 @@
 import { BaseProcessor, ProcessorResult } from './BaseProcessor.js';
 import { Task } from '@ai-assistant/shared';
 import { supabase } from "../services/supabase.js";
-import { MCPService } from '../services/mcp.js';
+import { mcpService } from '../services/mcp.js';
 
 /**
  * Processor for email drafting using MCP.
  */
 export class EmailDraftProcessor extends BaseProcessor {
-  private mcpService: MCPService;
-
   constructor() {
     super();
-    this.mcpService = new MCPService();
   }
 
   async process(task: Task): Promise<ProcessorResult> {
@@ -24,7 +21,7 @@ export class EmailDraftProcessor extends BaseProcessor {
     }
 
     // Execute MCP tool
-    const result = await this.mcpService.executeTool(
+    const result = await mcpService.executeTool(
       task.organization_id,
       'create_gmail_draft',
       {
@@ -49,3 +46,4 @@ export class EmailDraftProcessor extends BaseProcessor {
     };
   }
 }
+

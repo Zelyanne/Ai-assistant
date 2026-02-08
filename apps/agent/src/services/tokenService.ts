@@ -1,5 +1,6 @@
 import { supabase } from './supabase.js';
-import { encrypt } from '@ai-assistant/shared';
+import { encrypt } from '@ai-assistant/shared/utils/encryption.js';
+
 
 const ENCRYPTION_SECRET = process.env.ENCRYPTION_SECRET || '';
 

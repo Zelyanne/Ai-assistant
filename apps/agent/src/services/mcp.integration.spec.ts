@@ -52,8 +52,8 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
   })
 }));
 
-vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
-  StdioClientTransport: vi.fn().mockImplementation(function(config) {
+vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => ({
+  SSEClientTransport: vi.fn().mockImplementation(function(config) {
     return {
       start: vi.fn().mockResolvedValue(undefined),
       close: vi.fn().mockResolvedValue(undefined),
@@ -62,12 +62,19 @@ vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
   })
 }));
 
+vi.mock('../config/index.js', () => ({
+  config: {
+    ENCRYPTION_SECRET: 'a'.repeat(32),
+    GOOGLE_OAUTH_CLIENT_ID: 'client-id',
+    GOOGLE_OAUTH_CLIENT_SECRET: 'client-secret',
+  }
+}));
+
 describe('MCPService Integration Flow', () => {
   let service: MCPService;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.ENCRYPTION_SECRET = 'secret';
     service = new MCPService();
   });
 

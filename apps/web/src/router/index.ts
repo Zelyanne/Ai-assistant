@@ -16,6 +16,18 @@ const routes = [
     meta: { public: true }
   },
   {
+    path: '/register',
+    name: 'register',
+    component: () => import('../views/Register.vue'),
+    meta: { public: true }
+  },
+  {
+    path: '/onboarding',
+    name: 'onboarding',
+    component: () => import('../views/Onboarding.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
     path: '/dashboard',
     component: () => import('../components/layout/AppLayout.vue'),
     children: [
@@ -46,10 +58,37 @@ const routes = [
     ]
   },
   {
+    path: '/messages',
+    component: () => import('../components/layout/AppLayout.vue'),
+    children: [
+      {
+        path: '',
+        redirect: { name: 'messages-topic' }
+      },
+      {
+        path: 'topic',
+        name: 'messages-topic',
+        component: () => import('../views/MessageTopicView.vue'),
+        meta: { requiresAuth: true }
+      },
+      {
+        path: 'category',
+        name: 'messages-category',
+        component: () => import('../views/MessageCategoryView.vue'),
+        meta: { requiresAuth: true }
+      }
+    ]
+  },
+  {
     path: '/unauthorized',
     name: 'unauthorized',
     component: { template: '<div class="p-8 text-center"><h1 class="text-2xl font-bold">Permission Denied</h1><p>You do not have access to this page.</p><router-link to="/dashboard" class="text-blue-500 underline">Go back to Dashboard</router-link></div>' },
   },
+  {
+    path: '/:pathMatch(.*)*',
+    name: 'not-found',
+    component: { template: '<div class="p-8 text-center"><h1 class="text-2xl font-bold">404 Not Found</h1><p>Page not found.</p><router-link to="/dashboard" class="text-blue-500 underline">Go back to Dashboard</router-link></div>' },
+  }
 ];
 
 const router = createRouter({
@@ -77,6 +116,18 @@ router.beforeEach(async (to, _from, next) => {
   // Ensure profile is loaded if authenticated
   if (isAuthenticated && !userStore.profile) {
     await userStore.fetchProfile();
+  }
+
+  // Redirect to onboarding if no organization (and not already going to onboarding/login)
+  if (isAuthenticated && !userStore.hasOrganization && !to.meta.public && to.name !== 'onboarding' && to.name !== 'login') {
+    next({ name: 'onboarding' });
+    return;
+  }
+
+  // Redirect away from onboarding if organization already exists
+  if (isAuthenticated && userStore.hasOrganization && to.name === 'onboarding') {
+    next({ name: 'dashboard' });
+    return;
   }
 
   if (to.meta.requiresCEO && !userStore.isCEO) {

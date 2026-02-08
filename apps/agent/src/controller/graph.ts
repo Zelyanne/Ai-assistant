@@ -10,6 +10,7 @@ import { loadProtocol } from "./nodes/protocol.js";
 import { escalateNode } from "./nodes/escalate.js";
 import { AuditLogger } from "../services/AuditLogger.js";
 import { config as appConfig } from "../config/index.js";
+import { tracingService } from "../services/llm/tracing.js";
 
 const CONFIDENCE_THRESHOLD = appConfig.CONFIDENCE_THRESHOLD;
 
@@ -78,6 +79,8 @@ async function checkPerimeter(state: AgentState): Promise<Partial<AgentState>> {
   const task = state.task;
   const topic = task.topic || 'General';
   
+  console.log(`[Graph][${task.id}] Checking perimeter for topic: ${topic}...`);
+  
   try {
     // 1. Get Authorized Tier
     const authorizedTier = await AgencyService.getTierForTopic(task.organization_id, topic);
@@ -91,15 +94,22 @@ async function checkPerimeter(state: AgentState): Promise<Partial<AgentState>> {
     const guard = new PerimeterGuard();
     const rawData = JSON.stringify(task.payload);
     
-    // 3. Run Guard
-    const result = guard.filter(rawData, authorizedTier, requiredTier);
+    // 3. Determine Context Mode (AC 1.4)
+    // Background analysis tasks bypass tier enforcement (but keep redaction)
+    const analysisActions = ['morning.brief', 'email.triage', 'email.summarize', 'system.analyze'];
+    const mode = analysisActions.includes(task.domain_action) ? 'analysis' : 'execution';
+
+    // 4. Run Guard
+    const result = guard.filter(rawData, authorizedTier, requiredTier, mode);
     
     // AC 7: Restricted topics always trigger escalation
+    // EXCEPTION: Background analysis actions are allowed to synthesize cross-tier data without manual approval
+    const isExemptAction = ['morning.brief', 'email.triage', 'email.summarize', 'system.analyze'].includes(task.domain_action);
     const isRestrictedTopic = authorizedTier === 'Restricted';
     const escalationReason = isRestrictedTopic ? 'Restricted topic requires human intervention' : result.reason;
-    const shouldEscalate = result.isEscalated || isRestrictedTopic;
+    const shouldEscalate = !isExemptAction && (result.isEscalated || isRestrictedTopic);
 
-    const step = AuditLogger.createStep('Perimeter Check', shouldEscalate ? `Escalated: ${escalationReason}` : 'Perimeter check passed', {
+    const step = AuditLogger.createStep('Perimeter Check', shouldEscalate ? `Escalated: ${escalationReason}` : (isExemptAction ? `Perimeter check bypassed for ${task.domain_action}` : 'Perimeter check passed'), {
       confidence_score: shouldEscalate ? 0 : 1,
       input_summary: `Topic: ${topic}, AuthTier: ${authorizedTier}, ReqTier: ${requiredTier}`
     });
@@ -174,8 +184,12 @@ async function executeProcessor(state: AgentState): Promise<Partial<AgentState>>
  * Processor-specific nodes (wrapping executeProcessor)
  */
 async function processEmailDraft(state: AgentState) { return executeProcessor(state); }
+async function processEmailTriage(state: AgentState) { return executeProcessor(state); }
+async function processEmailSummarize(state: AgentState) { return executeProcessor(state); }
 async function processCalendarCreate(state: AgentState) { return executeProcessor(state); }
+async function processMorningBrief(state: AgentState) { return executeProcessor(state); }
 async function processProtocolGenerate(state: AgentState) { return executeProcessor(state); }
+
 
 /**
  * Finalize node: Updates task status to 'done' or 'error' in Supabase.
@@ -218,6 +232,9 @@ async function finalizeTask(state: AgentState, config?: RunnableConfig): Promise
       finalTrace,
       state.citations || []
     );
+
+    // 3. Flush Tracing
+    await tracingService.flush();
 
   } catch (err: any) {
     console.error(`[Graph][${state.task.id}] Finalization failed: ${err.message}`);
@@ -298,7 +315,10 @@ const workflow = new StateGraph(AgentStateAnnotation)
   .addNode("reasoning", reasoningNode)
   .addNode("escalate", escalateNode)
   .addNode("email_draft", processEmailDraft)
+  .addNode("email_triage", processEmailTriage)
+  .addNode("email_summarize", processEmailSummarize)
   .addNode("calendar_create", processCalendarCreate)
+  .addNode("morning_brief", processMorningBrief)
   .addNode("protocol_generate", processProtocolGenerate)
   .addNode("unsupported_domain", handleUnsupportedDomain)
   .addNode("finalize", finalizeTask)
@@ -310,7 +330,10 @@ const workflow = new StateGraph(AgentStateAnnotation)
 
   .addEdge("escalate", "finalize")
   .addEdge("email_draft", "finalize")
+  .addEdge("email_triage", "finalize")
+  .addEdge("email_summarize", "finalize")
   .addEdge("calendar_create", "finalize")
+  .addEdge("morning_brief", "finalize")
   .addEdge("protocol_generate", "finalize")
   .addEdge("unsupported_domain", "finalize")
   .addEdge("finalize", END);

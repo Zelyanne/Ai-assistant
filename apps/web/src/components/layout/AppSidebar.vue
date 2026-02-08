@@ -6,6 +6,7 @@ const route = useRoute();
 
 const navItems = [
   { label: 'Dashboard', icon: 'pi pi-home', to: '/dashboard' },
+  { label: 'Messages', icon: 'pi pi-envelope', to: '/messages/topic' },
   { label: 'Protocol', icon: 'pi pi-bolt', to: '/dashboard/brain-setup' },
   { label: 'Settings', icon: 'pi pi-cog', to: '/dashboard/settings' },
 ];

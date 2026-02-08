@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+// @vitest-environment jsdom
 import router from './index';
 import { useUserStore } from '../stores/user';
 import { createPinia, setActivePinia } from 'pinia';
@@ -35,7 +36,7 @@ describe('Router Auth Guards', () => {
         // Mock profile fetch
         const userStore = useUserStore();
         vi.spyOn(userStore, 'fetchProfile').mockResolvedValue();
-        userStore.profile = { id: '123', role: 'CEO' };
+        userStore.profile = { id: '123', role: 'CEO', organization_id: 'org-123' };
         // Ensure we are not already on login
         await router.push('/dashboard/settings');
         await router.push('/login');
@@ -45,9 +46,19 @@ describe('Router Auth Guards', () => {
         supabase.auth.getSession.mockResolvedValue({ data: { session: { user: { id: '123' } } } });
         const userStore = useUserStore();
         vi.spyOn(userStore, 'fetchProfile').mockResolvedValue();
-        userStore.profile = { id: '123', role: 'Team Member' };
+        userStore.profile = { id: '123', role: 'Team Member', organization_id: 'org-123' };
         await router.push('/dashboard/admin');
         expect(router.currentRoute.value.name).toBe('unauthorized');
+    });
+    it('does NOT redirect to onboarding if user has no org but visits a public page (Landing)', async () => {
+        supabase.auth.getSession.mockResolvedValue({ data: { session: { user: { id: '123' } } } });
+        const userStore = useUserStore();
+        vi.spyOn(userStore, 'fetchProfile').mockResolvedValue();
+        // User has NO organization
+        userStore.profile = { id: '123', role: 'Team Member', organization_id: null };
+        await router.push('/'); // Landing page (public)
+        expect(router.currentRoute.value.name).toBe('landing');
+        expect(router.currentRoute.value.path).toBe('/');
     });
 });
 //# sourceMappingURL=index.spec.js.map

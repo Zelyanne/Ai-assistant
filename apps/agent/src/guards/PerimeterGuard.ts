@@ -1,6 +1,8 @@
 import { AgencyTier } from '@ai-assistant/shared';
+import { StructuredTool, DynamicStructuredTool } from '@langchain/core/tools';
 
 export interface FilterResult {
+
   redactedText: string;
   isEscalated: boolean;
   reason?: string;
@@ -23,18 +25,23 @@ export class PerimeterGuard {
    * @param text The text to filter
    * @param agencyTier The authorized agency tier for this topic
    * @param requiredTier The minimum tier required for the intended action (e.g. 'Public' for autonomous execution)
+   * @param mode The context mode: 'analysis' skips tier checks (but keeps redaction), 'execution' enforces tiers
    * @returns FilterResult containing redacted text and escalation status
    */
-  public filter(text: string, agencyTier: AgencyTier, requiredTier: AgencyTier = 'Public'): FilterResult {
-    // 1. Check Agency Tier Enforcement
-    const tierPriority: Record<AgencyTier, number> = { 'Public': 2, 'Controlled': 1, 'Restricted': 0 };
-    
-    if (tierPriority[agencyTier] < tierPriority[requiredTier]) {
-      return {
-        redactedText: text, // Or maybe return empty?
-        isEscalated: true,
-        reason: `Action requires ${requiredTier} tier, but topic is ${agencyTier}`
-      };
+  public filter(text: string, agencyTier: AgencyTier, requiredTier: AgencyTier, mode: 'analysis' | 'execution'): FilterResult {
+    // 1. Check Agency Tier Enforcement (Execution Mode Only)
+    if (mode === 'execution') {
+      const tierPriority: Record<AgencyTier, number> = { 'Public': 2, 'Controlled': 1, 'Restricted': 0 };
+      
+      if (tierPriority[agencyTier] < tierPriority[requiredTier]) {
+        // Redact PII even when escalating to prevent leak in logs/UI
+        const redactedEscalationText = this.redactPII(text);
+        return {
+          redactedText: redactedEscalationText,
+          isEscalated: true,
+          reason: `Action requires ${requiredTier} tier, but topic is ${agencyTier}`
+        };
+      }
     }
 
     // 2. Redact PII
@@ -175,4 +182,32 @@ export class PerimeterGuard {
     }
     return recovered;
   }
+
+  /**
+   * Wraps a LangChain tool with security logic that redacts PII from both inputs and outputs.
+   */
+  public static wrapToolWithSecurity(tool: StructuredTool, guard: PerimeterGuard): StructuredTool {
+    return new DynamicStructuredTool({
+      name: tool.name,
+      description: tool.description,
+      schema: tool.schema,
+      func: async (args: any) => {
+        // 1. Redact inputs (PII removal before tool execution)
+        // We use stringify/parse to handle nested objects in args
+        const argsString = JSON.stringify(args);
+        const redactedArgs = JSON.parse(guard.redactPII(argsString));
+        
+        // 2. Execute tool
+        // Note: tool.invoke handles the conversion of args if needed
+        const result = await tool.invoke(redactedArgs);
+        
+        // 3. Redact outputs (PII removal before returning to agent)
+        if (typeof result === 'string') {
+          return guard.redactPII(result);
+        }
+        return JSON.parse(guard.redactPII(JSON.stringify(result)));
+      },
+    });
+  }
 }
+

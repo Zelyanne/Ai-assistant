@@ -1,17 +1,14 @@
 import { BaseProcessor, ProcessorResult } from './BaseProcessor.js';
 import { Task } from '@ai-assistant/shared';
 import { supabase } from "../services/supabase.js";
-import { MCPService } from '../services/mcp.js';
+import { mcpService } from '../services/mcp.js';
 
 /**
  * Processor for calendar event creation using MCP.
  */
 export class CalendarCreateProcessor extends BaseProcessor {
-  private mcpService: MCPService;
-
   constructor() {
     super();
-    this.mcpService = new MCPService();
   }
 
   async process(task: Task): Promise<ProcessorResult> {
@@ -24,7 +21,7 @@ export class CalendarCreateProcessor extends BaseProcessor {
     }
 
     // Execute MCP tool
-    const result = await this.mcpService.executeTool(
+    const result = await mcpService.executeTool(
       task.organization_id,
       'create_calendar_event',
       {
@@ -47,3 +44,4 @@ export class CalendarCreateProcessor extends BaseProcessor {
     };
   }
 }
+

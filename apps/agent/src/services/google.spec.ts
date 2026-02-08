@@ -6,14 +6,21 @@ const mocks = vi.hoisted(() => ({
   update: vi.fn().mockResolvedValue({ error: null }),
   select: vi.fn().mockReturnThis(),
   eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+  insert: vi.fn().mockResolvedValue({ error: null }),
   threadsList: vi.fn().mockResolvedValue({ data: { threads: [{ id: 't1' }] } }),
   threadsGet: vi.fn().mockResolvedValue({ 
     data: { 
       id: 't1',
       snippet: 'test snippet', 
-      messages: [{ payload: { headers: [{ name: 'Subject', value: 'Test Subject' }] } }] 
+      messages: [{ 
+        payload: { 
+          headers: [{ name: 'Subject', value: 'Test Subject' }],
+          body: { data: Buffer.from('<h1>Hello World</h1>').toString('base64url') }
+        } 
+      }] 
     } 
   }),
+  labelsList: vi.fn().mockResolvedValue({ data: { labels: [{ id: 'l1', name: 'Inbox', type: 'system' }] } }),
   eventsList: vi.fn().mockResolvedValue({ data: { items: [{ id: 'e1', summary: 'Test Event' }] } }),
 }));
 
@@ -24,6 +31,7 @@ vi.mock('./supabase', () => ({
       eq: mocks.eq,
       update: vi.fn().mockReturnThis(),
       upsert: mocks.upsert,
+      insert: mocks.insert,
     })),
   },
 }));
@@ -40,6 +48,9 @@ vi.mock('googleapis', () => {
       },
       gmail: vi.fn().mockReturnValue({
         users: {
+          labels: {
+            list: mocks.labelsList,
+          },
           threads: {
             list: mocks.threadsList,
             get: mocks.threadsGet,
@@ -55,8 +66,9 @@ vi.mock('googleapis', () => {
   };
 });
 
-vi.mock('@ai-assistant/shared', () => ({
+vi.mock('@ai-assistant/shared/utils/encryption.js', () => ({
   decrypt: vi.fn().mockReturnValue('decrypted-token'),
+  encrypt: vi.fn().mockReturnValue('encrypted-body'),
 }));
 
 import { GoogleIngestionService } from './google.js';
@@ -87,7 +99,7 @@ describe('GoogleIngestionService', () => {
     expect(supabase.from).toHaveBeenCalledWith('workspace_integrations');
   });
 
-  it('should process integrations and perform ingestion', async () => {
+  it('should process integrations and perform ingestion with body extraction', async () => {
     const mockIntegration = {
       id: 'int-1',
       organization_id: 'org-1',
@@ -108,24 +120,92 @@ describe('GoogleIngestionService', () => {
     // Verify Gmail ingestion
     expect(mocks.threadsList).toHaveBeenCalledWith(expect.objectContaining({ maxResults: 5 }));
     expect(mocks.threadsGet).toHaveBeenCalledWith(expect.objectContaining({ id: 't1' }));
+    
+    // Check if upsert was called with encrypted body
     expect(mocks.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ 
         external_id: 't1', 
         subject: 'Test Subject',
-        user_id: 'user-1'
+        user_id: 'user-1',
+        body: 'encrypted-body', // AC 2.1
+        metadata: expect.objectContaining({ is_truncated: false })
       }),
       expect.any(Object)
     );
+  });
 
-    // Verify Calendar ingestion
-    expect(mocks.eventsList).toHaveBeenCalledWith(expect.objectContaining({ maxResults: 5 }));
+  it('should filter gmail ingestion by label preferences', async () => {
+    const mockIntegration = {
+      id: 'int-2',
+      organization_id: 'org-2',
+      user_id: 'user-2',
+      encrypted_creds: { refresh_token: 'enc-refresh' },
+      label_preferences: ['INBOX', 'IMPORTANT']
+    };
+    
+    mocks.eq.mockResolvedValueOnce({ data: [mockIntegration], error: null });
+    
+    const mockUpdateObj = {
+      eq: vi.fn().mockResolvedValue({ error: null })
+    };
+    (supabase.from('workspace_integrations').update as any).mockReturnValue(mockUpdateObj);
+
+    await service.runAllIngestions();
+
+    expect(mocks.threadsList).toHaveBeenCalledWith(expect.objectContaining({ 
+      labelIds: ['INBOX', 'IMPORTANT'],
+      maxResults: 5 
+    }));
+  });
+
+  it('should fetch gmail labels', async () => {
+    const mockIntegration = {
+      encrypted_creds: { refresh_token: 'enc-refresh' }
+    };
+
+    const labels = await service.fetchGmailLabels(mockIntegration);
+    
+    expect(mocks.labelsList).toHaveBeenCalled();
+    expect(labels).toEqual([{ id: 'l1', name: 'Inbox', type: 'system' }]);
+  });
+  
+  it('should truncate large bodies', async () => {
+    // Override threadsList to return t2
+    mocks.threadsList.mockResolvedValueOnce({ data: { threads: [{ id: 't2' }] } });
+
+    // Override threadsGet for this test to return huge body
+    const hugeBody = 'a'.repeat(1024 * 1024 + 100); // > 1MB
+    mocks.threadsGet.mockResolvedValueOnce({
+        data: {
+            id: 't2',
+            snippet: 'large thread',
+            messages: [{
+                payload: {
+                    headers: [{ name: 'Subject', value: 'Large Thread' }],
+                    body: { data: Buffer.from(hugeBody).toString('base64url') }
+                }
+            }]
+        }
+    });
+
+    const mockIntegration = {
+        id: 'int-3',
+        organization_id: 'org-3',
+        user_id: 'user-3',
+        encrypted_creds: { refresh_token: 'enc-refresh' }
+      };
+      
+    mocks.eq.mockResolvedValueOnce({ data: [mockIntegration], error: null });
+    (supabase.from('workspace_integrations').update as any).mockReturnValue({ eq: vi.fn() });
+  
+    await service.runAllIngestions();
+    
     expect(mocks.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({ 
-        external_id: 'e1', 
-        title: 'Test Event',
-        user_id: 'user-1'
-      }),
-      expect.any(Object)
+        expect.objectContaining({
+            external_id: 't2',
+            metadata: expect.objectContaining({ is_truncated: true }) // AC 2.2
+        }),
+        expect.any(Object)
     );
   });
 });

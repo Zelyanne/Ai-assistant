@@ -7,18 +7,23 @@ export class ProtocolService {
    * Fetches the protocol markdown for an organization.
    */
   static async fetchProtocol(organizationId: string): Promise<string | null> {
-    const { data, error } = await supabase
-      .from('user_protocols')
-      .select('content_markdown')
-      .eq('organization_id', organizationId)
-      .maybeSingle();
+    try {
+      const { data, error } = await supabase
+        .from('user_protocols')
+        .select('content_markdown')
+        .eq('organization_id', organizationId)
+        .maybeSingle();
 
-    if (error) {
-      console.error(`[ProtocolService] Error fetching protocol for org ${organizationId}:`, error.message);
+      if (error) {
+        console.error(`[ProtocolService] Error fetching protocol for org ${organizationId}:`, error.message);
+        return null;
+      }
+
+      return data?.content_markdown || null;
+    } catch (err: any) {
+      console.error(`[ProtocolService] Unexpected error fetching protocol: ${err.message}`);
       return null;
     }
-
-    return data?.content_markdown || null;
   }
 
   /**

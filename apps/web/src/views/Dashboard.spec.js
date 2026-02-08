@@ -40,11 +40,56 @@ describe('Dashboard.vue', () => {
                 stubs: {
                     OutcomeCard: true,
                     Button: true,
-                    Card: true
+                    Card: true,
+                    ReasoningTracePane: true
                 }
             }
         });
     };
+    it('renders ReasoningTracePane in all states (regression check for broken v-if chain)', async () => {
+        const userStore = useUserStore();
+        userStore.profile = { id: 'user-1', organization_id: 'org-1' };
+        // 1. Loading state
+        const wrapper = mountView();
+        expect(wrapper.findComponent({ name: 'ReasoningTracePane' }).exists()).toBe(true);
+        // 2. Data state
+        supabase.from.mockImplementation(() => ({
+            select: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                    order: vi.fn(() => ({
+                        limit: vi.fn(() => Promise.resolve({
+                            data: [{ id: '1', status: 'done', created_at: new Date().toISOString(), domain_action: 'test' }],
+                            error: null
+                        }))
+                    }))
+                }))
+            }))
+        }));
+        await wrapper.vm.$nextTick(); // Wait for fetch
+        await vi.waitFor(() => {
+            expect(wrapper.findComponent({ name: 'ReasoningTracePane' }).exists()).toBe(true);
+        });
+        // 3. Empty state
+        // Create a NEW wrapper to ensure clean state and fresh onMounted call
+        supabase.from.mockImplementation(() => ({
+            select: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                    order: vi.fn(() => ({
+                        limit: vi.fn(() => Promise.resolve({ data: [], error: null }))
+                    }))
+                }))
+            }))
+        }));
+        const emptyWrapper = mountView();
+        // Wait for the fetch cycle to complete
+        await emptyWrapper.vm.$nextTick();
+        await vi.waitFor(() => {
+            // Verify text content to confirm we are actually in the empty state
+            expect(emptyWrapper.text()).toContain('All Quiet on the Front');
+            // Verify the component still exists (meaning it wasn't hidden/broken by the v-if chain)
+            expect(emptyWrapper.findComponent({ name: 'ReasoningTracePane' }).exists()).toBe(true);
+        });
+    });
     it('renders correctly and fetches data on mount', async () => {
         const userStore = useUserStore();
         userStore.profile = { id: 'user-1', organization_id: 'org-1', full_name: 'Alexis CEO' };

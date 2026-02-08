@@ -4,6 +4,12 @@ import { LLMProviderFactory } from '../../services/llm/factory.js';
 import * as SharedSchemas from '@ai-assistant/shared';
 import { Citation } from '@ai-assistant/shared';
 import { AuditLogger } from '../../services/AuditLogger.js';
+import { mcpService } from '../../services/mcp.js';
+import { PerimeterGuard } from '../../guards/PerimeterGuard.js';
+import { ChatMistralAI } from '@langchain/mistralai';
+import { createAgent } from 'langchain';
+import { config } from '../../config/index.js';
+import { tracingService } from '../../services/llm/tracing.js';
 
 // Registry of available schemas for structured reasoning
 const SCHEMA_REGISTRY: Record<string, ZodType> = {};
@@ -39,7 +45,8 @@ export async function reasoningNode(state: AgentState): Promise<Partial<AgentSta
   if (state.error) return {};
 
   const { task } = state;
-  const provider = LLMProviderFactory.getProvider();
+  const langfuseHandler = tracingService.getHandler();
+  const callbacks = langfuseHandler ? [langfuseHandler] : [];
   
   // Extract prompt and schema key from payload
   const { prompt: basePrompt, schemaKey } = task.payload as { prompt?: string; schemaKey?: string };
@@ -53,6 +60,51 @@ export async function reasoningNode(state: AgentState): Promise<Partial<AgentSta
     ? `SPECIFIC LEADERSHIP PROTOCOL RULES:\n${state.active_protocol_rules}\n\nTASK:\n${basePrompt}`
     : basePrompt;
 
+  // Task 8: Update reasoningNode to support dynamic tool injection
+  const taskPayload = task.payload as any;
+  if (taskPayload.tools) {
+    try {
+      const guard = new PerimeterGuard();
+      const rawTools = await mcpService.getLangChainTools(task.organization_id);
+      const securedTools = rawTools.map(t => PerimeterGuard.wrapToolWithSecurity(t, guard));
+
+      const llm = new ChatMistralAI({
+        apiKey: config.MISTRAL_API_KEY,
+        model: config.DEFAULT_LLM_MODEL,
+        temperature: 0,
+        callbacks,
+      });
+
+      const agent = createAgent({
+        model: llm,
+        tools: securedTools,
+        systemPrompt: 'You are a reasoning node. Use the provided tools to fulfill the request.',
+      });
+
+      const result = await agent.invoke({
+        messages: [{ role: 'user', content: prompt }],
+      }, { callbacks });
+
+      tracingService.handleSuccess();
+      const output = String(result.messages?.at(-1)?.content || '');
+
+      const step = AuditLogger.createStep('Agentic Reasoning', `Executed with ${securedTools.length} tools`, {
+        input_summary: prompt.substring(0, 100) + '...',
+        output_summary: output.substring(0, 100) + '...',
+      });
+
+      return {
+        result: output,
+        trace: [step],
+        citations: []
+      };
+    } catch (err: any) {
+      tracingService.handleFailure(err);
+      console.error(`[ReasoningNode][Agentic] failed: ${err.message}`);
+      return { error: `Agentic reasoning failed: ${err.message}` };
+    }
+  }
+
   try {
     let result;
     
@@ -65,9 +117,29 @@ export async function reasoningNode(state: AgentState): Promise<Partial<AgentSta
       if (!targetSchema) {
         throw new Error(`Requested schema '${schemaKey}' not found in registry`);
       }
-      result = await provider.generateStructured(prompt, targetSchema);
+      
+      const structuredLlm = new ChatMistralAI({
+        apiKey: config.MISTRAL_API_KEY,
+        model: config.DEFAULT_LLM_MODEL,
+        temperature: 0,
+        callbacks,
+      }).withStructuredOutput(targetSchema, { name: schemaKey });
+
+      const response = await structuredLlm.invoke(prompt);
+      tracingService.handleSuccess();
+      await tracingService.flush();
+      result = { data: response };
     } else {
-      result = await provider.generateText(prompt);
+      const llm = new ChatMistralAI({
+        apiKey: config.MISTRAL_API_KEY,
+        model: config.DEFAULT_LLM_MODEL,
+        temperature: 0,
+        callbacks,
+      });
+      const response = await llm.invoke(prompt);
+      tracingService.handleSuccess();
+      await tracingService.flush();
+      result = { data: response.content };
     }
 
     const data = result.data as ReasoningResultData;
@@ -88,6 +160,7 @@ export async function reasoningNode(state: AgentState): Promise<Partial<AgentSta
       citations: citations
     };
   } catch (err: unknown) {
+    tracingService.handleFailure(err);
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[ReasoningNode][${task.id}] failed: ${message}`);
     const errorStep = AuditLogger.createStep('LLM Reasoning', `Reasoning failed: ${message}`);

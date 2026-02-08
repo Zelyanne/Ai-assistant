@@ -7,11 +7,40 @@ vi.mock('../config/index.js', () => ({
     SUPABASE_URL: 'http://localhost:54321',
     SUPABASE_SERVICE_ROLE_KEY: 'mock-key',
     MISTRAL_API_KEY: 'mock-mistral-key',
-    CONFIDENCE_THRESHOLD: 0.8
+    DEFAULT_LLM_MODEL: 'mistral-small-latest',
+    CONFIDENCE_THRESHOLD: 0.8,
+    ENCRYPTION_SECRET: '0123456789abcdef0123456789abcdef' // 32 chars
   }
 }));
 
-// Mock LLMProviderFactory
+// Mock LangChain Mistral
+const mockInvoke = vi.fn();
+const mockWithStructuredOutput = vi.fn();
+
+const { mockInvoke, mockWithStructuredOutput } = vi.hoisted(() => ({
+  mockInvoke: vi.fn(),
+  mockWithStructuredOutput: vi.fn(),
+}));
+
+vi.mock('@langchain/mistralai', () => {
+  return {
+    ChatMistralAI: vi.fn().mockImplementation(() => ({
+      invoke: mockInvoke,
+      withStructuredOutput: mockWithStructuredOutput.mockReturnThis(),
+    })),
+  };
+});
+
+// Mock tracing service
+vi.mock('../services/llm/tracing.js', () => ({
+  tracingService: {
+    getHandler: vi.fn().mockReturnValue(null),
+    handleSuccess: vi.fn(),
+    handleFailure: vi.fn(),
+  },
+}));
+
+// Mock LLMProviderFactory (kept for other processors that might still use it)
 const mockProvider = {
   generateText: vi.fn().mockResolvedValue({
     data: 'Mocked response',
@@ -62,9 +91,16 @@ vi.mock('../services/ProtocolService.js', () => ({
 }));
 
 // Mock MCPService to avoid subprocess spawning during graph tests
+const { mockExecuteTool } = vi.hoisted(() => ({
+  mockExecuteTool: vi.fn().mockResolvedValue({ message: 'Success' })
+}));
+
 vi.mock('../services/mcp.js', () => ({
   MCPService: class {
-    executeTool = vi.fn().mockResolvedValue({ message: 'Success' });
+    executeTool = mockExecuteTool;
+  },
+  mcpService: {
+    executeTool: mockExecuteTool
   }
 }));
 
@@ -78,6 +114,8 @@ describe('Agent Controller Graph Routing', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockInvoke.mockReset();
+    mockWithStructuredOutput.mockClear();
     
     // Default chain behavior
     mockChain.update.mockReturnThis();
@@ -90,18 +128,30 @@ describe('Agent Controller Graph Routing', () => {
     mockChain.then.mockImplementation((resolve: any) => resolve({ data: null, error: null }));
   });
 
-  it('should route email.draft to EmailDraftProcessor', async () => {
+  it('should route email.draft to EmailDraftProcessor and accept tracing config', async () => {
     const mockTask = { 
       ...baseTask, 
       domain_action: 'email.draft', 
       payload: { recipient: 'test@example.com', subject: 'Test', body: 'Hello' } 
     };
     
-    const result = await graph.invoke({ task: mockTask as any });
+    // Test that invoke accepts metadata and tags (for LangSmith)
+    const result = await graph.invoke(
+      { task: mockTask as any },
+      {
+        metadata: {
+          task_id: mockTask.id,
+          organization_id: mockTask.organization_id,
+          domain_action: mockTask.domain_action,
+        },
+        tags: [mockTask.domain_action],
+      }
+    );
 
     expect(result.error).toBeUndefined();
     expect(result.result.message).toContain('Email draft created');
   });
+
 
   it('should route calendar.create to CalendarCreateProcessor', async () => {
     const mockTask = { 
@@ -117,6 +167,12 @@ describe('Agent Controller Graph Routing', () => {
   });
 
   it('should route system.analyze to reasoning node', async () => {
+    mockInvoke.mockResolvedValueOnce({
+      content: 'Mocked response',
+      additional_kwargs: {},
+      response_metadata: {},
+    });
+
     const mockTask = { ...baseTask, domain_action: 'system.analyze', payload: { prompt: "Analyze this" } };
 
     const result = await graph.invoke({ task: mockTask as any });
@@ -147,6 +203,12 @@ describe('Agent Controller Graph Routing', () => {
   });
 
   it('should load protocol rules and pass them to reasoning', async () => {
+    mockInvoke.mockResolvedValueOnce({
+      content: 'Mocked response',
+      additional_kwargs: {},
+      response_metadata: {},
+    });
+
     const mockTask = { ...baseTask, domain_action: 'system.analyze', payload: { prompt: "Analyze this" } };
 
     const result = await graph.invoke({ task: mockTask as any });
@@ -157,14 +219,14 @@ describe('Agent Controller Graph Routing', () => {
   });
 
   it('should escalate when confidence is below threshold', async () => {
-    const mockTask = { ...baseTask, domain_action: 'system.analyze', payload: { prompt: "Analyze this" } };
-    
-    mockProvider.generateStructured.mockResolvedValueOnce({
-      data: { summary: 'Low confidence', confidence: 0.5, ambiguity_detected: false },
-      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-      model: 'mistral-small'
+    mockInvoke.mockResolvedValueOnce({ 
+      summary: 'Low confidence', 
+      confidence: 0.5, 
+      ambiguity_detected: false 
     });
 
+    const mockTask = { ...baseTask, domain_action: 'system.analyze', payload: { prompt: "Analyze this" } };
+    
     const result = await graph.invoke({ task: { ...mockTask, payload: { ...mockTask.payload, schemaKey: 'default_analysis' } } as any });
 
     expect(result.task.status).toBe('error');
@@ -173,14 +235,14 @@ describe('Agent Controller Graph Routing', () => {
   });
 
   it('should escalate when ambiguity is detected', async () => {
-    const mockTask = { ...baseTask, domain_action: 'system.analyze', payload: { prompt: "Analyze this" } };
-    
-    mockProvider.generateStructured.mockResolvedValueOnce({
-      data: { summary: 'Ambiguous', confidence: 0.9, ambiguity_detected: true },
-      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-      model: 'mistral-small'
+    mockInvoke.mockResolvedValueOnce({ 
+      summary: 'Ambiguous', 
+      confidence: 0.9, 
+      ambiguity_detected: true 
     });
 
+    const mockTask = { ...baseTask, domain_action: 'system.analyze', payload: { prompt: "Analyze this" } };
+    
     const result = await graph.invoke({ task: { ...mockTask, payload: { ...mockTask.payload, schemaKey: 'default_analysis' } } as any });
 
     expect(result.task.status).toBe('error');

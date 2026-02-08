@@ -4,6 +4,7 @@ import { EmailTriageProcessor } from './EmailTriageProcessor.js';
 import { ThreadSummarizer } from './ThreadSummarizer.js';
 import { CalendarCreateProcessor } from './CalendarCreateProcessor.js';
 import { ProtocolGenerateProcessor } from './ProtocolGenerateProcessor.js';
+import { MorningBriefProcessor } from './MorningBriefProcessor.js';
 
 export class ProcessorRegistry {
   private static processors: Map<string, BaseProcessor> = new Map();
@@ -14,6 +15,7 @@ export class ProcessorRegistry {
     this.processors.set('email.summarize', new ThreadSummarizer());
     this.processors.set('calendar.create', new CalendarCreateProcessor());
     this.processors.set('protocol.generate', new ProtocolGenerateProcessor());
+    this.processors.set('morning.brief', new MorningBriefProcessor());
   }
 
 

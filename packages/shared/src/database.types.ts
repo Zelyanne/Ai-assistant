@@ -171,6 +171,7 @@ export type Database = {
           subject: string | null
           summary: string | null
           summary_json: Json | null
+          body: string | null
           updated_at: string
           user_id: string | null
         }
@@ -187,6 +188,7 @@ export type Database = {
           subject?: string | null
           summary?: string | null
           summary_json?: Json | null
+          body?: string | null
           updated_at?: string
           user_id?: string | null
         }
@@ -203,6 +205,7 @@ export type Database = {
           subject?: string | null
           summary?: string | null
           summary_json?: Json | null
+          body?: string | null
           updated_at?: string
           user_id?: string | null
         }
@@ -231,6 +234,7 @@ export type Database = {
           created_at: string
           id: string
           is_read: boolean
+          metadata: Json
           organization_id: string
           updated_at: string
           user_id: string
@@ -241,6 +245,7 @@ export type Database = {
           created_at?: string
           id?: string
           is_read?: boolean
+          metadata?: Json
           organization_id: string
           updated_at?: string
           user_id: string
@@ -251,10 +256,12 @@ export type Database = {
           created_at?: string
           id?: string
           is_read?: boolean
+          metadata?: Json
           organization_id?: string
           updated_at?: string
           user_id?: string
         }
+
         Relationships: [
           {
             foreignKeyName: "morning_briefs_organization_id_fkey"
@@ -296,6 +303,7 @@ export type Database = {
           email: string | null
           full_name: string | null
           id: string
+          last_brief_generated_at: string | null
           organization_id: string | null
           role: Database["public"]["Enums"]["user_role"] | null
           updated_at: string
@@ -305,6 +313,7 @@ export type Database = {
           email?: string | null
           full_name?: string | null
           id: string
+          last_brief_generated_at?: string | null
           organization_id?: string | null
           role?: Database["public"]["Enums"]["user_role"] | null
           updated_at?: string
@@ -314,10 +323,12 @@ export type Database = {
           email?: string | null
           full_name?: string | null
           id?: string
+          last_brief_generated_at?: string | null
           organization_id?: string | null
           role?: Database["public"]["Enums"]["user_role"] | null
           updated_at?: string
         }
+
         Relationships: [
           {
             foreignKeyName: "profiles_organization_id_fkey"
@@ -494,6 +505,7 @@ export type Database = {
           created_at: string
           encrypted_creds: Json
           id: string
+          label_preferences: Json
           last_sync_at: string | null
           organization_id: string
           provider: string
@@ -505,6 +517,7 @@ export type Database = {
           created_at?: string
           encrypted_creds: Json
           id?: string
+          label_preferences?: Json
           last_sync_at?: string | null
           organization_id: string
           provider: string
@@ -516,6 +529,7 @@ export type Database = {
           created_at?: string
           encrypted_creds?: Json
           id?: string
+          label_preferences?: Json
           last_sync_at?: string | null
           organization_id?: string
           provider?: string
@@ -558,7 +572,7 @@ export type Database = {
     Enums: {
       agency_tier: "Public" | "Controlled" | "Restricted"
       task_status: "queued" | "processing" | "done" | "error" | "escalation"
-      user_role: "CEO" | "PM" | "Team Member"
+      user_role: "CEO" | "PM" | "Team Member" | "Simple User"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -688,7 +702,7 @@ export const Constants = {
     Enums: {
       agency_tier: ["Public", "Controlled", "Restricted"],
       task_status: ["queued", "processing", "done", "error", "escalation"],
-      user_role: ["CEO", "PM", "Team Member"],
+      user_role: ["CEO", "PM", "Team Member", "Simple User"],
     },
   },
 } as const

@@ -15,10 +15,14 @@ interface Props {
   status: 'done' | 'escalation' | 'processing' | 'queued' | 'error' | 'insight';
   agencyTier?: 'Public' | 'Controlled' | 'Restricted';
   timestamp: string;
+  topics?: string[];
+  isMini?: boolean;
 }
 
-const props = defineProps<Props>();
-const emit = defineEmits(['open-trace']);
+const props = withDefaults(defineProps<Props>(), {
+  isMini: false
+});
+const emit = defineEmits(['open-trace', 'click']);
 
 const cardStyle = computed(() => {
   switch (props.status) {
@@ -59,45 +63,71 @@ const tierSeverity = computed(() => {
     default: return 'secondary';
   }
 });
+
+function getTopicSeverity(topic: string): string {
+  const lower = topic.toLowerCase();
+  if (lower.includes('blocker') || lower.includes('urgent') || lower.includes('critical')) return 'danger';
+  if (lower.includes('investor') || lower.includes('client') || lower.includes('revenue')) return 'success';
+  if (lower.includes('risk') || lower.includes('deadline')) return 'warn';
+  return 'info';
+}
 </script>
 
 <template>
-  <Card class="outcome-card shadow-sm border border-slate-200" :style="cardStyle">
+  <Card 
+    class="outcome-card shadow-sm border border-slate-200 cursor-pointer" 
+    :style="cardStyle"
+    :class="{ 'mini-card': isMini }"
+    tabindex="0"
+    @click="emit('click')"
+    @keydown.enter="emit('click')"
+  >
     <template #title>
-      <div class="flex justify-between items-start gap-4">
-        <h3 class="text-lg font-bold text-executive-primary leading-tight font-sans">
+      <div class="flex justify-between items-start gap-4" :class="{ 'mb-1': isMini }">
+        <h3 
+          class="text-executive-primary leading-tight font-sans"
+          :class="isMini ? 'text-base font-semibold line-clamp-2' : 'text-lg font-bold'"
+        >
           {{ title }}
         </h3>
-        <Badge :value="statusLabel" :severity="statusSeverity" class="font-technical text-xs" />
+        <Badge :value="statusLabel" :severity="statusSeverity" class="font-technical text-[9px] uppercase tracking-tighter" />
       </div>
     </template>
     <template #subtitle>
-      <div class="flex items-center gap-2 mt-1">
+      <div class="flex items-center gap-2 mt-1 flex-wrap">
         <span class="text-xs text-slate-400 font-technical">{{ timestamp }}</span>
-        <Badge v-if="agencyTier" :value="agencyTier" :severity="tierSeverity" size="small" class="opacity-80" />
+        <Badge v-if="agencyTier" :value="agencyTier" :severity="tierSeverity" size="small" class="opacity-70 scale-90 origin-left" />
       </div>
     </template>
     <template #content>
-      <ThreadSummaryComponent 
-        v-if="summaryJson" 
-        :summary="summaryJson" 
-        :external-id="externalId" 
-      />
-      <p v-else class="text-slate-600 text-sm leading-relaxed font-technical">
-        {{ summary }}
-      </p>
+      <div class="mt-2">
+        <ThreadSummaryComponent 
+          v-if="summaryJson && !isMini" 
+          :summary="summaryJson" 
+          :external-id="externalId" 
+        />
+        <p 
+          v-else 
+          class="text-slate-600 leading-relaxed font-technical"
+          :class="isMini ? 'text-xs line-clamp-3' : 'text-sm'"
+        >
+          {{ summary }}
+        </p>
+      </div>
     </template>
     <template #footer>
-      <div class="flex justify-end gap-2">
+      <div class="flex justify-end gap-2" :class="{ 'mt-2': isMini }">
         <slot name="actions">
           <Button 
             v-if="taskId"
-            label="View Trace" 
-            icon="pi pi-search" 
+            :icon="isMini ? 'pi pi-search' : 'pi pi-search'"
+            :label="isMini ? '' : 'View Trace'"
             text 
-            size="small" 
-            class="p-button-technical" 
-            @click="emit('open-trace', taskId)"
+            :size="isMini ? 'small' : 'small'"
+            class="p-button-technical"
+            :class="{ 'p-0 h-8 w-8': isMini }"
+            v-tooltip.top="isMini ? 'View Trace' : ''"
+            @click.stop="emit('open-trace', taskId)"
           />
         </slot>
       </div>
@@ -107,10 +137,16 @@ const tierSeverity = computed(() => {
 
 <style scoped>
 .outcome-card {
-  transition: transform 0.2s ease, shadow 0.2s ease;
+  transition: all 0.2s ease;
 }
 .outcome-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05) !important;
+  transform: translateY(-3px);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
+}
+.mini-card :deep(.p-card-body) {
+  padding: 1rem !important;
+}
+.mini-card :deep(.p-card-content) {
+  padding: 0 !important;
 }
 </style>

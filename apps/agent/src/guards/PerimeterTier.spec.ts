@@ -9,7 +9,7 @@ describe('PerimeterGuard Tier Enforcement', () => {
   });
 
   it('should allow Public action for Public topic', () => {
-    const result = guard.filter('Sensitive data about Public topic', 'Public', 'Public');
+    const result = guard.filter('Sensitive data about Public topic', 'Public', 'Public', 'execution');
     expect(result.isEscalated).toBe(false);
     expect(result.redactedText).toContain('[NAME_1]'); // Redaction should still happen
   });
@@ -23,23 +23,30 @@ describe('PerimeterGuard Tier Enforcement', () => {
     // If a topic is Public, it allows Public action.
     // If a topic is Restricted, it should NOT allow Public action.
     
-    const result = guard.filter('Sensitive data', 'Public', 'Public');
+    const result = guard.filter('Sensitive data', 'Public', 'Public', 'execution');
     expect(result.isEscalated).toBe(false);
   });
 
   it('should escalate Public action for Restricted topic', () => {
-    const result = guard.filter('Sensitive data', 'Restricted', 'Public');
+    const result = guard.filter('Sensitive data', 'Restricted', 'Public', 'execution');
     expect(result.isEscalated).toBe(true);
     expect(result.reason).toContain('Action requires Public tier, but topic is Restricted');
   });
 
   it('should escalate Public action for Controlled topic', () => {
-    const result = guard.filter('Sensitive data', 'Controlled', 'Public');
+    const result = guard.filter('Sensitive data', 'Controlled', 'Public', 'execution');
     expect(result.isEscalated).toBe(true);
   });
 
   it('should allow Controlled action for Public topic', () => {
-    const result = guard.filter('Sensitive data', 'Public', 'Controlled');
+    const result = guard.filter('Sensitive data', 'Public', 'Controlled', 'execution');
     expect(result.isEscalated).toBe(false);
+  });
+
+  it('should bypass tier check in analysis mode but still redact PII', () => {
+    // Restricted topic would fail in execution mode
+    const result = guard.filter('Sensitive data about Restricted topic', 'Restricted', 'Public', 'analysis');
+    expect(result.isEscalated).toBe(false);
+    expect(result.redactedText).toContain('[NAME_1]'); // Redaction MUST still happen
   });
 });

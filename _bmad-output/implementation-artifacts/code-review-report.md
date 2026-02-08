@@ -1,45 +1,14 @@
-# Code Review Report: Story 2.8
+**🔥 CODE REVIEW FINDINGS, Alexis!**
 
-**Date:** 2026-01-20
-**Reviewer:** Antigravity (Senior Software Engineer)
-**Story:** `2-8-confidence-evaluation-escalation-logic.md`
-**Status:** PASSED
+**Story:** fix-routing-and-mcp-timeout
+**Git vs Story Discrepancies:** 0 found (Core files match, untracked/unrelated changes ignored)
+**Issues Found:** 1 High, 1 Medium, 1 Low
 
-## Summary
-The implementation of confidence evaluation and escalation logic has been verified against all acceptance criteria. The solution correctly integrates with the LangGraph architecture, ensuring that low-confidence actions or restricted topics are safely escalated to human intervention.
+## 🔴 CRITICAL ISSUES
+- **Unverified MCP Startup Logic**: The critical fix in `apps/agent/src/services/mcp.ts` (regex matching, timeout handling) is **completely skipped** in tests because `process.env.NODE_ENV === 'test'` bypasses `startSharedServer`. You are relying 100% on manual testing for a logic that was already buggy.
 
-## Acceptance Criteria Verification
+## 🟡 MEDIUM ISSUES
+- **Missing Regression Test**: `apps/web/src/router/index.spec.ts` does not explicitly test the fix case: "Logged in user without organization visiting Landing Page". It tests redirects, but not the *absence* of a redirect for public pages.
 
-| AC ID | Requirement | Status | Verification Evidence |
-|-------|-------------|--------|-----------------------|
-| 1 | **Confidence Score Implementation** | ✅ Verified | `reasoning.ts` implements `default_analysis` schema with `confidence` field (0-1). |
-| 2 | **Ambiguity Detection** | ✅ Verified | `ambiguity_detected` boolean added to schema and logic. |
-| 3 | **Escalation Threshold** | ✅ Verified | `graph.ts` uses `CONFIDENCE_THRESHOLD` for conditional routing. |
-| 4 | **Escalation Node** | ✅ Verified | `escalate.ts` created and wired into graph. |
-| 5 | **Status Update** | ✅ Verified | Updates task status to `error` with `escalation: true` payload. |
-| 6 | **Reasoning Trace** | ✅ Verified | Audit logs include confidence metrics and escalation reasons. |
-| 7 | **Agency Tier Integration** | ✅ Verified | `checkPerimeter` enforces "Restricted" tier escalation. |
-
-## Test Verification
-- **Unit Tests**: `reasoning.spec.ts` passes (5 tests).
-- **Integration Tests**: `graph.spec.ts` passes (8 tests), covering:
-    - Standard routing (email, calendar, analyze)
-    - Escalation on Low Confidence
-    - Escalation on Ambiguity
-    - Escalation on Restricted Tier
-    - Unsupported domains
-
-## Code Quality Notes
-- **Strengths**: 
-    - Modular design using LangGraph nodes.
-    - Strong typing with Zod schemas.
-    - Comprehensive audit logging.
-- **Fixed Issues**:
-    - Corrected type casting in `reasoning.ts` for citations to ensure TypeScript compliance.
-
-## Conclusion
-The story is **Complete**. Implementation matches requirements and passes all tests.
-
-## Action Items
-- [x] Mark Story 2.8 as `done`.
-- [x] Sync Sprint Status.
+## 🟢 LOW ISSUES
+- **Type Safety**: `to.meta.public` in `apps/web/src/router/index.ts` is not typed (any property on meta is allowed but it's better to define it).

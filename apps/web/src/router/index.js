@@ -15,6 +15,18 @@ const routes = [
         meta: { public: true }
     },
     {
+        path: '/register',
+        name: 'register',
+        component: () => import('../views/Register.vue'),
+        meta: { public: true }
+    },
+    {
+        path: '/onboarding',
+        name: 'onboarding',
+        component: () => import('../views/Onboarding.vue'),
+        meta: { requiresAuth: true }
+    },
+    {
         path: '/dashboard',
         component: () => import('../components/layout/AppLayout.vue'),
         children: [
@@ -70,6 +82,16 @@ router.beforeEach(async (to, _from, next) => {
     // Ensure profile is loaded if authenticated
     if (isAuthenticated && !userStore.profile) {
         await userStore.fetchProfile();
+    }
+    // Redirect to onboarding if no organization (and not already going to onboarding/login)
+    if (isAuthenticated && !userStore.hasOrganization && !to.meta.public && to.name !== 'onboarding' && to.name !== 'login') {
+        next({ name: 'onboarding' });
+        return;
+    }
+    // Redirect away from onboarding if organization already exists
+    if (isAuthenticated && userStore.hasOrganization && to.name === 'onboarding') {
+        next({ name: 'dashboard' });
+        return;
     }
     if (to.meta.requiresCEO && !userStore.isCEO) {
         next({ name: 'unauthorized' });

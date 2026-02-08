@@ -1,6 +1,6 @@
 # Story 3.5: Reasoning Trace & Source Citation Engine
 
-Status: review
+Status: done
 
 ## Story
 
@@ -74,6 +74,8 @@ antigravity-gemini-3-flash
 - Updated `ThreadSummarizer` to record 4 distinct reasoning steps and generate Gmail deep links.
 - Created `ReasoningTracePane.vue` using PrimeVue `Drawer` and `Timeline` for an "Executive Calm" presentation.
 - Integrated the pane into `Dashboard.vue`, enabling the "View Trace" button on all task-based outcome cards.
+- Added `supabase/migrations/20260125000000_add_summary_json_to_threads.sql` to support structured summary storage.
+
 
 ### File List
 
@@ -85,4 +87,5 @@ antigravity-gemini-3-flash
 - `apps/web/src/components/activity/ReasoningTracePane.vue`
 - `apps/web/src/components/activity/OutcomeCard.vue`
 - `apps/web/src/views/Dashboard.vue`
+- `supabase/migrations/20260125000000_add_summary_json_to_threads.sql`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`

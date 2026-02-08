@@ -2,7 +2,9 @@ import { computed } from 'vue';
 import Card from 'primevue/card';
 import Badge from 'primevue/badge';
 import Button from 'primevue/button';
+import ThreadSummaryComponent from './ThreadSummary.vue';
 const props = defineProps();
+const emit = defineEmits(['open-trace']);
 const cardStyle = computed(() => {
     switch (props.status) {
         case 'done':
@@ -111,34 +113,63 @@ __VLS_3.slots.default;
 }
 {
     const { content: __VLS_thisSlot } = __VLS_3.slots;
-    __VLS_asFunctionalElement(__VLS_intrinsicElements.p, __VLS_intrinsicElements.p)({
-        ...{ class: "text-slate-600 text-sm leading-relaxed font-technical" },
-    });
-    (__VLS_ctx.summary);
+    if (__VLS_ctx.summaryJson) {
+        /** @type {[typeof ThreadSummaryComponent, ]} */ ;
+        // @ts-ignore
+        const __VLS_13 = __VLS_asFunctionalComponent(ThreadSummaryComponent, new ThreadSummaryComponent({
+            summary: (__VLS_ctx.summaryJson),
+            externalId: (__VLS_ctx.externalId),
+        }));
+        const __VLS_14 = __VLS_13({
+            summary: (__VLS_ctx.summaryJson),
+            externalId: (__VLS_ctx.externalId),
+        }, ...__VLS_functionalComponentArgsRest(__VLS_13));
+    }
+    else {
+        __VLS_asFunctionalElement(__VLS_intrinsicElements.p, __VLS_intrinsicElements.p)({
+            ...{ class: "text-slate-600 text-sm leading-relaxed font-technical" },
+        });
+        (__VLS_ctx.summary);
+    }
 }
 {
     const { footer: __VLS_thisSlot } = __VLS_3.slots;
     __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
         ...{ class: "flex justify-end gap-2" },
     });
-    var __VLS_13 = {};
-    const __VLS_15 = {}.Button;
-    /** @type {[typeof __VLS_components.Button, ]} */ ;
-    // @ts-ignore
-    const __VLS_16 = __VLS_asFunctionalComponent(__VLS_15, new __VLS_15({
-        label: "View Trace",
-        icon: "pi pi-search",
-        text: true,
-        size: "small",
-        ...{ class: "p-button-technical" },
-    }));
-    const __VLS_17 = __VLS_16({
-        label: "View Trace",
-        icon: "pi pi-search",
-        text: true,
-        size: "small",
-        ...{ class: "p-button-technical" },
-    }, ...__VLS_functionalComponentArgsRest(__VLS_16));
+    var __VLS_16 = {};
+    if (__VLS_ctx.taskId) {
+        const __VLS_18 = {}.Button;
+        /** @type {[typeof __VLS_components.Button, ]} */ ;
+        // @ts-ignore
+        const __VLS_19 = __VLS_asFunctionalComponent(__VLS_18, new __VLS_18({
+            ...{ 'onClick': {} },
+            label: "View Trace",
+            icon: "pi pi-search",
+            text: true,
+            size: "small",
+            ...{ class: "p-button-technical" },
+        }));
+        const __VLS_20 = __VLS_19({
+            ...{ 'onClick': {} },
+            label: "View Trace",
+            icon: "pi pi-search",
+            text: true,
+            size: "small",
+            ...{ class: "p-button-technical" },
+        }, ...__VLS_functionalComponentArgsRest(__VLS_19));
+        let __VLS_22;
+        let __VLS_23;
+        let __VLS_24;
+        const __VLS_25 = {
+            onClick: (...[$event]) => {
+                if (!(__VLS_ctx.taskId))
+                    return;
+                __VLS_ctx.emit('open-trace', __VLS_ctx.taskId);
+            }
+        };
+        var __VLS_21;
+    }
 }
 var __VLS_3;
 /** @type {__VLS_StyleScopedClasses['outcome-card']} */ ;
@@ -173,7 +204,7 @@ var __VLS_3;
 /** @type {__VLS_StyleScopedClasses['gap-2']} */ ;
 /** @type {__VLS_StyleScopedClasses['p-button-technical']} */ ;
 // @ts-ignore
-var __VLS_14 = __VLS_13;
+var __VLS_17 = __VLS_16;
 var __VLS_dollars;
 const __VLS_self = (await import('vue')).defineComponent({
     setup() {
@@ -181,18 +212,22 @@ const __VLS_self = (await import('vue')).defineComponent({
             Card: Card,
             Badge: Badge,
             Button: Button,
+            ThreadSummaryComponent: ThreadSummaryComponent,
+            emit: emit,
             cardStyle: cardStyle,
             statusLabel: statusLabel,
             statusSeverity: statusSeverity,
             tierSeverity: tierSeverity,
         };
     },
+    emits: {},
     __typeProps: {},
 });
 const __VLS_component = (await import('vue')).defineComponent({
     setup() {
         return {};
     },
+    emits: {},
     __typeProps: {},
 });
 export default {};
