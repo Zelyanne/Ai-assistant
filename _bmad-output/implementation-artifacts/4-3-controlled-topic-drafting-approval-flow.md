@@ -1,6 +1,6 @@
 # Story 4.3: Controlled Topic Drafting & Approval Flow
 
-Status: review
+Status: done
 
 Story ID: 4.3
 Story Key: 4-3-controlled-topic-drafting-approval-flow

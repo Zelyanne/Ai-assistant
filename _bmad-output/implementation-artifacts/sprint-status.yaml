@@ -3,7 +3,7 @@
 # project_key: ai-assistant
 # tracking_system: file-system
 # story_location: _bmad-output
-# last_updated: 2026-02-01 (Code review completed for supabase-google-auth-onboarding-fix - marked done)
+# last_updated: 2026-02-21 (Story 4-5-confidence-based-escalation-logic created and marked ready-for-dev)
 
 # STATUS DEFINITIONS:
 # ==================
@@ -74,13 +74,13 @@ development_status:
   epic-4: in-progress  # RENAMED: Autonomous Proxy & Actionable Trust (was Epic 3)
   4-1-agency-tier-configuration-perimeter-management: done
   4-2-autonomous-proxy-execution: done
-  4-3-controlled-topic-drafting-approval-flow: review
-  4-4-real-time-emergency-brake-global-toggle: ready-for-dev
-  4-5-confidence-based-escalation-logic: backlog
+  4-3-controlled-topic-drafting-approval-flow: done
+  4-4-real-time-emergency-brake-global-toggle: done
+  4-5-confidence-based-escalation-logic: done
   epic-4-retrospective: optional
 
-  epic-5: backlog  # RENAMED: Adaptive Relancing & Team Alignment (was Epic 4)
-  5-1-adaptive-relancing-scheduler: backlog
+  epic-5: in-progress  # RENAMED: Adaptive Relancing & Team Alignment (was Epic 4)
+  5-1-adaptive-relancing-scheduler: ready-for-dev
   5-2-bidirectional-nudge-interface: backlog
   5-3-blocker-detection-automatic-protocol-adjustment: backlog
   5-4-automated-status-aggregation-reporting: backlog
