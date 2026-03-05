@@ -5,12 +5,14 @@ import { ThreadSummarizer } from './ThreadSummarizer.js';
 import { CalendarCreateProcessor } from './CalendarCreateProcessor.js';
 import { ProtocolGenerateProcessor } from './ProtocolGenerateProcessor.js';
 import { MorningBriefProcessor } from './MorningBriefProcessor.js';
+import { EmailSendProcessor } from './EmailSendProcessor.js';
 
 export class ProcessorRegistry {
   private static processors: Map<string, BaseProcessor> = new Map();
 
   static {
     this.processors.set('email.draft', new EmailDraftProcessor());
+    this.processors.set('email.send', new EmailSendProcessor());
     this.processors.set('email.triage', new EmailTriageProcessor());
     this.processors.set('email.summarize', new ThreadSummarizer());
     this.processors.set('calendar.create', new CalendarCreateProcessor());
