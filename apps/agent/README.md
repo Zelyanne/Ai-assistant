@@ -1,38 +1,42 @@
 # AI Assistant Agent
 
-The Agent Controller is responsible for monitoring the `tasks` table in Supabase and executing the LangGraph agent to fulfill user requests.
+Backend worker and API service for the AI Assistant platform.
 
-## Telemetry & Observability
+## Responsibilities
 
-This project uses **LangSmith** for tracing and monitoring agent execution.
+- Exposes operational endpoints such as `GET /health` and OAuth/token routes.
+- Subscribes to Supabase Realtime on `public.tasks` for `status=queued` inserts.
+- Executes the LangGraph workflow for each queued task.
+- Runs Google ingestion jobs and briefing scheduling loops.
 
-### Configuration
+Main entrypoint: `apps/agent/src/index.ts`.
 
-To enable tracing, add the following variables to your `apps/agent/.env` file:
+## Local Development
 
-```env
-LANGCHAIN_TRACING_V2=true
-LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
-LANGCHAIN_API_KEY=your_langsmith_api_key
-LANGCHAIN_PROJECT=ai-assistant
+```bash
+pnpm --filter @ai-assistant/agent dev
 ```
 
-- `LANGCHAIN_TRACING_V2`: Set to `true` to enable tracing.
-- `LANGCHAIN_API_KEY`: Your LangSmith API key.
-- `LANGCHAIN_PROJECT`: The project name in LangSmith (defaults to `ai-assistant`).
+Useful commands:
 
-### Metadata and Filtering
+- `pnpm --filter @ai-assistant/agent build`
+- `pnpm --filter @ai-assistant/agent test`
+- `pnpm --filter @ai-assistant/agent lint`
 
-Every trace automatically includes the following metadata for granular filtering:
-- `task_id`: The UUID of the task from Supabase.
-- `organization_id`: The organization the task belongs to.
-- `domain_action`: The specific action being performed (e.g., `email_triage`, `calendar_create`).
+## Environment
 
-Traces are also tagged with the `domain_action`.
+Use `apps/agent/.env.example` as a template and create `apps/agent/.env` locally.
 
-### Tracing in Development
+Required groups:
 
-On startup, the agent will log its tracing status:
-`[Config] LangSmith tracing: ENABLED`
+- Supabase: URL + service role key
+- LLM provider keys and default model
+- Google OAuth client values
+- 32-character `ENCRYPTION_SECRET`
+- Optional tracing controls (Langfuse, legacy LangSmith)
 
-If `LANGCHAIN_TRACING_V2` is `true` but the API key is missing, a warning will be displayed, but the application will not crash.
+## Observability
+
+- Primary tracing path is Langfuse (`ENABLE_LANGFUSE_TRACING=true`).
+- Legacy LangSmith flags remain for rollback compatibility.
+- Task execution metadata includes task/org/action context for filtering.
