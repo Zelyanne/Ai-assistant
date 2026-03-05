@@ -71,11 +71,11 @@ development_status:
   supabase-google-auth-onboarding-fix: done  # FIXED: Google Auth flow, RLS policies, onboarding retry logic
   epic-3-retrospective: optional
 
-  epic-4: backlog  # RENAMED: Autonomous Proxy & Actionable Trust (was Epic 3)
-  4-1-agency-tier-configuration-perimeter-management: backlog
-  4-2-autonomous-proxy-execution: backlog
-  4-3-controlled-topic-drafting-approval-flow: backlog
-  4-4-real-time-emergency-brake-global-toggle: backlog
+  epic-4: in-progress  # RENAMED: Autonomous Proxy & Actionable Trust (was Epic 3)
+  4-1-agency-tier-configuration-perimeter-management: done
+  4-2-autonomous-proxy-execution: done
+  4-3-controlled-topic-drafting-approval-flow: review
+  4-4-real-time-emergency-brake-global-toggle: ready-for-dev
   4-5-confidence-based-escalation-logic: backlog
   epic-4-retrospective: optional
 
