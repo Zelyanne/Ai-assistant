@@ -36,7 +36,7 @@ export abstract class BaseProcessor {
 
     const middleware = [];
     if (mode === 'single-turn') {
-      middleware.push(modelCallLimitMiddleware({ runLimit: 1 }));
+      middleware.push(modelCallLimitMiddleware({ runLimit: 3 }));
     } else {
       middleware.push(modelCallLimitMiddleware({ runLimit: 10 }));
     }

@@ -1,7 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { MCPService } from './mcp.js';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
-import { supabase } from './supabase.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { supabase } from './supabase.js'
 
 // Mock config
 vi.mock('../config/index.js', () => ({
@@ -12,25 +10,46 @@ vi.mock('../config/index.js', () => ({
   }
 }));
 
-// Mock Supabase
+vi.mock('../guards/PerimeterGuard.js', () => ({
+  PerimeterGuard: vi.fn().mockImplementation(function () {
+    return {
+      redactPII: (text: string) => text,
+    }
+  }),
+}))
+
+const workspaceIntegrationsQuery = {
+  select: vi.fn(),
+  eq: vi.fn(),
+  single: vi.fn(),
+}
+workspaceIntegrationsQuery.select.mockReturnValue(workspaceIntegrationsQuery)
+workspaceIntegrationsQuery.eq.mockReturnValue(workspaceIntegrationsQuery)
+workspaceIntegrationsQuery.single.mockResolvedValue({
+  data: {
+    user_id: 'user-1',
+    encrypted_creds: {
+      access_token: 'iv:tag:encrypted_access',
+      refresh_token: 'iv:tag:encrypted_refresh',
+      expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    },
+  },
+  error: null,
+})
+
+const agentActivityLogQuery = {
+  insert: vi.fn().mockResolvedValue({ error: null }),
+}
+
 vi.mock('./supabase.js', () => ({
   supabase: {
-    from: vi.fn().mockReturnThis(),
-    select: vi.fn().mockReturnThis(),
-    eq: vi.fn().mockReturnThis(),
-    single: vi.fn().mockResolvedValue({
-      data: {
-        user_id: 'user-1',
-        encrypted_creds: {
-          access_token: 'iv:tag:encrypted_access',
-          refresh_token: 'iv:tag:encrypted_refresh'
-        }
-      },
-      error: null
+    from: vi.fn((table: string) => {
+      if (table === 'workspace_integrations') return workspaceIntegrationsQuery
+      if (table === 'agent_activity_log') return agentActivityLogQuery
+      return { insert: vi.fn().mockResolvedValue({ error: null }) }
     }),
-    insert: vi.fn().mockResolvedValue({ error: null })
-  }
-}));
+  },
+}))
 
 // Mock shared utilities
 vi.mock('@ai-assistant/shared/utils/encryption.js', () => ({
@@ -42,28 +61,33 @@ vi.mock('./tokenService.js', () => ({
   storeWorkspaceTokens: vi.fn().mockResolvedValue(undefined)
 }));
 
-// Mock transport
-vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => {
-  return {
-    SSEClientTransport: vi.fn().mockImplementation(function() {
-      return {
-        onerror: null,
-        onclose: null,
-        start: vi.fn()
-      };
-    })
-  };
-});
+let lastTransport: any
+vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
+  StreamableHTTPClientTransport: vi.fn().mockImplementation(function (url: URL, options: any) {
+    lastTransport = { url, options, onerror: null }
+    return lastTransport
+  }),
+}))
+
+vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
+  Client: vi.fn().mockImplementation(function () {
+    return {
+      connect: vi.fn().mockResolvedValue(undefined),
+      callTool: vi.fn().mockResolvedValue({ content: [] }),
+      close: vi.fn().mockResolvedValue(undefined),
+    }
+  }),
+}))
 
 describe('MCPService Connection Error Handling', () => {
-  let mcpService: MCPService;
-
   beforeEach(() => {
     vi.clearAllMocks();
-    mcpService = new MCPService();
+    lastTransport = undefined
   });
 
   it('should capture and log transport errors before connect()', async () => {
+    const { MCPService } = await import('./mcp.js')
+    const mcpService = new MCPService()
     const orgId = 'org-error-test';
     
     // We want to trigger getClient which creates the transport and binds onerror
@@ -75,9 +99,8 @@ describe('MCPService Connection Error Handling', () => {
       // Expect connection failure if we don't mock connect()
     }
 
-    // Find the transport instance created
-    const transportInstance = vi.mocked(SSEClientTransport).mock.results[0].value;
-    expect(transportInstance.onerror).toBeDefined();
+    expect(lastTransport).toBeDefined()
+    expect(lastTransport.onerror).toBeTypeOf('function')
 
     // Simulate an error event
     const mockError = {
@@ -86,17 +109,17 @@ describe('MCPService Connection Error Handling', () => {
       event: { data: 'Invalid Scope' }
     };
     
-    await transportInstance.onerror(mockError);
+    await lastTransport.onerror(mockError)
 
     // Verify logging to Supabase agent_activity_log
     expect(supabase.from).toHaveBeenCalledWith('agent_activity_log');
-    expect(supabase.insert).toHaveBeenCalledWith(expect.objectContaining({
+    expect(agentActivityLogQuery.insert).toHaveBeenCalledWith(expect.objectContaining({
       organization_id: orgId,
       agent_id: 'mcp-client',
       action_taken: 'mcp_transport_error',
       reasoning_trace: expect.objectContaining({
         message: 'SSE 400 Bad Request',
-        eventData: 'Invalid Scope'
+        eventMessage: 'Invalid Scope'
       })
     }));
   });

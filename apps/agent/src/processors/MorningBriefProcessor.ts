@@ -6,11 +6,43 @@ import { mcpService } from '../services/mcp.js';
 import { AGENT_PROMPTS } from '../prompts/agentPrompts.js';
 import { z } from 'zod';
 
+const UUID_REGEX = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
+
+function containsSourceIdLeak(text: string): boolean {
+  if (!text) return false;
+  if (UUID_REGEX.test(text)) {
+    UUID_REGEX.lastIndex = 0;
+    return true;
+  }
+  UUID_REGEX.lastIndex = 0;
+  return /\bSOURCE_ID\s*:/i.test(text) || /\[\s*ID\s*:/i.test(text) || /\[\s*SOURCE_ID\s*:/i.test(text);
+}
+
+function stripSourceIdsFromProse(text: string): string {
+  const normalized = String(text || '');
+  const withoutWrappers = normalized
+    .replace(/\[\s*ID\s*:\s*/gi, '[')
+    .replace(/\[\s*SOURCE_ID\s*:\s*/gi, '[')
+    .replace(/SOURCE_ID\s*:\s*/gi, '')
+    .replace(/\[\s*ID\s*\]/gi, '')
+    .replace(/\[\s*\]/g, '');
+
+  const withoutUuids = withoutWrappers.replace(UUID_REGEX, '');
+  UUID_REGEX.lastIndex = 0;
+
+  return withoutUuids
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+}
+
 /**
  * Schema for LLM-generated morning brief sections
  */
 const BriefSectionsSchema = z.object({
-  narrative_overview: z.string().describe('Conversational executive summary. Mention all items here. Items WITHOUT actionable items should be summarized here with their [SOURCE_ID] but NOT included in the actionable_cards.'),
+  narrative_overview: z.string().describe('Executive narrative overview in readable prose. Mention all items here, but DO NOT include any source IDs/UUIDs in the narrative.'),
   actionable_items: z.array(z.object({
     source_id: z.string(),
     title: z.string(),
@@ -20,7 +52,7 @@ const BriefSectionsSchema = z.object({
   })).describe('Strictly only items that require a specific action from the CEO.'),
   topic_summaries: z.array(z.object({
     topic: z.string(),
-    narrative: z.string().describe('Conversational summary of this topic. Mention all related items.')
+    narrative: z.string().describe('Conversational summary of this topic. Mention all related items, but DO NOT include any source IDs/UUIDs.')
   }))
 });
 
@@ -29,8 +61,12 @@ const MORNING_BRIEF_PROMPT = `You are an elite Executive Assistant preparing a v
 GOAL: Filter the noise. Only highlight specific actionable cards for things I actually need to DO. Everything else goes into the narrative rundown.
 
 STYLE:
-- Narrative: "Good morning. I've handled the triage. You have 3 items requiring your input (highlighted below). Aside from that, [Item A] was received and I've noted it... [Item B] is also on track..."
-- Use [SOURCE_ID] to link narrative text to original data.
+- Narrative should be readable and easy to scan.
+- Start with a 1-2 sentence BLUF.
+- Then insert ONE blank line.
+- Then write short paragraphs (2-3 sentences each).
+- NEVER include source IDs / UUIDs / bracketed IDs in the narrative or topic summaries.
+- Source IDs must ONLY appear in structured fields (e.g., actionable_items[].source_id). Do not echo IDs in prose.
 
 STRUCTURE:
 {
@@ -160,14 +196,17 @@ export class MorningBriefProcessor extends BaseProcessor {
     // Create agent with morning brief prompt
     const agent = this.createAgentInstance(MORNING_BRIEF_PROMPT, securedTools, 'single-turn');
 
-      const briefInput = `
+    const validSourceIdSet = new Set<string>(threadSummaries.map((t) => t.id));
+
+    const briefInput = `
         EXECUTIVE BRIEFING REQUEST
         
         Total items triaged: ${threadSummaries.length}
         
         DATA FOR NARRATIVE RUNDOWN:
         ${threadSummaries.map((t, i) => `
-          [ID: ${t.id}] "${t.subject}"
+          SOURCE_ID: ${t.id}
+          Subject: "${t.subject}"
           Priority: ${t.priority_score}/100
           Context: ${t.summary}
           Action Items FOUND: ${t.action_items.join('; ') || 'NONE'}
@@ -175,11 +214,13 @@ export class MorningBriefProcessor extends BaseProcessor {
         `).join('\n---\n')}
         
         INSTRUCTIONS:
-        1. Write a conversational "Executive Rundown" covering ALL items.
-        2. IF an item has a clear, high-priority Action Item (something I MUST do), create an entry in 'actionable_items'.
-        3. IF an item is just for info (no Action Items found), mention it in the Rundown narrative with its [ID] but DO NOT create an actionable_item card for it.
-        4. Group narrative summaries by watch topic in 'topic_summaries'.
-        5. CRITICAL: For 'priority' field in actionable_items, you MUST map the numeric score to one of: "high" (>80), "medium" (50-80), or "low" (<50). Do NOT return numbers.
+        1. Write an "Executive Rundown" covering ALL items in readable prose.
+        2. Your narrative_overview MUST follow: 1-2 sentence BLUF, blank line, then short paragraphs (2-3 sentences each).
+        3. CRITICAL: Do NOT include SOURCE_ID/UUIDs anywhere in narrative_overview or topic_summaries.
+        4. IF an item has a clear, high-priority Action Item (something I MUST do), create an entry in 'actionable_items' and set actionable_items[].source_id to the SOURCE_ID provided.
+        5. IF an item is just informational (no action required), mention it by subject/details in the narrative_overview, but do NOT create an actionable_item card.
+        6. Group narrative summaries by watch topic in 'topic_summaries' (no IDs in prose).
+        7. CRITICAL: For 'priority' field in actionable_items, you MUST map the numeric score to one of: "high" (>80), "medium" (50-80), or "low" (<50). Do NOT return numbers.
       `;
 
     try {
@@ -188,80 +229,125 @@ export class MorningBriefProcessor extends BaseProcessor {
       });
 
       const outputText = String(result.messages?.at(-1)?.content || '');
-      const cleanOutput = outputText.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
-      const briefSections = BriefSectionsSchema.parse(JSON.parse(cleanOutput));
-
-      // 5. Recover PII
-      briefSections.narrative_overview = guard.recoverPII(briefSections.narrative_overview);
-      briefSections.actionable_items = briefSections.actionable_items.map(item => ({
-        ...item,
-        title: guard.recoverPII(item.title),
-        action_required: guard.recoverPII(item.action_required)
-      }));
-      briefSections.topic_summaries = briefSections.topic_summaries.map(s => ({
-        ...s,
-        narrative: guard.recoverPII(s.narrative)
-      }));
-
-      // 6. Save to morning_briefs
-      const generationTime = new Date().toISOString();
-      const briefData = {
-        organization_id,
-        user_id,
-        generated_at: generationTime,
-        summary_text: briefSections.narrative_overview,
-        blockers: briefSections.actionable_items.filter(i => i.priority === 'high').map(i => i.action_required),
-        risks: briefSections.actionable_items.filter(i => i.priority === 'medium').map(i => i.action_required),
-        topic_deep_dives: briefSections.topic_summaries.map(d => ({
-          topic: d.topic,
-          count: briefSections.actionable_items.filter(i => i.topic === d.topic).length,
-          summaries: [d.narrative]
-        })),
-        metadata: {
-          actionable_items: briefSections.actionable_items
-        },
-        is_read: false
-      };
-
-      const { data: savedBrief, error: saveError } = await supabase
-        .from('morning_briefs')
-        .insert(briefData)
-        .select()
-        .single();
-
-      if (saveError) throw saveError;
-
-      // Update profile with last generation time
-      if (user_id !== 'system') {
-        await supabase
-          .from('profiles')
-          .update({ last_brief_generated_at: generationTime })
-          .eq('id', user_id)
-          .eq('organization_id', organization_id);
+      console.log(`[MorningBriefProcessor] Model raw output: ${outputText.substring(0, 1000)}`);
+      
+      if (outputText.startsWith('Model call limits exceeded')) {
+        throw new Error(`Agent failed: ${outputText}`);
       }
 
-      // 7. Log activity with reasoning trace and citations
-      await supabase.from('agent_activity_log').insert({
-        organization_id,
-        task_id: task.id,
-        agent_id: user_id,
-        action_taken: `Generated morning brief with ${activeThreads.length} threads`,
-        reasoning_trace: this.getTrace(),
-        citations: activeThreads.slice(0, 5).map(t => ({
-          source_type: 'email',
-          source_id: t.external_id,
-          link: `https://mail.google.com/mail/u/0/#all/${t.external_id}`,
-          description: `Source thread: ${t.subject}`
-        }))
-      } as any);
+      const cleanOutput = outputText.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
+      
+      try {
+        const briefSections = BriefSectionsSchema.parse(JSON.parse(cleanOutput));
+        
+        // 5. Recover PII
+        briefSections.narrative_overview = guard.recoverPII(briefSections.narrative_overview);
+        briefSections.actionable_items = briefSections.actionable_items.map(item => ({
+          ...item,
+          title: guard.recoverPII(item.title),
+          action_required: guard.recoverPII(item.action_required)
+        }));
+        briefSections.topic_summaries = briefSections.topic_summaries.map(s => ({
+          ...s,
+          narrative: guard.recoverPII(s.narrative)
+        }));
 
-      return {
-        message: `Successfully generated morning brief with ${activeThreads.length} threads`,
-        brief_id: savedBrief.id,
-        thread_count: activeThreads.length,
-        topic_count: Object.keys(topicGroups).length,
-        brief: briefSections
-      };
+        // 5b. Enforce: no source IDs in prose (backend boundary)
+        if (containsSourceIdLeak(briefSections.narrative_overview)) {
+          this.addTraceStep('Output Cleanup', 'Source ID leak detected in narrative_overview; stripping IDs from prose');
+          briefSections.narrative_overview = stripSourceIdsFromProse(briefSections.narrative_overview);
+        }
+
+        briefSections.topic_summaries = briefSections.topic_summaries.map(s => {
+          if (containsSourceIdLeak(s.narrative)) {
+            this.addTraceStep('Output Cleanup', `Source ID leak detected in topic summary for "${s.topic}"; stripping IDs from prose`);
+            return { ...s, narrative: stripSourceIdsFromProse(s.narrative) };
+          }
+          return s;
+        });
+
+        // 5c. Validate actionable items reference known source IDs
+        const beforeCount = briefSections.actionable_items.length;
+        briefSections.actionable_items = briefSections.actionable_items.filter((item) => validSourceIdSet.has(item.source_id));
+        const dropped = beforeCount - briefSections.actionable_items.length;
+        if (dropped > 0) {
+          this.addTraceStep('Output Cleanup', `Dropped ${dropped} actionable_items with unknown source_id`);
+        }
+
+        // 6. Save to morning_briefs
+        const generationTime = new Date().toISOString();
+        const sourceIds: string[] = [];
+        const seenSourceIds = new Set<string>();
+        for (const t of threadSummaries) {
+          if (!seenSourceIds.has(t.id)) {
+            seenSourceIds.add(t.id);
+            sourceIds.push(t.id);
+          }
+        }
+
+         const briefData = {
+           organization_id,
+           user_id,
+           generated_at: generationTime,
+           summary_text: briefSections.narrative_overview,
+           blockers: briefSections.actionable_items.filter(i => i.priority === 'high').map(i => i.action_required),
+           risks: briefSections.actionable_items.filter(i => i.priority === 'medium').map(i => i.action_required),
+           topic_deep_dives: briefSections.topic_summaries.map(d => ({
+             topic: d.topic,
+             count: briefSections.actionable_items.filter(i => i.topic === d.topic).length,
+             summaries: [d.narrative]
+           })),
+           metadata: {
+            actionable_items: briefSections.actionable_items,
+            source_ids: sourceIds
+           },
+           is_read: false
+         };
+
+        const { data: savedBrief, error: saveError } = await supabase
+          .from('morning_briefs')
+          .insert(briefData)
+          .select()
+          .single();
+
+        if (saveError) throw saveError;
+
+        // Update profile with last generation time
+        if (user_id !== 'system') {
+          await supabase
+            .from('profiles')
+            .update({ last_brief_generated_at: generationTime })
+            .eq('id', user_id)
+            .eq('organization_id', organization_id);
+        }
+
+        // 7. Log activity with reasoning trace and citations
+        await supabase.from('agent_activity_log').insert({
+          organization_id,
+          task_id: task.id,
+          agent_id: user_id,
+          action_taken: `Generated morning brief with ${activeThreads.length} threads`,
+          reasoning_trace: this.getTrace(),
+          citations: activeThreads.slice(0, 5).map(t => ({
+            source_type: 'email',
+            source_id: t.external_id,
+            link: `https://mail.google.com/mail/u/0/#all/${t.external_id}`,
+            description: `Source thread: ${t.subject}`
+          }))
+        } as any);
+
+        return {
+          message: `Successfully generated morning brief with ${activeThreads.length} threads`,
+          brief_id: savedBrief.id,
+          thread_count: activeThreads.length,
+          topic_count: Object.keys(topicGroups).length,
+          brief: briefSections
+        };
+      } catch (parseErr: any) {
+        console.error(`[MorningBriefProcessor] Failed to parse model output: ${parseErr.message}`);
+        console.error(`[MorningBriefProcessor] Cleaned output was: ${cleanOutput}`);
+        throw parseErr;
+      }
 
     } catch (err: any) {
       this.addTraceStep('Agent Error', `Failed to generate brief: ${err.message}`);

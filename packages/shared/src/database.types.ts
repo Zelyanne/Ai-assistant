@@ -297,6 +297,42 @@ export type Database = {
         }
         Relationships: []
       }
+      org_safety_controls: {
+        Row: {
+          emergency_brake_enabled: boolean
+          organization_id: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          emergency_brake_enabled?: boolean
+          organization_id: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          emergency_brake_enabled?: boolean
+          organization_id?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "org_safety_controls_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "org_safety_controls_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -571,7 +607,7 @@ export type Database = {
     }
     Enums: {
       agency_tier: "Public" | "Controlled" | "Restricted"
-      task_status: "queued" | "processing" | "done" | "error" | "escalation"
+      task_status: "queued" | "processing" | "done" | "error" | "escalation" | "paused"
       user_role: "CEO" | "PM" | "Team Member" | "Simple User"
     }
     CompositeTypes: {
@@ -701,7 +737,7 @@ export const Constants = {
   public: {
     Enums: {
       agency_tier: ["Public", "Controlled", "Restricted"],
-      task_status: ["queued", "processing", "done", "error", "escalation"],
+      task_status: ["queued", "processing", "done", "error", "escalation", "paused"],
       user_role: ["CEO", "PM", "Team Member", "Simple User"],
     },
   },

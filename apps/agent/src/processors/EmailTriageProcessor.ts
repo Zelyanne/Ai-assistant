@@ -142,8 +142,24 @@ export class EmailTriageProcessor extends BaseProcessor {
         });
 
         const outputText = String(result.messages?.at(-1)?.content || '');
+        console.log(`[EmailTriageProcessor] Model raw output for thread ${thread.id}: ${outputText.substring(0, 500)}`);
+
+        if (outputText.startsWith('Model call limits exceeded')) {
+          console.error(`[EmailTriageProcessor] Agent failed for thread ${thread.id}: ${outputText}`);
+          return;
+        }
+
         const cleanOutput = outputText.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
-        const classification = TriageResultSchema.parse(JSON.parse(cleanOutput));
+        
+        let classification;
+        try {
+          classification = TriageResultSchema.parse(JSON.parse(cleanOutput));
+        } catch (parseErr: any) {
+          console.error(`[EmailTriageProcessor] JSON parse failed for thread ${thread.id}: ${parseErr.message}`);
+          console.error(`[EmailTriageProcessor] Cleaned output was: ${cleanOutput}`);
+          // Skip this thread but don't crash the whole batch
+          return;
+        }
 
         // Restore PII in reason strings
         classification.matches.forEach(m => {

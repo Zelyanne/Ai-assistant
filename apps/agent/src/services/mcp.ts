@@ -1,5 +1,5 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { supabase } from './supabase.js';
 import { decrypt } from '@ai-assistant/shared/utils/encryption.js';
 import { PerimeterGuard } from '../guards/PerimeterGuard.js';
@@ -13,7 +13,7 @@ import { storeWorkspaceTokens } from './tokenService.js';
 
 const ENCRYPTION_SECRET = config.ENCRYPTION_SECRET;
 const MCP_SERVER_PORT = 8000;
-const MCP_SERVER_URL = `http://localhost:${MCP_SERVER_PORT}/mcp`;
+const MCP_SERVER_URL = `http://127.0.0.1:${MCP_SERVER_PORT}/mcp/`;
 const TOOL_CACHE_TTL = 3600000; // 1 hour
 
 interface CachedClient {
@@ -65,7 +65,7 @@ export class MCPService {
         GOOGLE_OAUTH_CLIENT_ID: config.GOOGLE_OAUTH_CLIENT_ID,
         GOOGLE_OAUTH_CLIENT_SECRET: config.GOOGLE_OAUTH_CLIENT_SECRET,
         MCP_ENABLE_OAUTH21: 'true',
-        WORKSPACE_MCP_STATELESS_MODE: 'true',
+        WORKSPACE_MCP_STATELESS_MODE: 'false',
         EXTERNAL_OAUTH21_PROVIDER: 'true',
         OAUTHLIB_INSECURE_TRANSPORT: '1',
       }
@@ -241,21 +241,17 @@ export class MCPService {
       }
     }
 
-    // 2. Setup MCP Client with Bearer Token in SSE transport
-    // We pass headers in BOTH requestInit (for fetch-based transports) and eventSourceInit (for node eventsource)
-    // to ensure the Authorization header is always sent.
-    const transport = new SSEClientTransport(new URL(MCP_SERVER_URL), {
+    // 2. Setup MCP Client with Bearer Token in Streamable HTTP transport
+    // This is the native client for the server's 'streamable-http' transport.
+    // It correctly handles session ID handshakes and header propagation.
+    const transport = new StreamableHTTPClientTransport(new URL(MCP_SERVER_URL), {
       requestInit: {
         headers: new Headers({
           'Authorization': `Bearer ${accessToken}`
         })
-      },
-      eventSourceInit: {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`
-        }
-      } as any
+      }
     });
+
 
     const client = new Client(
       { name: 'agent-controller', version: '1.0.0' },

@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useUserStore } from '../stores/user';
 import { useAgent } from '../composables/useAgent';
+import { useSafetyControls } from '../composables/useSafetyControls';
 import { supabase } from '../services/supabase';
 import OutcomeCard from '../components/activity/OutcomeCard.vue';
 import ReasoningTracePane from '../components/activity/ReasoningTracePane.vue';
@@ -13,27 +14,293 @@ import Tab from 'primevue/tab';
 import TabPanels from 'primevue/tabpanels';
 import TabPanel from 'primevue/tabpanel';
 import Dialog from 'primevue/dialog';
+import Drawer from 'primevue/drawer';
+import Checkbox from 'primevue/checkbox';
+import InputText from 'primevue/inputtext';
+import Textarea from 'primevue/textarea';
+import ConfirmDialog from 'primevue/confirmdialog';
+import { useConfirm } from 'primevue/useconfirm';
 import Toast from 'primevue/toast';
 import { useToast } from 'primevue/usetoast';
 import type { MorningBrief } from '@ai-assistant/shared';
+import ThreadSummaryComponent from '../components/activity/ThreadSummary.vue';
+import { formatMorningBriefNarrative, maskSourceId } from '../utils/morningBriefFormat';
 
 const toast = useToast();
+const confirm = useConfirm();
+const safetyControls = useSafetyControls();
+const isEmergencyBrakeEngaged = computed(() => safetyControls.emergencyBrakeEnabled.value);
 const isTraceVisible = ref(false);
 const selectedTaskId = ref<string | null>(null);
 const activeTab = ref('briefing');
 const morningBrief = ref<MorningBrief | null>(null);
 const triggeringBrief = ref(false);
 
-const isDetailOpen = ref(false);
+const formattedBrief = computed(() => {
+  if (!morningBrief.value) return null;
+  return formatMorningBriefNarrative(morningBrief.value.summary_text, morningBrief.value.metadata);
+});
+
+const isPeekOpen = ref(false);
 const selectedItem = ref<OutcomeItem | null>(null);
+const selectedItemIds = ref<string[]>([]);
+const activeFilter = ref<'all' | 'wins' | 'blockers' | 'risks'>('all');
+const isBulkProcessing = ref(false);
+const bulkProgressMessage = ref('');
+const openedAt = ref<number>(0);
+const failureSummaryVisible = ref(false);
+const failedItemsList = ref<{title: string, error: string}[]>([]);
+const integrationOwnerId = ref<string | null>(null);
+const isApproveSending = ref(false);
+
+interface EscalationDraft {
+  to: string;
+  cc: string;
+  bcc: string;
+  subject: string;
+  body: string;
+  body_format: 'plain' | 'html';
+  thread_external_id?: string;
+  thread_id?: string;
+  in_reply_to?: string;
+  references?: string;
+}
+
+interface EscalationCitation {
+  source_type?: string;
+  source_id?: string;
+  description?: string;
+  link?: string;
+}
+
+type EscalationTrigger = 'low_confidence' | 'ambiguity_detected' | 'restricted_topic' | 'approval_guardrail';
+
+interface EscalationMeta {
+  confidenceScore?: number;
+  confidenceThreshold?: number;
+  escalationTrigger?: EscalationTrigger;
+}
+
+function parseEscalationMeta(result: Record<string, unknown> | null): EscalationMeta {
+  if (!result) return {};
+
+  const confidenceScoreRaw = result.confidence_score;
+  const confidenceThresholdRaw = result.confidence_threshold;
+  const escalationTriggerRaw = result.escalation_trigger;
+
+  const confidenceScore = typeof confidenceScoreRaw === 'number' ? confidenceScoreRaw : undefined;
+  const confidenceThreshold = typeof confidenceThresholdRaw === 'number' ? confidenceThresholdRaw : undefined;
+  const escalationTrigger =
+    escalationTriggerRaw === 'low_confidence'
+    || escalationTriggerRaw === 'ambiguity_detected'
+    || escalationTriggerRaw === 'restricted_topic'
+    || escalationTriggerRaw === 'approval_guardrail'
+      ? escalationTriggerRaw
+      : undefined;
+
+  return {
+    confidenceScore,
+    confidenceThreshold,
+    escalationTrigger,
+  };
+}
+
+function formatEscalationTrigger(trigger: EscalationTrigger): string {
+  return trigger.replace(/_/g, ' ');
+}
+
+function formatConfidencePercent(value: number): string {
+  const clamped = Math.max(0, Math.min(1, value));
+  return `${Math.round(clamped * 100)}%`;
+}
+
+const editableDraft = ref<EscalationDraft | null>(null);
+
+function cloneDraft(raw: Record<string, unknown>): EscalationDraft {
+  return {
+    to: typeof raw.to === 'string' ? raw.to : '',
+    cc: typeof raw.cc === 'string' ? raw.cc : '',
+    bcc: typeof raw.bcc === 'string' ? raw.bcc : '',
+    subject: typeof raw.subject === 'string' ? raw.subject : '',
+    body: typeof raw.body === 'string' ? raw.body : '',
+    body_format: raw.body_format === 'html' ? 'html' : 'plain',
+    thread_external_id: typeof raw.thread_external_id === 'string' ? raw.thread_external_id : undefined,
+    thread_id: typeof raw.thread_id === 'string' ? raw.thread_id : undefined,
+    in_reply_to: typeof raw.in_reply_to === 'string' ? raw.in_reply_to : undefined,
+    references: typeof raw.references === 'string' ? raw.references : undefined,
+  };
+}
+
 let clickTimeout: any = null;
+
+function openPeek(item: OutcomeItem) {
+  selectedItem.value = item;
+  openedAt.value = Date.now();
+
+  if (item.type === 'task') {
+    const task = item.original as DashboardTask;
+    const result = (task.result ?? {}) as Record<string, unknown>;
+    const rawDraft = result.draft;
+    if (rawDraft && typeof rawDraft === 'object') {
+      editableDraft.value = cloneDraft(rawDraft as Record<string, unknown>);
+    } else {
+      editableDraft.value = null;
+    }
+  } else {
+    editableDraft.value = null;
+  }
+
+  isPeekOpen.value = true;
+}
 
 function openDetail(item: OutcomeItem) {
   if (clickTimeout) clearTimeout(clickTimeout);
   clickTimeout = setTimeout(() => {
-    selectedItem.value = item;
-    isDetailOpen.value = true;
+    openPeek(item);
   }, 300);
+}
+
+function toggleSelection(id: string, isSelected: boolean) {
+  if (isSelected) {
+    if (!selectedItemIds.value.includes(id)) {
+      selectedItemIds.value.push(id);
+    }
+  } else {
+    selectedItemIds.value = selectedItemIds.value.filter(itemId => itemId !== id);
+  }
+}
+
+// Interactive Filtering Logic
+const filterCounts = computed(() => {
+  const all = outcomeItems.value;
+  return {
+    wins: all.filter(i => i.status === 'done').length,
+    blockers: all.filter(i => i.topics?.some(t => t.toLowerCase().includes('blocker') || t.toLowerCase().includes('urgent')) || i.status === 'escalation').length,
+    risks: all.filter(i => i.topics?.some(t => t.toLowerCase().includes('risk') || t.toLowerCase().includes('deadline'))).length,
+  };
+});
+
+function toggleFilter(filter: 'wins' | 'blockers' | 'risks') {
+  if (activeFilter.value === filter) activeFilter.value = 'all';
+  else activeFilter.value = filter;
+}
+
+// Bulk Actions Handling
+async function automateTasks() {
+  if (isEmergencyBrakeEngaged.value) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Brake Engaged',
+      detail: 'Bulk automation is disabled while the Emergency Brake is engaged.',
+      life: 4000,
+    });
+    return;
+  }
+
+  const selected = briefingItems.value.filter(i => selectedItemIds.value.includes(i.id));
+  const highRiskActions = ['email.send', 'thread.action'];
+  const hasHighRisk = selected.some(i => highRiskActions.includes(i.domainAction || 'thread.action'));
+
+  if (hasHighRisk) {
+    confirm.require({
+      message: 'You have selected high-risk actions (e.g. sending emails). Are you sure you want to proceed?',
+      header: 'Security Confirmation',
+      icon: 'pi pi-exclamation-triangle',
+      acceptClass: 'p-button-danger',
+      accept: () => executeBulkAutomation(selected),
+    });
+  } else {
+    executeBulkAutomation(selected);
+  }
+}
+
+async function executeBulkAutomation(items: OutcomeItem[]) {
+  if (items.length === 0) return;
+  
+  isBulkProcessing.value = true;
+  bulkProgressMessage.value = 'Initializing automation...';
+  failedItemsList.value = [];
+  
+  const BATCH_SIZE = 5;
+  const timeoutId = setTimeout(() => {
+    bulkProgressMessage.value = 'Taking longer than expected...';
+  }, 10000);
+
+  try {
+    // Process in batches
+    for (let i = 0; i < items.length; i += BATCH_SIZE) {
+      const batch = items.slice(i, i + BATCH_SIZE);
+      bulkProgressMessage.value = `Processing batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(items.length / BATCH_SIZE)}...`;
+      
+      await Promise.all(batch.map(async (item) => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout per item
+
+        try {
+          const domainAction = item.domainAction || 'thread.action';
+
+          // Verify state before action
+          const { data: latest } = await supabase
+            .from(item.type === 'task' ? 'tasks' : 'ingested_threads')
+            .select('status')
+            .eq('id', item.id)
+            .single();
+
+          if (latest?.status === 'processing') {
+            throw new Error('Item state changed: already processing');
+          }
+
+          const { error } = await supabase.from('tasks').insert({
+            organization_id: userStore.profile?.organization_id,
+            user_id: userStore.profile?.id,
+            domain_action: domainAction,
+            status: 'queued',
+            ...(domainAction === 'thread.action' ? { topic: item.topics?.[0] ?? 'General' } : {}),
+            payload: { 
+              source_id: item.id,
+              source_type: item.type,
+              ...(item.type === 'thread' ? { thread_id: item.externalId } : {})
+            }
+          });
+
+          if (error) throw error;
+        } catch (err: any) {
+          console.error(`Failed to automate item ${item.id}:`, err);
+          failedItemsList.value.push({ title: item.title, error: err.message || 'Unknown error' });
+        } finally {
+          clearTimeout(timeout);
+        }
+      }));
+    }
+    
+    clearTimeout(timeoutId);
+
+    if (failedItemsList.value.length > 0) {
+      failureSummaryVisible.value = true;
+    } else {
+      toast.add({
+        severity: 'success',
+        summary: 'Bulk Action Successful',
+        detail: `Successfully triggered ${items.length} automated actions.`,
+        life: 3000
+      });
+      selectedItemIds.value = [];
+    }
+  } catch (err) {
+    toast.add({
+      severity: 'error',
+      summary: 'Critical Error',
+      detail: 'The bulk automation request failed.',
+      life: 5000
+    });
+  } finally {
+    isBulkProcessing.value = false;
+    bulkProgressMessage.value = '';
+  }
+}
+
+function maskedSourceLabel(id: string): string {
+  return maskSourceId(id);
 }
 
 async function triggerMorningBrief() {
@@ -81,7 +348,8 @@ function openTrace(taskId: string) {
 interface DashboardTask {
   id: string;
   domain_action: string;
-  status: 'queued' | 'processing' | 'done' | 'error' | 'escalation';
+  topic?: string;
+  status: 'queued' | 'processing' | 'done' | 'error' | 'escalation' | 'paused';
   payload: {
     agency_tier?: 'Public' | 'Controlled' | 'Restricted';
     [key: string]: any;
@@ -112,6 +380,115 @@ interface DashboardThread {
     [key: string]: any;
   };
   created_at: string;
+}
+
+const selectedTask = computed<DashboardTask | null>(() => {
+  if (!selectedItem.value || selectedItem.value.type !== 'task') return null;
+  return selectedItem.value.original as DashboardTask;
+});
+
+const selectedTaskResult = computed<Record<string, unknown> | null>(() => {
+  return (selectedTask.value?.result as Record<string, unknown>) ?? null;
+});
+
+const selectedEscalationMeta = computed<EscalationMeta>(() => {
+  return parseEscalationMeta(selectedTaskResult.value);
+});
+
+const selectedEscalationPrompt = computed<string | null>(() => {
+  const prompt = selectedTaskResult.value?.prompt;
+  return typeof prompt === 'string' ? prompt : null;
+});
+
+const selectedEscalationCitations = computed<EscalationCitation[]>(() => {
+  const citations = selectedTaskResult.value?.citations;
+  return Array.isArray(citations) ? (citations as EscalationCitation[]) : [];
+});
+
+const selectedEscalationThreadLink = computed<string | null>(() => {
+  const firstLinked = selectedEscalationCitations.value.find(
+    (citation) => typeof citation.link === 'string' && citation.link.length > 0,
+  );
+  return firstLinked?.link ?? null;
+});
+
+const hasEscalationDraft = computed<boolean>(() => {
+  return !!(selectedTask.value?.status === 'escalation' && editableDraft.value);
+});
+
+const isCurrentUserGmailOwner = computed<boolean>(() => {
+  const userId = userStore.profile?.id;
+  return !!userId && !!integrationOwnerId.value && userId === integrationOwnerId.value;
+});
+
+async function requestApproveAndSend(): Promise<void> {
+  if (!hasEscalationDraft.value || !isCurrentUserGmailOwner.value || isApproveSending.value) return;
+
+  confirm.require({
+    message: 'This will queue an approved send action for execution. Continue?',
+    header: 'Approve & Send Confirmation',
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: () => {
+      void queueApprovedSend();
+    },
+  });
+}
+
+async function queueApprovedSend(): Promise<void> {
+  if (!selectedTask.value || !editableDraft.value || !userStore.profile?.organization_id || !userStore.profile?.id) return;
+
+  const sourceTask = selectedTask.value;
+  const approvedDraft = editableDraft.value;
+
+  isApproveSending.value = true;
+  try {
+    const approvedAt = new Date().toISOString();
+
+    const { error } = await supabase.from('tasks').insert({
+      organization_id: userStore.profile.organization_id,
+      user_id: userStore.profile.id,
+      domain_action: 'email.send',
+      status: 'queued',
+      topic: sourceTask.topic ?? 'General',
+      payload: {
+        to: approvedDraft.to,
+        cc: approvedDraft.cc || undefined,
+        bcc: approvedDraft.bcc || undefined,
+        subject: approvedDraft.subject,
+        body: approvedDraft.body,
+        body_format: approvedDraft.body_format,
+        thread_external_id: approvedDraft.thread_external_id,
+        thread_id: approvedDraft.thread_id,
+        in_reply_to: approvedDraft.in_reply_to,
+        references: approvedDraft.references,
+        approved_by: userStore.profile.id,
+        approved_at: approvedAt,
+        source_task_id: sourceTask.id,
+      },
+    });
+
+    if (error) throw error;
+
+    toast.add({
+      severity: 'success',
+      summary: 'Send Task Queued',
+      detail: 'Approved email has been queued for execution.',
+      life: 3000,
+    });
+
+    isPeekOpen.value = false;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to queue send task.';
+    toast.add({
+      severity: 'error',
+      summary: 'Approve & Send Failed',
+      detail: message,
+      life: 5000,
+    });
+  } finally {
+    isApproveSending.value = false;
+  }
 }
 
 const TIME_SAVED_PER_WIN_MINUTES = 15;
@@ -172,12 +549,15 @@ interface OutcomeItem {
   summary: string;
   summaryJson?: any;
   externalId?: string;
-  status: 'done' | 'escalation' | 'processing' | 'queued' | 'error' | 'insight';
+  status: 'done' | 'escalation' | 'paused' | 'processing' | 'queued' | 'error' | 'insight';
   agencyTier: 'Public' | 'Controlled' | 'Restricted';
   timestamp: string;
   original: DashboardTask | DashboardThread;
   topics?: string[];
   domainAction?: string;
+  escalationConfidenceScore?: number;
+  escalationConfidenceThreshold?: number;
+  escalationTrigger?: EscalationTrigger;
 }
 
 const outcomeItems = computed((): OutcomeItem[] => {
@@ -185,12 +565,15 @@ const outcomeItems = computed((): OutcomeItem[] => {
 
   // Map Tasks (Silent Wins & Escalations)
   tasks.value.forEach(task => {
-    let status: 'done' | 'escalation' | 'processing' | 'queued' | 'error' | 'insight' = 'insight';
+    let status: 'done' | 'escalation' | 'paused' | 'processing' | 'queued' | 'error' | 'insight' = 'insight';
     if (task.status === 'done') status = 'done';
     else if (task.status === 'escalation') status = 'escalation';
+    else if (task.status === 'paused') status = 'paused';
     else if (task.status === 'processing') status = 'processing';
     else if (task.status === 'error') status = 'error';
     else status = 'queued';
+
+    const escalationMeta = parseEscalationMeta((task.result ?? {}) as Record<string, unknown>);
 
     items.push({
       id: task.id,
@@ -201,7 +584,10 @@ const outcomeItems = computed((): OutcomeItem[] => {
       agencyTier: task.payload?.agency_tier || 'Controlled',
       timestamp: new Date(task.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       original: task,
-      domainAction: task.domain_action
+      domainAction: task.domain_action,
+      escalationConfidenceScore: escalationMeta.confidenceScore,
+      escalationConfidenceThreshold: escalationMeta.confidenceThreshold,
+      escalationTrigger: escalationMeta.escalationTrigger,
     });
   });
 
@@ -244,19 +630,30 @@ const systemPulse = computed(() => {
 
 // Briefing Tab: Filter for items with specific actionable intent
 const briefingItems = computed((): OutcomeItem[] => {
-  return outcomeItems.value.filter(item => {
-    // 1. Always include tasks that are 'processing' or 'queued' (system status)
+  const all = outcomeItems.value;
+  
+  // 1. If a specific highlight filter is active, return matching items from the full list
+  if (activeFilter.value === 'wins') {
+    return all.filter(i => i.status === 'done');
+  }
+  if (activeFilter.value === 'blockers') {
+    return all.filter(i => i.topics?.some(t => t.toLowerCase().includes('blocker') || t.toLowerCase().includes('urgent')) || i.status === 'escalation');
+  }
+  if (activeFilter.value === 'risks') {
+    return all.filter(i => i.topics?.some(t => t.toLowerCase().includes('risk') || t.toLowerCase().includes('deadline')));
+  }
+
+  // 2. Default 'all' view: Show actionable items + Insights
+  // We exclude 'done' tasks and 'email.triage' noise from the default view to keep it clean,
+  // but we show them if the user explicitly clicks the 'Wins' filter.
+  return all.filter(item => {
+    // Always include tasks that are 'processing' or 'queued'
     if (item.status === 'processing' || item.status === 'queued') return true;
 
-    // 2. ONLY include threads that have explicit action items
-    // This removes the "just for info" cards from the grid
-    if (item.type === 'thread') {
-      const hasActionableContent = item.original.summary_json?.action_items?.length > 0;
-      const isEscalation = item.status === 'escalation';
-      return hasActionableContent || isEscalation;
-    }
+    // Include all threads (Insights & Escalations)
+    if (item.type === 'thread') return true;
     
-    // 3. For Tasks, include if they are not background noise
+    // For Tasks, include if they are high-value and not yet done
     const isHighValueTask = item.type === 'task' && item.status !== 'done' && item.domainAction !== 'email.triage';
 
     return isHighValueTask;
@@ -278,7 +675,16 @@ async function fetchData() {
 
   loading.value = true;
   try {
-    const [threadsRes, tasksRes] = await Promise.all([
+    const ownerQuery = supabase
+      .from('workspace_integrations')
+      .select('user_id')
+      .eq('organization_id', userStore.profile.organization_id) as { maybeSingle?: () => Promise<{ data: { user_id?: string } | null; error: unknown }> };
+
+    const ownerPromise = ownerQuery.maybeSingle
+      ? ownerQuery.maybeSingle()
+      : Promise.resolve({ data: null, error: null });
+
+    const [threadsRes, tasksRes, ownerRes] = await Promise.all([
       supabase
         .from('ingested_threads')
         .select('*')
@@ -290,14 +696,17 @@ async function fetchData() {
         .select('*')
         .eq('organization_id', userStore.profile.organization_id)
         .order('created_at', { ascending: false })
-        .limit(10)
+        .limit(10),
+      ownerPromise
     ]);
 
     if (threadsRes.error) throw threadsRes.error;
     if (tasksRes.error) throw tasksRes.error;
+    if (ownerRes.error) throw ownerRes.error;
 
     threads.value = (threadsRes.data as any[]) || [];
     tasks.value = (tasksRes.data as any[]) || [];
+    integrationOwnerId.value = ownerRes.data?.user_id ?? null;
 
     // Fetch morning brief in parallel
     await fetchMorningBrief();
@@ -336,6 +745,9 @@ let cleanupTasks: (() => void) | null = null;
 let cleanupBriefs: (() => void) | null = null;
 
 onMounted(async () => {
+  void safetyControls.refresh();
+  safetyControls.subscribe();
+
   await fetchData();
 
   cleanupThreads = subscribeToTable('ingested_threads', (payload) => {
@@ -343,6 +755,17 @@ onMounted(async () => {
       threads.value = [payload.new, ...threads.value].slice(0, 10);
     } else if (payload.eventType === 'UPDATE') {
       threads.value = threads.value.map(t => t.id === payload.new.id ? payload.new : t);
+      
+      // Data Freshness check for Peek
+      if (isPeekOpen.value && selectedItem.value?.id === payload.new.id) {
+        toast.add({
+          severity: 'info',
+          summary: 'Data Updated',
+          detail: 'The item you are viewing has been updated.',
+          group: 'peek-update',
+          life: 0
+        });
+      }
     } else if (payload.eventType === 'DELETE') {
       threads.value = threads.value.filter(t => t.id !== payload.old.id);
     }
@@ -353,6 +776,17 @@ onMounted(async () => {
       tasks.value = [payload.new, ...tasks.value].slice(0, 10);
     } else if (payload.eventType === 'UPDATE') {
       tasks.value = tasks.value.map(t => t.id === payload.new.id ? payload.new : t);
+      
+      // Data Freshness check for Peek
+      if (isPeekOpen.value && selectedItem.value?.id === payload.new.id) {
+        toast.add({
+          severity: 'info',
+          summary: 'Status Changed',
+          detail: `Task status is now: ${payload.new.status}`,
+          group: 'peek-update',
+          life: 0
+        });
+      }
     } else if (payload.eventType === 'DELETE') {
       tasks.value = tasks.value.filter(t => t.id !== payload.old.id);
     }
@@ -368,6 +802,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  safetyControls.unsubscribe();
   if (cleanupThreads) cleanupThreads();
   if (cleanupTasks) cleanupTasks();
   if (cleanupBriefs) cleanupBriefs();
@@ -411,8 +846,46 @@ onUnmounted(() => {
       <Card v-for="i in 6" :key="i" class="h-48 border-none shadow-sm animate-pulse bg-slate-50" />
     </div>
 
+    <!-- Executive Highlights Bar -->
+    <div v-if="!loading && activeTab === 'briefing'" class="flex flex-wrap gap-3 mb-2">
+      <button 
+        @click="activeFilter = 'all'"
+        class="px-4 py-2 rounded-full text-sm font-bold transition-all border"
+        :class="activeFilter === 'all' ? 'bg-slate-800 text-white border-slate-800 shadow-md' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'"
+      >
+        All Items
+      </button>
+      <button 
+        @click="toggleFilter('wins')"
+        class="px-4 py-2 rounded-full text-sm font-bold transition-all border flex items-center gap-2"
+        :class="activeFilter === 'wins' ? 'bg-emerald-600 text-white border-emerald-600 shadow-md' : 'bg-white text-emerald-600 border-emerald-200 hover:border-emerald-300'"
+      >
+        <i class="pi pi-check-circle"></i>
+        Wins
+        <Badge v-if="filterCounts.wins > 0" :value="filterCounts.wins" severity="success" class="scale-75" />
+      </button>
+      <button 
+        @click="toggleFilter('blockers')"
+        class="px-4 py-2 rounded-full text-sm font-bold transition-all border flex items-center gap-2"
+        :class="activeFilter === 'blockers' ? 'bg-amber-600 text-white border-amber-600 shadow-md' : 'bg-white text-amber-600 border-amber-200 hover:border-amber-300'"
+      >
+        <i class="pi pi-exclamation-triangle"></i>
+        Blockers
+        <Badge v-if="filterCounts.blockers > 0" :value="filterCounts.blockers" severity="warn" class="scale-75" />
+      </button>
+      <button 
+        @click="toggleFilter('risks')"
+        class="px-4 py-2 rounded-full text-sm font-bold transition-all border flex items-center gap-2"
+        :class="activeFilter === 'risks' ? 'bg-rose-600 text-white border-rose-600 shadow-md' : 'bg-white text-rose-600 border-rose-200 hover:border-rose-300'"
+      >
+        <i class="pi pi-shield"></i>
+        Risks
+        <Badge v-if="filterCounts.risks > 0" :value="filterCounts.risks" severity="danger" class="scale-75" />
+      </button>
+    </div>
+
     <!-- Tabbed Interface -->
-    <Tabs v-else v-model:value="activeTab" class="dashboard-tabs">
+    <Tabs v-if="!loading" v-model:value="activeTab" class="dashboard-tabs">
       <TabList>
         <Tab value="briefing">
           <div class="flex items-center gap-2">
@@ -446,15 +919,33 @@ onUnmounted(() => {
               </template>
               <template #content>
                 <div class="space-y-5">
-                  <!-- Narrative Overview - Conversational Style -->
-                  <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-blue-500 rounded-r-lg p-5">
-                    <h4 class="text-blue-800 font-bold font-sans mb-3 flex items-center gap-2">
-                      <i class="pi pi-comments"></i>
+                  <!-- Narrative Overview - Executive Style -->
+                  <div class="executive-prose p-6 bg-white border border-slate-100 rounded-lg shadow-sm">
+                    <h4 class="text-slate-900 font-bold font-sans mb-4 flex items-center gap-2 not-italic">
+                      <i class="pi pi-align-left text-blue-500"></i>
                       Executive Rundown
                     </h4>
-                    <p class="text-slate-800 leading-relaxed font-technical text-base whitespace-pre-line">
-                      {{ morningBrief.summary_text }}
-                    </p>
+
+                    <div v-html="formattedBrief?.narrativeHtml || ''"></div>
+
+                    <section class="sources-row">
+                      <template v-if="(formattedBrief?.sourceIds?.length || 0) > 0">
+                        <div class="sources-label">Sources ({{ formattedBrief?.sourceIds.length }})</div>
+                        <div class="sources-list">
+                          <span
+                            v-for="id in formattedBrief?.sourceIds"
+                            :key="id"
+                            class="source-pill"
+                            :title="maskedSourceLabel(id)"
+                          >
+                            {{ maskedSourceLabel(id) }}
+                          </span>
+                        </div>
+                      </template>
+                      <template v-else>
+                        <div class="sources-fallback">Sources unavailable for this brief.</div>
+                      </template>
+                    </section>
                   </div>
 
                   <!-- Topic Summaries -->
@@ -515,12 +1006,29 @@ onUnmounted(() => {
                 :task-id="item.type === 'task' ? item.id : undefined"
                 :status="item.status"
                 :agency-tier="item.agencyTier"
+                :escalation-confidence-score="item.escalationConfidenceScore"
+                :escalation-confidence-threshold="item.escalationConfidenceThreshold"
+                :escalation-trigger="item.escalationTrigger"
                 :timestamp="item.timestamp"
                 :topics="item.topics"
                 :is-mini="true"
+                :selectable="true"
+                :selected="selectedItemIds.includes(item.id)"
+                @update:selected="(val) => toggleSelection(item.id, val)"
                 @open-trace="openTrace"
                 @click="openDetail(item)"
-              />
+              >
+                <template #actions>
+                  <Button 
+                    label="Handle It" 
+                    icon="pi pi-external-link" 
+                    text 
+                    size="small" 
+                    class="p-button-technical"
+                    @click.stop="openPeek(item)" 
+                  />
+                </template>
+              </OutcomeCard>
             </div>
 
             <!-- Briefing Empty State -->
@@ -555,6 +1063,9 @@ onUnmounted(() => {
                 :task-id="item.type === 'task' ? item.id : undefined"
                 :status="item.status"
                 :agency-tier="item.agencyTier"
+                :escalation-confidence-score="item.escalationConfidenceScore"
+                :escalation-confidence-threshold="item.escalationConfidenceThreshold"
+                :escalation-trigger="item.escalationTrigger"
                 :timestamp="item.timestamp"
                 :is-mini="true"
                 @open-trace="openTrace"
@@ -582,34 +1093,98 @@ onUnmounted(() => {
       :task-id="selectedTaskId" 
     />
 
-    <Dialog 
-      v-model:visible="isDetailOpen" 
-      modal 
-      :header="selectedItem?.title" 
-      :style="{ width: '50rem' }" 
-      :breakpoints="{ '1199px': '75vw', '575px': '90vw' }"
-      class="executive-dialog"
+    <!-- Side-panel "Peek" View -->
+    <Drawer 
+      v-model:visible="isPeekOpen" 
+      position="right" 
+      :modal="true" 
+      :dismissable="true"
+      class="executive-drawer"
+      :style="{ width: '40rem' }"
     >
-      <div v-if="selectedItem" class="space-y-6">
+      <template #header>
         <div class="flex items-center gap-3">
-          <Badge :value="selectedItem.status" :severity="selectedItem.status === 'done' ? 'success' : 'warn'" />
-          <span class="text-sm text-slate-400 font-technical">{{ selectedItem.timestamp }}</span>
+          <Badge :value="selectedItem?.status" :severity="selectedItem?.status === 'done' ? 'success' : 'warn'" />
+          <h3 class="text-xl font-bold font-sans">{{ selectedItem?.title }}</h3>
         </div>
-
-        <div class="bg-slate-50 p-6 rounded-lg border-l-4" :style="{ borderLeftColor: selectedItem.status === 'done' ? '#059669' : '#D97706' }">
+      </template>
+      <div v-if="selectedItem" class="space-y-6 p-4">
+        <div class="bg-slate-50 p-6 rounded-lg border-l-4 border-blue-500">
           <h4 class="text-lg font-bold mb-2 font-sans">Executive Summary</h4>
           <p class="text-slate-700 leading-relaxed font-technical whitespace-pre-line">
             {{ selectedItem.summary }}
           </p>
         </div>
 
-        <div class="flex justify-end gap-3 pt-4 border-t border-slate-100">
-          <Button 
-            v-if="selectedItem.status === 'escalation'" 
-            label="Take Action" 
-            icon="pi pi-bolt" 
-            severity="warning" 
-            class="p-button-technical" 
+        <div v-if="selectedEscalationPrompt" class="bg-amber-50 p-4 rounded-lg border border-amber-100">
+          <h4 class="text-sm font-bold mb-1 text-amber-800">Escalation Prompt</h4>
+          <p class="text-sm text-amber-700 font-technical">{{ selectedEscalationPrompt }}</p>
+        </div>
+
+        <div
+          v-if="selectedTask?.status === 'escalation' && (selectedEscalationMeta.confidenceScore !== undefined || selectedEscalationMeta.confidenceThreshold !== undefined || selectedEscalationMeta.escalationTrigger)"
+          class="bg-amber-50 p-4 rounded-lg border border-amber-100"
+        >
+          <h4 class="text-sm font-bold mb-2 text-amber-800">Confidence Context</h4>
+          <div class="text-sm text-amber-700 font-technical space-y-1">
+            <p v-if="selectedEscalationMeta.confidenceScore !== undefined">
+              Score: {{ formatConfidencePercent(selectedEscalationMeta.confidenceScore) }}
+            </p>
+            <p v-if="selectedEscalationMeta.confidenceThreshold !== undefined">
+              Threshold: {{ formatConfidencePercent(selectedEscalationMeta.confidenceThreshold) }}
+            </p>
+            <p v-if="selectedEscalationMeta.escalationTrigger">
+              Trigger: {{ formatEscalationTrigger(selectedEscalationMeta.escalationTrigger) }}
+            </p>
+          </div>
+        </div>
+
+        <div v-if="hasEscalationDraft && editableDraft" class="space-y-4 border border-slate-200 rounded-lg p-4 bg-white">
+          <h4 class="text-base font-bold font-sans text-slate-800">Approval Draft</h4>
+
+          <div class="grid grid-cols-1 gap-3">
+            <div>
+              <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">To</label>
+              <InputText v-model="editableDraft.to" class="w-full" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Cc</label>
+              <InputText v-model="editableDraft.cc" class="w-full" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Bcc</label>
+              <InputText v-model="editableDraft.bcc" class="w-full" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Subject</label>
+              <InputText v-model="editableDraft.subject" class="w-full" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Body</label>
+              <Textarea v-model="editableDraft.body" rows="8" class="w-full" autoResize />
+            </div>
+          </div>
+
+          <div v-if="selectedEscalationThreadLink" class="text-xs text-slate-500">
+            Thread: <a :href="selectedEscalationThreadLink" target="_blank" rel="noopener" class="text-blue-600 underline">Open original thread</a>
+          </div>
+        </div>
+
+        <ThreadSummaryComponent 
+          v-if="selectedItem.summaryJson" 
+          :summary="selectedItem.summaryJson" 
+          :external-id="selectedItem.externalId" 
+        />
+
+        <div class="flex justify-end gap-3 pt-6 border-t border-slate-100">
+          <Button
+            v-if="hasEscalationDraft"
+            :label="isCurrentUserGmailOwner ? 'Approve & Send' : 'Owner Approval Required'"
+            icon="pi pi-send"
+            severity="danger"
+            :disabled="!isCurrentUserGmailOwner"
+            :loading="isApproveSending"
+            @click="requestApproveAndSend"
           />
           <Button 
             v-if="selectedItem.type === 'task'" 
@@ -617,14 +1192,84 @@ onUnmounted(() => {
             icon="pi pi-search" 
             text 
             class="p-button-technical" 
-            @click="openTrace(selectedItem.id); isDetailOpen = false" 
+            @click="openTrace(selectedItem.id); isPeekOpen = false" 
           />
-          <Button label="Close" text @click="isDetailOpen = false" />
+          <Button label="Close" text @click="isPeekOpen = false" />
+        </div>
+      </div>
+    </Drawer>
+
+    <!-- Global Action Bar -->
+    <transition name="fade">
+      <div 
+        v-if="selectedItemIds.length > 0" 
+        class="fixed bottom-10 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-8 py-4 rounded-full shadow-2xl z-50 flex items-center gap-8 border border-slate-700"
+      >
+        <div class="flex items-center gap-3">
+          <Badge :value="selectedItemIds.length" severity="info" />
+          <span class="font-bold text-sm">Items Selected</span>
+        </div>
+        
+        <div class="h-6 w-px bg-slate-700"></div>
+
+        <div v-if="isEmergencyBrakeEngaged" class="text-xs text-rose-200 font-technical whitespace-nowrap">
+          Brake engaged - automation paused
+        </div>
+
+        <div class="flex gap-4">
+          <Button 
+            label="Automate" 
+            icon="pi pi-bolt" 
+            severity="info" 
+            rounded 
+            :disabled="isEmergencyBrakeEngaged"
+            :loading="isBulkProcessing"
+            @click="automateTasks" 
+          />
+          <Button 
+            label="Cancel" 
+            text 
+            severity="secondary" 
+            @click="selectedItemIds = []" 
+          />
+        </div>
+      </div>
+    </transition>
+
+    <ConfirmDialog />
+    <Dialog v-model:visible="failureSummaryVisible" header="Action Failure Summary" :style="{ width: '35rem' }" modal>
+      <div class="space-y-4">
+        <p class="text-sm text-slate-600">The following items could not be automated. You may need to handle them manually or retry.</p>
+        <div class="max-h-60 overflow-y-auto space-y-2">
+          <div v-for="fail in failedItemsList" :key="fail.title" class="p-3 bg-rose-50 border border-rose-100 rounded flex flex-col gap-1">
+            <span class="font-bold text-rose-800 text-sm">{{ fail.title }}</span>
+            <span class="text-xs text-rose-600">{{ fail.error }}</span>
+          </div>
+        </div>
+        <div class="flex justify-end pt-4">
+          <Button label="Acknowledge" severity="secondary" @click="failureSummaryVisible = false" />
         </div>
       </div>
     </Dialog>
-
     <Toast />
+    <Toast group="peek-update">
+      <template #message="slotProps">
+        <div class="flex flex-col items-start gap-3">
+          <div class="flex items-center gap-2">
+            <i class="pi pi-info-circle text-blue-500"></i>
+            <span class="font-bold">{{ slotProps.message.summary }}</span>
+          </div>
+          <div class="text-sm text-slate-600">{{ slotProps.message.detail }}</div>
+          <Button 
+            label="Refresh View" 
+            size="small" 
+            severity="info" 
+            class="p-button-technical"
+            @click="fetchData(); toast.removeGroup('peek-update')" 
+          />
+        </div>
+      </template>
+    </Toast>
   </div>
 </template>
 

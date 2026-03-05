@@ -1,117 +1,130 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { MCPService } from './mcp.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const mockClientInstance = {
-  connect: vi.fn().mockResolvedValue(undefined),
-  callTool: vi.fn().mockResolvedValue({
-    content: [{ type: 'text', text: 'Success' }],
-    structuredContent: { result: 'Success' }
+const mockConnect = vi.fn().mockResolvedValue(undefined)
+const mockCallTool = vi.fn().mockResolvedValue({
+  content: [{ type: 'text', text: 'Success' }],
+  structuredContent: { result: 'Success' },
+})
+const mockClose = vi.fn().mockResolvedValue(undefined)
+
+vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
+  Client: vi.fn().mockImplementation(function () {
+    return {
+      connect: mockConnect,
+      callTool: mockCallTool,
+      close: mockClose,
+    }
   }),
-  close: vi.fn().mockResolvedValue(undefined),
-};
+}))
 
-vi.mock('@modelcontextprotocol/sdk/client/index.js', () => {
-  return {
-    Client: vi.fn().mockImplementation(function() {
-      return mockClientInstance;
-    })
-  };
-});
+let lastTransport: any
+vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
+  StreamableHTTPClientTransport: vi.fn().mockImplementation(function (url: URL, options: any) {
+    lastTransport = { url, options, onerror: null }
+    return lastTransport
+  }),
+}))
 
-vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => {
-  return {
-    SSEClientTransport: vi.fn().mockImplementation(function() {
-      return {};
-    })
-  };
-});
+const workspaceIntegrationsQuery = {
+  select: vi.fn(),
+  eq: vi.fn(),
+  single: vi.fn(),
+}
+workspaceIntegrationsQuery.select.mockReturnValue(workspaceIntegrationsQuery)
+workspaceIntegrationsQuery.eq.mockReturnValue(workspaceIntegrationsQuery)
+workspaceIntegrationsQuery.single.mockResolvedValue({
+  data: {
+    user_id: 'user-1',
+    encrypted_creds: {
+      access_token: 'iv:tag:encrypted_access',
+      refresh_token: 'iv:tag:encrypted_refresh',
+      expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    },
+  },
+  error: null,
+})
+
+const agentActivityLogQuery = {
+  insert: vi.fn().mockResolvedValue({ error: null }),
+}
+
+vi.mock('./supabase.js', () => ({
+  supabase: {
+    from: vi.fn((table: string) => {
+      if (table === 'workspace_integrations') return workspaceIntegrationsQuery
+      if (table === 'agent_activity_log') return agentActivityLogQuery
+      return { insert: vi.fn().mockResolvedValue({ error: null }) }
+    }),
+  },
+}))
+
+vi.mock('@ai-assistant/shared/utils/encryption.js', () => ({
+  decrypt: vi.fn().mockReturnValue('decrypted_token'),
+}))
+
+vi.mock('./tokenService.js', () => ({
+  storeWorkspaceTokens: vi.fn().mockResolvedValue({ success: true }),
+}))
+
+vi.mock('./googleAuth.js', () => ({
+  googleAuthService: { refreshAccessToken: vi.fn() },
+}))
+
+vi.mock('@langchain/mcp-adapters', () => ({
+  loadMcpTools: vi.fn().mockResolvedValue([]),
+}))
 
 vi.mock('../config/index.js', () => ({
   config: {
     ENCRYPTION_SECRET: 'a'.repeat(32),
     GOOGLE_OAUTH_CLIENT_ID: 'client-id',
     GOOGLE_OAUTH_CLIENT_SECRET: 'client-secret',
-  }
-}));
-
-vi.mock('./supabase.js', () => ({
-  supabase: {
-    from: vi.fn().mockReturnThis(),
-    select: vi.fn().mockReturnThis(),
-    eq: vi.fn().mockReturnThis(),
-    single: vi.fn().mockResolvedValue({
-      data: {
-        encrypted_creds: {
-          access_token: 'iv:tag:encrypted_access',
-          refresh_token: 'iv:tag:encrypted_refresh'
-        }
-      },
-      error: null
-    }),
-    insert: vi.fn().mockResolvedValue({ error: null })
-  }
-}));
-
-vi.mock('@ai-assistant/shared', () => ({
-  decrypt: vi.fn().mockReturnValue('decrypted_token')
-}));
+  },
+}))
 
 describe('MCPService', () => {
-  let mcpService: MCPService;
-
   beforeEach(() => {
-    vi.clearAllMocks();
-    mcpService = new MCPService();
-    
-    // Reset mock defaults
-    mockClientInstance.connect.mockResolvedValue(undefined);
-    mockClientInstance.callTool.mockResolvedValue({
-      content: [{ type: 'text', text: 'Success' }],
-      structuredContent: { result: 'Success' }
-    });
-    mockClientInstance.close.mockResolvedValue(undefined);
-  });
+    vi.clearAllMocks()
+    lastTransport = undefined
+  })
 
-  it('should execute a tool and return results', async () => {
-    const result = await mcpService.executeTool('org-123', 'gmail.list_messages', { q: 'from:me' });
-    
-    expect(result).toBeDefined();
-    expect(result.structuredContent).toBeDefined();
-    expect(result.structuredContent.result).toBe('Success');
-    expect(mockClientInstance.connect).toHaveBeenCalled();
-    expect(mockClientInstance.callTool).toHaveBeenCalledWith({
+  it('executes a tool and returns results', async () => {
+    const { MCPService } = await import('./mcp.js')
+    const service = new MCPService()
+
+    const result = await service.executeTool('org-123', 'gmail.list_messages', { q: 'from:me' })
+
+    expect(result.structuredContent?.result).toBe('Success')
+    expect(mockConnect).toHaveBeenCalledTimes(1)
+    expect(mockCallTool).toHaveBeenCalledWith({
       name: 'gmail.list_messages',
-      arguments: { q: 'from:me' }
-    });
-    // With caching, close is NOT called immediately
-    expect(mockClientInstance.close).not.toHaveBeenCalled();
-  });
+      arguments: { q: 'from:me' },
+    })
+    expect(mockClose).not.toHaveBeenCalled()
+    expect(lastTransport).toBeDefined()
+  })
 
-  it('should reuse the client for subsequent calls', async () => {
-    // First call
-    await mcpService.executeTool('org-123', 'tool1', {});
-    // Second call
-    await mcpService.executeTool('org-123', 'tool2', {});
+  it('reuses the cached client for subsequent calls', async () => {
+    const { MCPService } = await import('./mcp.js')
+    const service = new MCPService()
 
-    // Should only connect once
-    expect(mockClientInstance.connect).toHaveBeenCalledTimes(1);
-    // Should call tool twice
-    expect(mockClientInstance.callTool).toHaveBeenCalledTimes(2);
-  });
+    await service.executeTool('org-123', 'tool1', {})
+    await service.executeTool('org-123', 'tool2', {})
 
-  it('should handle tool execution errors and invalidate cache', async () => {
-    // Setup error for the tool call
-    mockClientInstance.callTool.mockRejectedValueOnce(new Error('Tool failed'));
-    
-    await expect(mcpService.executeTool('org-123', 'invalid.tool', {}))
-      .rejects.toThrow('Tool failed');
-    
-    // Verify it's removed from cache by making another call which should trigger a new connect
-    mockClientInstance.callTool.mockResolvedValueOnce({ content: [] }); // Reset to success
-    
-    await mcpService.executeTool('org-123', 'retry.tool', {});
-    
-    // Should have connected again (1 from first failed attempt, 1 from retry)
-    expect(mockClientInstance.connect).toHaveBeenCalledTimes(2);
-  });
-});
+    expect(mockConnect).toHaveBeenCalledTimes(1)
+    expect(mockCallTool).toHaveBeenCalledTimes(2)
+  })
+
+  it('invalidates cache on tool error and reconnects', async () => {
+    const { MCPService } = await import('./mcp.js')
+    const service = new MCPService()
+
+    mockCallTool.mockRejectedValueOnce(new Error('Tool failed'))
+    await expect(service.executeTool('org-123', 'invalid.tool', {})).rejects.toThrow('Tool failed')
+
+    mockCallTool.mockResolvedValueOnce({ content: [] })
+    await service.executeTool('org-123', 'retry.tool', {})
+
+    expect(mockConnect).toHaveBeenCalledTimes(2)
+  })
+})

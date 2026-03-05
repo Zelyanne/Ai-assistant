@@ -1,5 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { MCPService } from './mcp.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // Mock PerimeterGuard
 vi.mock('../guards/PerimeterGuard.js', () => ({
@@ -18,9 +17,12 @@ vi.mock('./supabase.js', () => ({
     eq: vi.fn().mockReturnThis(),
     single: vi.fn().mockResolvedValue({
       data: {
+        user_id: 'user-1',
         encrypted_creds: {
           access_token: 'mock:iv:token',
           refresh_token: 'mock:iv:refresh'
+          ,
+          expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString()
         }
       },
       error: null
@@ -30,9 +32,9 @@ vi.mock('./supabase.js', () => ({
 }));
 
 // Mock Shared Utils
-vi.mock('@ai-assistant/shared', () => ({
-  decrypt: vi.fn().mockReturnValue('valid-access-token')
-}));
+vi.mock('@ai-assistant/shared/utils/encryption.js', () => ({
+  decrypt: vi.fn().mockReturnValue('valid-access-token'),
+}))
 
 // Mock MCP SDK Client and Transport
 const mockConnect = vi.fn().mockResolvedValue(undefined);
@@ -43,24 +45,20 @@ const mockClose = vi.fn().mockResolvedValue(undefined);
 
 // Use a regular function for the mock implementation to satisfy the "constructor" requirement
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
-  Client: vi.fn().mockImplementation(function() {
+  Client: vi.fn().mockImplementation(function () {
     return {
       connect: mockConnect,
       callTool: mockCallTool,
-      close: mockClose
-    };
-  })
-}));
+      close: mockClose,
+    }
+  }),
+}))
 
-vi.mock('@modelcontextprotocol/sdk/client/sse.js', () => ({
-  SSEClientTransport: vi.fn().mockImplementation(function(config) {
-    return {
-      start: vi.fn().mockResolvedValue(undefined),
-      close: vi.fn().mockResolvedValue(undefined),
-      _config: config
-    };
-  })
-}));
+vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
+  StreamableHTTPClientTransport: vi.fn().mockImplementation(function (url: URL, options: any) {
+    return { url, options, onerror: null }
+  }),
+}))
 
 vi.mock('../config/index.js', () => ({
   config: {
@@ -71,15 +69,14 @@ vi.mock('../config/index.js', () => ({
 }));
 
 describe('MCPService Integration Flow', () => {
-  let service: MCPService;
-
   beforeEach(() => {
     vi.clearAllMocks();
-    service = new MCPService();
   });
 
   it('should perform a full tool execution flow', async () => {
-    const result = await service.executeTool('org-1', 'test_tool', { arg: 'val' });
+    const { MCPService } = await import('./mcp.js')
+    const service = new MCPService()
+    const result = await service.executeTool('org-1', 'test_tool', { arg: 'val' })
 
     expect(mockConnect).toHaveBeenCalled();
     expect(mockCallTool).toHaveBeenCalledWith({
@@ -94,8 +91,10 @@ describe('MCPService Integration Flow', () => {
   });
 
   it('should reuse client in integration flow', async () => {
-    await service.executeTool('org-1', 'tool_1', {});
-    await service.executeTool('org-1', 'tool_2', {});
+    const { MCPService } = await import('./mcp.js')
+    const service = new MCPService()
+    await service.executeTool('org-1', 'tool_1', {})
+    await service.executeTool('org-1', 'tool_2', {})
 
     expect(mockConnect).toHaveBeenCalledTimes(1);
     expect(mockCallTool).toHaveBeenCalledTimes(2);

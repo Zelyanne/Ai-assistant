@@ -40,7 +40,9 @@ export const ReasoningStepSchema = z.object({
   step_name: z.string(),
   message: z.string(),
   confidence_score: z.number().min(0).max(1).optional(),
+  confidence_threshold: z.number().min(0).max(1).optional(),
   ambiguity_detected: z.boolean().optional(),
+  escalation_trigger: z.enum(['low_confidence', 'ambiguity_detected', 'restricted_topic', 'approval_guardrail']).optional(),
   input_summary: z.string().optional(),
   output_summary: z.string().optional(),
 });
@@ -59,6 +61,28 @@ export const CitationSchema = z.object({
 });
 
 export type Citation = z.infer<typeof CitationSchema>;
+
+export const EscalationTriggerSchema = z.enum([
+  'low_confidence',
+  'ambiguity_detected',
+  'restricted_topic',
+  'approval_guardrail',
+]);
+
+export type EscalationTrigger = z.infer<typeof EscalationTriggerSchema>;
+
+export const EscalationResultSchema = z
+  .object({
+    escalation: z.literal(true),
+    reason: z.string(),
+    prompt: z.string(),
+    confidence_score: z.number().min(0).max(1).optional(),
+    confidence_threshold: z.number().min(0).max(1).optional(),
+    escalation_trigger: EscalationTriggerSchema.optional(),
+  })
+  .passthrough();
+
+export type EscalationResult = z.infer<typeof EscalationResultSchema>;
 
 export const AgentActivityLogSchema = z.object({
   id: z.string().uuid().optional(),
@@ -114,6 +138,47 @@ export const ThreadSummarySchema = z.object({
 });
 
 export type ThreadSummary = z.infer<typeof ThreadSummarySchema>;
+
+export const ThreadActionDecisionSchema = z
+  .object({
+    action: z.enum(['email.reply', 'email.draft', 'calendar.create', 'escalate']),
+    confidence: z.number().min(0).max(1),
+    ambiguity_detected: z.boolean().default(false),
+    email: z
+      .object({
+        subject: z.string(),
+        body: z.string(),
+      })
+      .optional(),
+    calendar: z
+      .object({
+        summary: z.string(),
+        startTime: z.string(),
+        endTime: z.string(),
+        description: z.string().optional(),
+        location: z.string().optional(),
+      })
+      .optional(),
+    escalation: z
+      .object({
+        reason: z.string(),
+        prompt: z.string(),
+      })
+      .optional(),
+  })
+  .superRefine((value, ctx) => {
+    if ((value.action === 'email.reply' || value.action === 'email.draft') && !value.email) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'email is required when action is email.reply or email.draft' });
+    }
+    if (value.action === 'calendar.create' && !value.calendar) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'calendar is required when action is calendar.create' });
+    }
+    if (value.action === 'escalate' && !value.escalation) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'escalation is required when action is escalate' });
+    }
+  });
+
+export type ThreadActionDecision = z.infer<typeof ThreadActionDecisionSchema>;
 
 export const IngestedThreadSchema = z.object({
   id: z.string().uuid().optional(),
@@ -178,6 +243,25 @@ export const TopicDeepDiveSchema = z.object({
 
 export type TopicDeepDive = z.infer<typeof TopicDeepDiveSchema>;
 
+export const MorningBriefActionableItemSchema = z.object({
+  source_id: z.string(),
+  title: z.string(),
+  action_required: z.string(),
+  priority: z.enum(['high', 'medium', 'low']),
+  topic: z.string(),
+});
+
+export type MorningBriefActionableItem = z.infer<typeof MorningBriefActionableItemSchema>;
+
+export const MorningBriefMetadataSchema = z
+  .object({
+    source_ids: z.array(z.string()).optional(),
+    actionable_items: z.array(MorningBriefActionableItemSchema).optional(),
+  })
+  .passthrough();
+
+export type MorningBriefMetadata = z.infer<typeof MorningBriefMetadataSchema>;
+ 
 export const MorningBriefSchema = z.object({
   id: z.string().uuid().optional(),
   organization_id: z.string().uuid(),
@@ -187,10 +271,13 @@ export const MorningBriefSchema = z.object({
   blockers: z.array(z.string()),
   risks: z.array(z.string()),
   topic_deep_dives: z.array(TopicDeepDiveSchema),
+  metadata: MorningBriefMetadataSchema.optional(),
   is_read: z.boolean().default(false),
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
 });
+
+export type MorningBrief = z.infer<typeof MorningBriefSchema>;
 
 export const UserProtocolSchema = z.object({
   id: z.string().uuid().optional(),
@@ -225,4 +312,3 @@ export const ProtocolGenerationResultSchema = z.object({
 });
 
 export type ProtocolGenerationResult = z.infer<typeof ProtocolGenerationResultSchema>;
-

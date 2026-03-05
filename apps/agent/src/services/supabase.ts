@@ -9,9 +9,12 @@ if (!config.SUPABASE_SERVICE_ROLE_KEY) {
   const key = config.SUPABASE_SERVICE_ROLE_KEY;
   const maskedKey = `${key.substring(0, 5)}...${key.substring(key.length - 5)}`;
   console.log(`[Supabase] Service role key confirmed: ${maskedKey} (length: ${key.length})`);
-  
-  if (key.length < 100) {
-    console.warn('⚠️ [Supabase] The service role key seems too short for a Supabase JWT. It should typically be several hundred characters long.');
+
+  const isJwtStyleKey = key.split('.').length === 3;
+  const isSupabaseSecretKey = key.startsWith('sb_secret_');
+
+  if (!isJwtStyleKey && !isSupabaseSecretKey) {
+    console.warn('⚠️ [Supabase] SUPABASE_SERVICE_ROLE_KEY format is unusual. Expected a JWT-style key or an sb_secret_* key.');
   }
 }
 

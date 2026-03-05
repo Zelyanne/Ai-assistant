@@ -7,7 +7,10 @@ describe('OutcomeCard', () => {
         return mount(OutcomeCard, {
             props,
             global: {
-                plugins: [PrimeVue]
+                plugins: [PrimeVue],
+                directives: {
+                    tooltip: () => undefined,
+                },
             }
         });
     };

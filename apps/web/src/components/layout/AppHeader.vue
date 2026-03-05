@@ -1,8 +1,45 @@
 <script setup lang="ts">
+import { computed, onMounted, onUnmounted } from 'vue';
 import { useUserStore } from '../../stores/user';
 import Button from 'primevue/button';
+import ToggleSwitch from 'primevue/toggleswitch';
+import { useSafetyControls } from '../../composables/useSafetyControls';
 
 const userStore = useUserStore();
+const safetyControls = useSafetyControls();
+
+const toggleDisabled = computed(() => {
+  if (safetyControls.loading.value || safetyControls.saving.value) return true;
+  // Anyone can enable; only CEO can disable.
+  return safetyControls.emergencyBrakeEnabled.value && userStore.isCEO !== true;
+});
+
+const toggleTooltip = computed(() => {
+  if (toggleDisabled.value && safetyControls.emergencyBrakeEnabled.value && userStore.isCEO !== true) {
+    return 'Only the CEO can disable the Emergency Brake.';
+  }
+  return safetyControls.emergencyBrakeEnabled.value
+    ? 'Brake engaged: proxy actions will be paused.'
+    : 'Brake off: proxy actions can run normally.';
+});
+
+const brakeModel = computed({
+  get(): boolean {
+    return safetyControls.emergencyBrakeEnabled.value;
+  },
+  set(next: boolean): void {
+    void safetyControls.setEmergencyBrakeEnabled(next);
+  },
+});
+
+onMounted(() => {
+  void safetyControls.refresh();
+  safetyControls.subscribe();
+});
+
+onUnmounted(() => {
+  safetyControls.unsubscribe();
+});
 
 defineEmits(['toggle-menu']);
 </script>
@@ -24,16 +61,24 @@ defineEmits(['toggle-menu']);
 
     <div class="flex items-center gap-4">
       <!-- Emergency Brake -->
-      <Button 
-        severity="danger" 
-        variant="outlined"
-        class="!rounded-executive !px-4 !py-2 !text-sm font-medium animate-pulse"
-      >
-        <template #icon>
-          <span class="mr-2">🚨</span>
-        </template>
-        Emergency Brake
-      </Button>
+      <div class="flex items-center gap-3 shrink-0">
+        <div class="hidden sm:flex flex-col leading-tight">
+          <div class="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Emergency Brake</div>
+          <div v-if="safetyControls.emergencyBrakeEnabled" class="flex items-center gap-2 text-rose-700 font-semibold">
+            <span class="h-2 w-2 rounded-full bg-rose-600 animate-pulse"></span>
+            <span>Brake Engaged</span>
+          </div>
+          <div v-else class="text-slate-500 text-sm">Normal Mode</div>
+        </div>
+
+        <ToggleSwitch
+          v-model="brakeModel"
+          :disabled="toggleDisabled"
+          :aria-label="'Emergency Brake Toggle'"
+          data-testid="emergency-brake-toggle"
+          v-tooltip.bottom="toggleTooltip"
+        />
+      </div>
 
       <div class="h-8 w-px bg-executive-background mx-2"></div>
 

@@ -24,7 +24,14 @@ export class GoogleIngestionService {
       .eq('provider', 'google');
 
     if (error) {
-      console.error('Error fetching integrations:', error);
+      const errorCode = (error as { code?: string } | null)?.code;
+      if (errorCode === 'PGRST205') {
+        console.error(
+          "Error fetching integrations: missing table 'public.workspace_integrations'. Apply migrations from supabase/migrations to your Supabase project."
+        );
+      } else {
+        console.error('Error fetching integrations:', error);
+      }
       return;
     }
 

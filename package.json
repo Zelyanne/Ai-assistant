@@ -15,5 +15,8 @@
     "supabase": "^2.72.4",
     "typescript": "^5.4.0",
     "vitest": "^4.0.17"
+  },
+  "dependencies": {
+    "pnpm": "^10.30.3"
   }
 }

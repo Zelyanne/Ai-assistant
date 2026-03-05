@@ -8,7 +8,10 @@ describe('OutcomeCard', () => {
     return mount(OutcomeCard, {
       props,
       global: {
-        plugins: [PrimeVue]
+        plugins: [PrimeVue],
+        directives: {
+          tooltip: () => undefined,
+        },
       }
     });
   };
@@ -66,5 +69,34 @@ describe('OutcomeCard', () => {
     });
 
     expect(wrapper.text()).toContain('Controlled');
+  });
+
+  it('renders escalation confidence hint when metadata is provided', () => {
+    const wrapper = mountComponent({
+      title: 'Review Needed',
+      summary: 'Human review required.',
+      status: 'escalation',
+      timestamp: '12:00 PM',
+      escalationConfidenceScore: 0.79,
+      escalationConfidenceThreshold: 0.8,
+      escalationTrigger: 'low_confidence',
+    });
+
+    expect(wrapper.text()).toContain('score 79%');
+    expect(wrapper.text()).toContain('threshold 80%');
+    expect(wrapper.text()).toContain('trigger low confidence');
+  });
+
+  it('hides escalation confidence hint when metadata is missing', () => {
+    const wrapper = mountComponent({
+      title: 'Review Needed',
+      summary: 'Human review required.',
+      status: 'escalation',
+      timestamp: '12:00 PM',
+    });
+
+    expect(wrapper.text()).not.toContain('score');
+    expect(wrapper.text()).not.toContain('threshold');
+    expect(wrapper.text()).not.toContain('trigger');
   });
 });
