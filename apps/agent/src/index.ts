@@ -2,14 +2,16 @@ import express from 'express';
 import cors from 'cors';
 import { config } from './config/index.js';
 import { supabase } from './services/supabase.js';
-import { graph } from './controller/graph.js';
 import { Task } from '@ai-assistant/shared';
 import { storeWorkspaceTokens } from './services/tokenService.js';
 import { GoogleIngestionService } from './services/google.js';
 import { googleAuthService } from './services/googleAuth.js';
 import { briefingScheduler } from './services/BriefingScheduler.js';
+import { relancingScheduler } from './services/RelancingScheduler.js';
 import { initOTel, shutdownOTel } from './services/llm/otel-setup.js';
-import { tracingService } from './services/llm/tracing.js';
+import { telegramWebhookRouter } from './routes/webhooks/telegram.js';
+import { whatsAppWebhookRouter } from './routes/webhooks/whatsapp.js';
+import { processQueuedTask } from './services/taskSubscriber.js';
 
 // Initialize OpenTelemetry
 if (config.ENABLE_LANGFUSE_TRACING) {
@@ -18,15 +20,32 @@ if (config.ENABLE_LANGFUSE_TRACING) {
 
 const app = express();
 
+// Ensure req.protocol/req.ip reflect proxy headers when deployed behind load balancers.
+app.set('trust proxy', true);
+
 const port = config.PORT;
 
 app.use(cors());
-app.use(express.json());
+
+const captureRawBody = (req: express.Request & { rawBody?: string }, _res: unknown, buf: Buffer): void => {
+  req.rawBody = buf.toString('utf-8');
+};
+
+app.use(express.json({
+  verify: (req, res, buf) => captureRawBody(req as express.Request & { rawBody?: string }, res, buf),
+}));
+app.use(express.urlencoded({
+  extended: false,
+  verify: (req, res, buf) => captureRawBody(req as express.Request & { rawBody?: string }, res, buf),
+}));
 
 // Health check endpoint for Hetzner
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+app.use('/webhooks/telegram', telegramWebhookRouter);
+app.use('/webhooks/whatsapp', whatsAppWebhookRouter);
 
 // Token encryption and storage endpoint
 app.post('/api/tokens', async (req, res) => {
@@ -137,31 +156,7 @@ const taskChannel = supabase
     },
     async (payload) => {
       const task = payload.new as Task;
-      console.log(`[Realtime] New task detected: ${task.id} (${task.domain_action})`);
-      
-      try {
-        const langfuseHandler = tracingService.getHandler();
-        const callbacks = langfuseHandler ? [langfuseHandler] : [];
-
-        await graph.invoke(
-          { task },
-          {
-            runName: `Graph: ${task.domain_action}`,
-            metadata: {
-              taskId: task.id,
-              orgId: task.organization_id,
-              domain_action: task.domain_action,
-              langfuseUserId: task.user_id,
-            },
-            tags: [task.domain_action, 'langgraph'],
-            callbacks
-          }
-        );
-        await tracingService.flush();
-      } catch (error) {
-
-        console.error(`[Realtime] Graph execution failed for task ${task.id}:`, error);
-      }
+      await processQueuedTask(task);
     }
   )
   .subscribe((status, err) => {
@@ -191,12 +186,16 @@ googleIngestion.runAllIngestions().catch(err => {
 // --- Briefing Scheduler ---
 briefingScheduler.start();
 
+// --- Relancing Scheduler ---
+relancingScheduler.start();
+
 // --- Graceful Shutdown ---
 const shutdown = async (signal: string) => {
   console.log(`\n[Shutdown] Received ${signal}. Cleaning up...`);
   
   clearInterval(ingestionIntervalId);
   briefingScheduler.stop();
+  relancingScheduler.stop();
   
   if (config.ENABLE_LANGFUSE_TRACING) {
     await shutdownOTel();

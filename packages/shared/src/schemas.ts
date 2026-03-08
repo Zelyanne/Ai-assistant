@@ -27,13 +27,80 @@ export const TaskSchema = z.object({
   domain_action: z.string().regex(/^[a-z]+\.[a-z]+$/, 'Action must be in domain.action format (e.g., email.ingest)'),
   topic: z.string().optional(),
   status: TaskStatusSchema.default('queued'),
-  payload: z.record(z.any()),
-  result: z.record(z.any()).optional(),
+  payload: z.record(z.unknown()),
+  result: z.record(z.unknown()).optional(),
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
 });
 
 export type Task = z.infer<typeof TaskSchema>;
+
+export const ChannelSchema = z.enum(['web', 'telegram', 'whatsapp']);
+export type Channel = z.infer<typeof ChannelSchema>;
+
+export const DeliveryStateSchema = z.enum(['queued', 'sent', 'delivered', 'failed']);
+export type DeliveryState = z.infer<typeof DeliveryStateSchema>;
+
+export const NormalizedInboundEnvelopeSchema = z.object({
+  channel: ChannelSchema,
+  external_message_id: z.string().min(1),
+  thread_id: z.string().min(1),
+  organization_id: z.string().uuid(),
+  user_id: z.string().uuid().nullable().optional(),
+  domain_action: z.string().regex(/^[a-z]+\.[a-z]+$/, 'Action must be in domain.action format (e.g., thread.action)').default('thread.action'),
+  topic: z.string().optional(),
+  message_text: z.string().optional(),
+  channel_metadata: z.record(z.unknown()).default({}),
+  raw_payload: z.record(z.unknown()).default({}),
+  correlation_id: z.string().optional(),
+});
+
+export type NormalizedInboundEnvelope = z.infer<typeof NormalizedInboundEnvelopeSchema>;
+
+export const OutboundChannelMessageSchema = z.object({
+  channel: ChannelSchema,
+  organization_id: z.string().uuid(),
+  user_id: z.string().uuid().nullable().optional(),
+  task_id: z.string().uuid().optional(),
+  external_message_id: z.string().min(1),
+  thread_id: z.string().min(1),
+  message_text: z.string().min(1),
+  channel_metadata: z.record(z.unknown()).default({}),
+  provider_payload: z.record(z.unknown()).optional(),
+  correlation_id: z.string().optional(),
+});
+
+export type OutboundChannelMessage = z.infer<typeof OutboundChannelMessageSchema>;
+
+export const DeliveryEventEnvelopeSchema = z.object({
+  channel: ChannelSchema,
+  organization_id: z.string().uuid(),
+  task_id: z.string().uuid().optional(),
+  external_message_id: z.string().min(1),
+  thread_id: z.string().min(1).optional(),
+  provider_message_id: z.string().optional(),
+  delivery_state: DeliveryStateSchema,
+  occurred_at: z.string().optional(),
+  attempt_count: z.number().int().nonnegative().default(1),
+  terminal: z.boolean().default(false),
+  error_code: z.string().optional(),
+  error_message: z.string().optional(),
+  channel_metadata: z.record(z.unknown()).default({}),
+  raw_payload: z.record(z.unknown()).default({}),
+  correlation_id: z.string().optional(),
+});
+
+export type DeliveryEventEnvelope = z.infer<typeof DeliveryEventEnvelopeSchema>;
+
+export const DeliveryRetryDecisionSchema = z.object({
+  should_retry: z.boolean(),
+  next_delay_ms: z.number().int().nonnegative().nullable(),
+  attempt_count: z.number().int().nonnegative(),
+  terminal: z.boolean(),
+  reason: z.string().optional(),
+});
+
+export type DeliveryRetryDecision = z.infer<typeof DeliveryRetryDecisionSchema>;
 
 export const ReasoningStepSchema = z.object({
   timestamp: z.string(),
@@ -121,7 +188,7 @@ export const WorkspaceIntegrationSchema = z.object({
   organization_id: z.string().uuid(),
   user_id: z.string().uuid().nullable().optional(),
   provider: z.string(),
-  encrypted_creds: z.any(),
+  encrypted_creds: z.unknown(),
   sync_status: z.string(),
   label_preferences: z.array(z.string()).default([]),
   last_sync_at: z.string().nullable().optional(),
@@ -191,7 +258,7 @@ export const IngestedThreadSchema = z.object({
   summary: z.string().nullable().optional(),
   summary_json: ThreadSummarySchema.nullable().optional(),
   body: z.string().optional(),
-  metadata: z.record(z.any()),
+  metadata: z.record(z.unknown()),
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
 });
@@ -209,7 +276,7 @@ export const CalendarEventSchema = z.object({
   start_time: z.string().nullable().optional(),
   end_time: z.string().nullable().optional(),
   location: z.string().nullable().optional(),
-  metadata: z.record(z.any()),
+  metadata: z.record(z.unknown()),
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
 });
@@ -305,6 +372,89 @@ export const ProtocolMetadataSchema = z.object({
 });
 
 export type ProtocolMetadata = z.infer<typeof ProtocolMetadataSchema>;
+
+export const ProjectSetupStatusSchema = z.enum(['incomplete', 'complete']);
+export type ProjectSetupStatus = z.infer<typeof ProjectSetupStatusSchema>;
+
+export const RelancingReasonCodeSchema = z.enum([
+  'missing_required_fields',
+  'deadline_urgency',
+  'blocker_paused',
+  'emergency_brake',
+  'duplicate_prevented',
+]);
+
+export type RelancingReasonCode = z.infer<typeof RelancingReasonCodeSchema>;
+
+export const ProjectSchedulingContextSchema = z.object({
+  id: z.string().uuid().optional(),
+  organization_id: z.string().uuid(),
+  project_name: z.string(),
+  deadline: z.string().nullable().optional(),
+  setup_status: ProjectSetupStatusSchema.default('incomplete'),
+  scheduler_config: z.record(z.unknown()).default({}),
+  next_nudge_at: z.string().nullable().optional(),
+  last_nudge_at: z.string().nullable().optional(),
+  blocker_active: z.boolean().default(false),
+  blocker_summary: z.string().nullable().optional(),
+  blocker_reported_by: z.string().uuid().nullable().optional(),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
+});
+
+export type ProjectSchedulingContext = z.infer<typeof ProjectSchedulingContextSchema>;
+
+export const ProjectMemberAssignmentSchema = z.object({
+  id: z.string().uuid().optional(),
+  project_context_id: z.string().uuid(),
+  organization_id: z.string().uuid(),
+  member_user_id: z.string().uuid().nullable().optional(),
+  member_name: z.string().min(1),
+  is_active: z.boolean().default(true),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
+});
+
+export type ProjectMemberAssignment = z.infer<typeof ProjectMemberAssignmentSchema>;
+
+export const ProjectNudgeDispatchSchema = z.object({
+  id: z.string().uuid().optional(),
+  organization_id: z.string().uuid(),
+  project_context_id: z.string().uuid(),
+  member_assignment_id: z.string().uuid(),
+  nudge_window_start: z.string(),
+  nudge_window_end: z.string(),
+  task_id: z.string().uuid().nullable().optional(),
+  reason_code: RelancingReasonCodeSchema,
+  created_at: z.string().optional(),
+});
+
+export type ProjectNudgeDispatch = z.infer<typeof ProjectNudgeDispatchSchema>;
+
+export const RelancingNudgePayloadSchema = z.object({
+  project_context_id: z.string().uuid(),
+  member_assignment_id: z.string().uuid(),
+  project_name: z.string().min(1),
+  member_name: z.string().min(1),
+  member_user_id: z.string().uuid().nullable().optional(),
+  deadline: z.string(),
+  urgency_band: z.enum(['base', 'urgent_7d', 'urgent_3d', 'overdue']),
+  cadence_hours: z.number().positive(),
+  nudge_window_start: z.string(),
+  nudge_window_end: z.string(),
+  reason_code: RelancingReasonCodeSchema.default('deadline_urgency'),
+  escalation_priority: z.enum(['normal', 'high']).default('normal'),
+});
+
+export type RelancingNudgePayload = z.infer<typeof RelancingNudgePayloadSchema>;
+
+export const RelancingSetupInputSchema = z.object({
+  project_name: z.string().trim().min(1),
+  members: z.array(z.string().trim().min(1)).min(1),
+  deadline: z.string().datetime(),
+});
+
+export type RelancingSetupInput = z.infer<typeof RelancingSetupInputSchema>;
 
 export const ProtocolGenerationResultSchema = z.object({
   markdown: z.string(),

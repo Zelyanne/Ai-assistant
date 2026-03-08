@@ -187,6 +187,32 @@ describe('Agent Controller Graph Routing', () => {
     expect(result.result.message).toContain('Calendar event created');
   });
 
+  it('should route relancing.nudge to RelancingNudgeProcessor', async () => {
+    const mockTask = {
+      ...baseTask,
+      domain_action: 'relancing.nudge',
+      payload: {
+        project_context_id: '22222222-2222-4222-8222-222222222222',
+        member_assignment_id: '33333333-3333-4333-8333-333333333333',
+        project_name: 'Q2 Launch',
+        member_name: 'Jordan',
+        member_user_id: '22222222-2222-4222-8222-222222222222',
+        deadline: '2026-03-20T12:00:00.000Z',
+        urgency_band: 'urgent_7d',
+        cadence_hours: 19.2,
+        nudge_window_start: '2026-03-08T12:00:00.000Z',
+        nudge_window_end: '2026-03-09T07:12:00.000Z',
+        reason_code: 'deadline_urgency',
+        escalation_priority: 'normal',
+      },
+    };
+
+    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
+
+    expect(result.error).toBeUndefined();
+    expect(result.result.summary).toContain('Relancing nudge prepared');
+  });
+
   it('should escalate calendar.create when payload confidence is below threshold (no tool execution)', async () => {
     const mockTask = {
       ...baseTask,
@@ -206,6 +232,30 @@ describe('Agent Controller Graph Routing', () => {
     expect(result.task.result.confidence_score).toBe(0.5);
     expect(result.task.result.confidence_threshold).toBe(0.8);
     expect(result.task.result.escalation_trigger).toBe('low_confidence');
+    expect(mockExecuteTool).not.toHaveBeenCalled();
+  });
+
+  it('should keep channel metadata visible when low-confidence channel actions escalate', async () => {
+    const mockTask = {
+      ...baseTask,
+      domain_action: 'calendar.create',
+      payload: {
+        summary: 'Meeting',
+        startTime: '2026-01-18T10:00:00Z',
+        endTime: '2026-01-18T11:00:00Z',
+        confidence_score: 0.4,
+        channel: 'whatsapp',
+        external_message_id: 'SM123',
+        thread_id: 'wa-15551230000',
+        correlation_id: 'corr-chan-1',
+      },
+    };
+
+    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
+
+    expect(result.task.status).toBe('escalation');
+    expect(result.task.result.escalation_trigger).toBe('low_confidence');
+    expect(result.trace.some((s: { input_summary?: string }) => s.input_summary?.includes('Channel: whatsapp') === true)).toBe(true);
     expect(mockExecuteTool).not.toHaveBeenCalled();
   });
 
@@ -701,6 +751,30 @@ describe('Agent Controller Graph Routing', () => {
     expect(result.task.status).toBe('escalation');
     expect(result.task.result.escalation).toBe(true);
     expect(result.error).toContain('Restricted topic requires human intervention');
+  });
+
+  it('should enforce restricted-tier escalation for channel-originated actions', async () => {
+    mockChain.single.mockResolvedValueOnce({ data: { tier: 'Restricted' }, error: null });
+
+    const mockTask = {
+      ...baseTask,
+      domain_action: 'email.draft',
+      payload: {
+        recipient: 'test@example.com',
+        subject: 'Restricted update',
+        body: 'Sensitive message',
+        channel: 'telegram',
+        external_message_id: 'TG123',
+        thread_id: 'chat-999',
+      },
+    };
+
+    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
+
+    expect(result.task.status).toBe('escalation');
+    expect(result.task.result.escalation).toBe(true);
+    expect(result.trace.some((s: { input_summary?: string }) => s.input_summary?.includes('Channel: telegram') === true)).toBe(true);
+    expect(mockExecuteTool).not.toHaveBeenCalled();
   });
 
   it('should load protocol rules and pass them to reasoning', async () => {

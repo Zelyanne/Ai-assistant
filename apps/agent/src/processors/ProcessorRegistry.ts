@@ -6,6 +6,8 @@ import { CalendarCreateProcessor } from './CalendarCreateProcessor.js';
 import { ProtocolGenerateProcessor } from './ProtocolGenerateProcessor.js';
 import { MorningBriefProcessor } from './MorningBriefProcessor.js';
 import { EmailSendProcessor } from './EmailSendProcessor.js';
+import { RelancingNudgeProcessor } from './RelancingNudgeProcessor.js';
+import { ChannelSendProcessor } from './ChannelSendProcessor.js';
 
 export class ProcessorRegistry {
   private static processors: Map<string, BaseProcessor> = new Map();
@@ -18,6 +20,8 @@ export class ProcessorRegistry {
     this.processors.set('calendar.create', new CalendarCreateProcessor());
     this.processors.set('protocol.generate', new ProtocolGenerateProcessor());
     this.processors.set('morning.brief', new MorningBriefProcessor());
+    this.processors.set('relancing.nudge', new RelancingNudgeProcessor());
+    this.processors.set('channel.send', new ChannelSendProcessor());
   }
 
 

@@ -28,6 +28,7 @@ const PROXY_EXECUTION_ACTIONS = new Set<string>([
   'email.send',
   'email.draft',
   'calendar.create',
+  'channel.send',
 ]);
 
 function coerceJson(value: unknown): Json {
@@ -55,6 +56,18 @@ function coerceJson(value: unknown): Json {
   return String(value);
 }
 
+function mergeJson(base: Json, patch: Json): Json {
+  if (typeof base === 'object' && base !== null && !Array.isArray(base)
+    && typeof patch === 'object' && patch !== null && !Array.isArray(patch)) {
+    return {
+      ...(base as Record<string, Json | undefined>),
+      ...(patch as Record<string, Json | undefined>),
+    };
+  }
+
+  return patch;
+}
+
 export const AgentStateAnnotation = Annotation.Root({
   task: Annotation<Task>({
     reducer: (x, y) => (y ?? x),
@@ -80,6 +93,28 @@ export const AgentStateAnnotation = Annotation.Root({
 
 
 export type AgentState = typeof AgentStateAnnotation.State;
+
+interface ChannelContext {
+  channel?: string;
+  externalMessageId?: string;
+  threadId?: string;
+  correlationId?: string;
+}
+
+function extractChannelContext(payload: unknown): ChannelContext {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return {};
+  }
+
+  const input = payload as Record<string, unknown>;
+
+  return {
+    channel: typeof input.channel === 'string' ? input.channel : undefined,
+    externalMessageId: typeof input.external_message_id === 'string' ? input.external_message_id : undefined,
+    threadId: typeof input.thread_id === 'string' ? input.thread_id : undefined,
+    correlationId: typeof input.correlation_id === 'string' ? input.correlation_id : undefined,
+  };
+}
 
 function redactErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -187,11 +222,11 @@ async function checkPerimeter(state: AgentState): Promise<Partial<AgentState>> {
     // 2. Determine Required Tier
     // Routine actions might be Public, sensitive ones Controlled.
     // Respect protocol override if present (AC 5)
-    const payloadWithOverride = task.payload as { protocol_overridden_tier?: AgencyTier } | null;
-    const requiredTier: AgencyTier = payloadWithOverride?.protocol_overridden_tier
+  const payloadWithOverride = task.payload as { protocol_overridden_tier?: AgencyTier } | null;
+  const requiredTier: AgencyTier = payloadWithOverride?.protocol_overridden_tier
       || ((task.domain_action === 'system.analyze')
         ? 'Controlled'
-        : (task.domain_action === 'thread.action' || task.domain_action === 'email.send')
+        : (task.domain_action === 'thread.action' || task.domain_action === 'email.send' || task.domain_action === 'channel.send')
           ? 'Controlled'
           : 'Public');
     
@@ -216,11 +251,16 @@ async function checkPerimeter(state: AgentState): Promise<Partial<AgentState>> {
     const escalationTrigger: EscalationTrigger = isRestrictedTopic ? 'restricted_topic' : 'approval_guardrail';
     const shouldEscalate = !isExemptAction && (result.isEscalated || isRestrictedTopic);
 
+    const channelContext = extractChannelContext(task.payload);
+    const channelSummary = channelContext.channel
+      ? `, Channel: ${channelContext.channel}, ExternalMessageId: ${channelContext.externalMessageId ?? 'n/a'}`
+      : '';
+
     const step = AuditLogger.createStep('Perimeter Check', shouldEscalate ? `Escalated: ${escalationReason}` : (isExemptAction ? `Perimeter check bypassed for ${task.domain_action}` : 'Perimeter check passed'), {
       confidence_score: shouldEscalate ? 0 : 1,
       confidence_threshold: CONFIDENCE_THRESHOLD,
       escalation_trigger: shouldEscalate ? escalationTrigger : undefined,
-      input_summary: `Topic: ${topic}, AuthTier: ${authorizedTier}, ReqTier: ${requiredTier}`
+      input_summary: `Topic: ${topic}, AuthTier: ${authorizedTier}, ReqTier: ${requiredTier}${channelSummary}`
     });
 
     if (shouldEscalate) {
@@ -395,6 +435,8 @@ async function processEmailSummarize(state: AgentState) { return executeProcesso
 async function processCalendarCreate(state: AgentState) { return executeProcessor(state); }
 async function processMorningBrief(state: AgentState) { return executeProcessor(state); }
 async function processProtocolGenerate(state: AgentState) { return executeProcessor(state); }
+async function processChannelSend(state: AgentState) { return executeProcessor(state); }
+async function processRelancingNudge(state: AgentState) { return executeProcessor(state); }
 
 function extractEmailAddress(raw: string): string | null {
   const angleMatch = raw.match(/<([^>]+)>/);
@@ -822,10 +864,39 @@ async function finalizeTask(state: AgentState, config?: RunnableConfig): Promise
   try {
     if (!state.task.id) throw new Error("Task ID is missing");
 
+    // When channel delivery callbacks and task finalization happen concurrently,
+    // avoid clobbering existing JSONB result fields by merging with the latest DB state.
+    let dbResult: unknown = undefined;
+    try {
+      const { data: current, error: currentError } = await supabase
+        .from('tasks')
+        .select('result')
+        .eq('id', state.task.id)
+        .single();
+
+      if (!currentError) {
+        dbResult = (current as { result?: unknown } | null)?.result;
+      }
+    } catch {
+      // Best-effort merge only; ignore read errors.
+    }
+
     // 1. Update task status
+    const taskResultJson = coerceJson(state.task.result ?? {});
+    const latestDbResultJson = coerceJson(dbResult ?? {});
+
     const persistedResult: Json = status === 'done'
-      ? coerceJson(typeof state.result === 'undefined' ? {} : state.result)
-      : coerceJson(state.task.result ?? { error: state.error ?? null });
+      ? mergeJson(
+        latestDbResultJson,
+        mergeJson(
+          taskResultJson,
+          coerceJson(typeof state.result === 'undefined' ? {} : state.result),
+        ),
+      )
+      : mergeJson(
+        latestDbResultJson,
+        coerceJson(state.task.result ?? { error: state.error ?? null }),
+      );
 
     const { error: taskError } = await supabase
       .from('tasks')
@@ -839,13 +910,25 @@ async function finalizeTask(state: AgentState, config?: RunnableConfig): Promise
     if (taskError) throw new Error(taskError.message);
 
     // 2. Flush Audit Log
+    const channelContext = extractChannelContext(state.task.payload);
+    const channelCitations = [...(state.citations || [])];
+    if (channelContext.channel && channelContext.externalMessageId) {
+      channelCitations.push(
+        AuditLogger.createCitation(
+          'channel_message',
+          channelContext.externalMessageId,
+          `Channel context (${channelContext.channel}) linked to task`,
+        ),
+      );
+    }
+
     await AuditLogger.flush(
       state.task.organization_id,
       state.task.id,
       'agent-controller',
       status === 'done' ? 'task_completed' : `task_${status}`,
       finalTrace,
-      state.citations || []
+      channelCitations
     );
 
     // 3. Flush Tracing
@@ -954,6 +1037,8 @@ const workflow = new StateGraph(AgentStateAnnotation)
   .addNode("calendar_create", processCalendarCreate)
   .addNode("morning_brief", processMorningBrief)
   .addNode("protocol_generate", processProtocolGenerate)
+  .addNode('channel_send', processChannelSend)
+  .addNode("relancing_nudge", processRelancingNudge)
   .addNode("thread_action", processThreadAction)
   .addNode("unsupported_domain", handleUnsupportedDomain)
   .addNode("finalize", finalizeTask)
@@ -972,6 +1057,8 @@ const workflow = new StateGraph(AgentStateAnnotation)
   .addEdge("calendar_create", "finalize")
   .addEdge("morning_brief", "finalize")
   .addEdge("protocol_generate", "finalize")
+  .addEdge('channel_send', 'finalize')
+  .addEdge("relancing_nudge", "finalize")
   .addEdge("thread_action", "finalize")
   .addEdge("unsupported_domain", "finalize")
   .addEdge("finalize", END);
