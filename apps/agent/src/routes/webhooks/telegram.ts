@@ -55,6 +55,10 @@ export async function handleTelegramWebhook(req: Request, res: Response, deps: T
     ? body.user_id
     : (typeof req.query.user_id === 'string' ? req.query.user_id : null);
 
+  const domainAction = typeof body.domain_action === 'string'
+    ? body.domain_action
+    : (typeof req.query.domain_action === 'string' ? req.query.domain_action : undefined);
+
   const correlationId = typeof req.header('x-correlation-id') === 'string'
     ? req.header('x-correlation-id') as string
     : randomUUID();
@@ -65,6 +69,7 @@ export async function handleTelegramWebhook(req: Request, res: Response, deps: T
       organization_id: organizationId,
       user_id: userId,
       correlation_id: correlationId,
+      domain_action: domainAction,
     });
 
     res.status(202).json({

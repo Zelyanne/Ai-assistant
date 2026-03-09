@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx --fix"
+    "lint": "eslint . --fix"
   },
   "dependencies": {
     "@ai-assistant/shared": "workspace:*",
@@ -22,9 +22,10 @@
     "vue-router": "^4.6.4"
   },
   "devDependencies": {
+    "@pinia/testing": "^1.0.3",
     "@vitejs/plugin-vue": "^5.0.0",
-    "@vue/test-utils": "^2.4.6",
     "@vitest/ui": "^4.0.17",
+    "@vue/test-utils": "^2.4.6",
     "autoprefixer": "^10.4.0",
     "jsdom": "^24.0.0",
     "postcss": "^8.4.0",

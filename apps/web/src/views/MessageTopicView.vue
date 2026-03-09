@@ -50,25 +50,42 @@ onMounted(fetchEmails);
 
 <template>
   <MessagesLayout>
-    <div v-if="loading" class="flex justify-center p-10">
-        <ProgressSpinner />
+    <div
+      v-if="loading"
+      class="flex justify-center p-10"
+    >
+      <ProgressSpinner />
     </div>
     
-    <Message v-if="error" severity="error" :text="error" />
+    <Message
+      v-if="error"
+      severity="error"
+      :text="error"
+    />
 
     <div v-if="!loading && !error">
-        <div v-if="emails.length === 0" class="text-center text-gray-500 py-10">
-            No emails found. Connect your workspace in Settings.
-        </div>
+      <div
+        v-if="emails.length === 0"
+        class="text-center text-gray-500 py-10"
+      >
+        No emails found. Connect your workspace in Settings.
+      </div>
         
-        <div v-else class="h-[calc(100vh-250px)] min-h-[500px]">
-             <!-- Virtual Scroller for performance -->
-             <VirtualScroller :items="emails" :itemSize="120" class="h-full">
-                <template v-slot:item="{ item, options }">
-                    <EmailListItem :email="item" />
-                </template>
-             </VirtualScroller>
-        </div>
+      <div
+        v-else
+        class="h-[calc(100vh-250px)] min-h-[500px]"
+      >
+        <!-- Virtual Scroller for performance -->
+        <VirtualScroller
+          :items="emails"
+          :item-size="120"
+          class="h-full"
+        >
+          <template #item="{ item }">
+            <EmailListItem :email="item" />
+          </template>
+        </VirtualScroller>
+      </div>
     </div>
   </MessagesLayout>
 </template>

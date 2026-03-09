@@ -35,8 +35,10 @@ async function handleGenerate() {
     currentTaskId.value = task.id;
     unsubscribe = monitorTask(task.id, (updatedTask) => {
       if (updatedTask.status === 'done' && updatedTask.result) {
-        generatedProtocol.value = updatedTask.result.protocol_markdown;
-        generatedMetadata.value = updatedTask.result.metadata;
+        generatedProtocol.value = typeof updatedTask.result.protocol_markdown === 'string'
+          ? updatedTask.result.protocol_markdown
+          : null;
+        generatedMetadata.value = updatedTask.result.metadata ?? null;
         currentTaskId.value = null;
         if (unsubscribe) unsubscribe();
       } else if (updatedTask.status === 'error') {
@@ -93,7 +95,10 @@ onUnmounted(() => {
     <Card class="border-none shadow-sm overflow-hidden">
       <template #content>
         <div class="space-y-4">
-          <label for="philosophy" class="block text-sm font-medium text-slate-700 uppercase tracking-wider">
+          <label
+            for="philosophy"
+            class="block text-sm font-medium text-slate-700 uppercase tracking-wider"
+          >
             Leadership Philosophy & Nudging Style
           </label>
           <Textarea 
@@ -108,23 +113,40 @@ onUnmounted(() => {
             <Button 
               label="Generate Protocol" 
               icon="pi pi-bolt" 
-              @click="handleGenerate" 
-              :loading="loading || !!currentTaskId"
+              :loading="loading || !!currentTaskId" 
               class="bg-executive-primary text-white border-none px-6"
+              @click="handleGenerate"
             />
           </div>
         </div>
       </template>
     </Card>
 
-    <div v-if="currentTaskId" class="flex flex-col items-center justify-center p-12 space-y-4">
-      <ProgressSpinner style="width: 50px; height: 50px" strokeWidth="4" />
-      <p class="text-executive-info font-technical animate-pulse">Antigravity is synthesizing your protocol...</p>
+    <div
+      v-if="currentTaskId"
+      class="flex flex-col items-center justify-center p-12 space-y-4"
+    >
+      <ProgressSpinner
+        style="width: 50px; height: 50px"
+        stroke-width="4"
+      />
+      <p class="text-executive-info font-technical animate-pulse">
+        Antigravity is synthesizing your protocol...
+      </p>
     </div>
 
-    <Message v-if="agentError" severity="error" class="font-technical">{{ agentError }}</Message>
+    <Message
+      v-if="agentError"
+      severity="error"
+      class="font-technical"
+    >
+      {{ agentError }}
+    </Message>
 
-    <section v-if="generatedProtocol" class="space-y-6">
+    <section
+      v-if="generatedProtocol"
+      class="space-y-6"
+    >
       <Card class="border-none shadow-sm overflow-hidden bg-slate-50">
         <template #title>
           <div class="flex items-center justify-between px-2">
@@ -135,27 +157,33 @@ onUnmounted(() => {
                 icon="pi pi-refresh" 
                 severity="secondary" 
                 text 
-                @click="handleGenerate"
                 class="font-technical"
+                @click="handleGenerate"
               />
               <Button 
                 label="Approve & Save" 
                 icon="pi pi-check" 
-                @click="handleApprove"
                 :loading="isSaving"
                 class="bg-executive-success text-white border-none px-6"
+                @click="handleApprove"
               />
             </div>
           </div>
         </template>
         <template #content>
           <div class="prose prose-slate max-w-none bg-white p-8 rounded-executive border border-slate-200 shadow-inner">
-            <div class="whitespace-pre-wrap font-technical text-executive-primary">{{ generatedProtocol }}</div>
+            <div class="whitespace-pre-wrap font-technical text-executive-primary">
+              {{ generatedProtocol }}
+            </div>
           </div>
         </template>
       </Card>
 
-      <Message v-if="saveSuccess" severity="success" class="font-technical">
+      <Message
+        v-if="saveSuccess"
+        severity="success"
+        class="font-technical"
+      >
         Protocol saved successfully! Antigravity will now follow these guidelines for all future tasks.
       </Message>
     </section>

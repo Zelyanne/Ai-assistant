@@ -9,6 +9,7 @@ import {
   EscalationTrigger,
   Json,
   ThreadActionDecisionSchema,
+  WorkspaceContextItem,
   type ThreadActionDecision,
 } from "@ai-assistant/shared";
 import { ProcessorRegistry } from "../processors/ProcessorRegistry.js";
@@ -17,7 +18,9 @@ import { AgencyService } from "../services/agency.js";
 import { SafetyControlsService } from "../services/SafetyControlsService.js";
 import { reasoningNode } from "./nodes/reasoning.js";
 import { loadProtocol } from "./nodes/protocol.js";
+import { loadWorkspaceContext } from "./nodes/workspaceContext.js";
 import { escalateNode } from "./nodes/escalate.js";
+import { calendarConflictNode } from './nodes/calendarConflict.js';
 import { AuditLogger } from "../services/AuditLogger.js";
 import { tracingService } from "../services/llm/tracing.js";
 import { LLMProviderFactory } from "../services/llm/factory.js";
@@ -29,6 +32,10 @@ const PROXY_EXECUTION_ACTIONS = new Set<string>([
   'email.draft',
   'calendar.create',
   'channel.send',
+  'relancing.nudge',
+  'relancing.update',
+  'status.report',
+  'assistant.command',
 ]);
 
 function coerceJson(value: unknown): Json {
@@ -89,6 +96,10 @@ export const AgentStateAnnotation = Annotation.Root({
   active_protocol_rules: Annotation<string>({
     reducer: (x, y) => (y ?? x),
   }),
+  workspace_context_items: Annotation<WorkspaceContextItem[]>({
+    reducer: (x, y) => (x || []).concat(y || []),
+    default: () => [],
+  }),
 });
 
 
@@ -114,6 +125,14 @@ function extractChannelContext(payload: unknown): ChannelContext {
     threadId: typeof input.thread_id === 'string' ? input.thread_id : undefined,
     correlationId: typeof input.correlation_id === 'string' ? input.correlation_id : undefined,
   };
+}
+
+function isHighRiskPayload(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return false;
+  }
+
+  return (payload as { high_risk?: unknown }).high_risk === true;
 }
 
 function redactErrorMessage(error: unknown): string {
@@ -176,7 +195,7 @@ async function checkEmergencyBrake(state: AgentState): Promise<Partial<AgentStat
 /**
  * Initialize node: Updates task status to 'processing' in Supabase.
  */
-async function initializeTask(state: AgentState, config?: RunnableConfig): Promise<Partial<AgentState>> {
+async function initializeTask(state: AgentState, _config?: RunnableConfig): Promise<Partial<AgentState>> {
   console.log(`[Graph][${state.task.id}] Initializing task ${state.task.domain_action}...`);
   const step = AuditLogger.createStep('Initialize', `Starting task: ${state.task.domain_action}`);
   
@@ -223,12 +242,17 @@ async function checkPerimeter(state: AgentState): Promise<Partial<AgentState>> {
     // Routine actions might be Public, sensitive ones Controlled.
     // Respect protocol override if present (AC 5)
   const payloadWithOverride = task.payload as { protocol_overridden_tier?: AgencyTier } | null;
+  const assistantCommandRequiredTier: AgencyTier = task.domain_action === 'assistant.command' && isHighRiskPayload(task.payload)
+    ? 'Controlled'
+    : 'Public';
   const requiredTier: AgencyTier = payloadWithOverride?.protocol_overridden_tier
       || ((task.domain_action === 'system.analyze')
         ? 'Controlled'
         : (task.domain_action === 'thread.action' || task.domain_action === 'email.send' || task.domain_action === 'channel.send')
           ? 'Controlled'
-          : 'Public');
+          : task.domain_action === 'assistant.command'
+            ? assistantCommandRequiredTier
+            : 'Public');
     
     const guard = new PerimeterGuard();
     const rawData = JSON.stringify(task.payload);
@@ -365,6 +389,57 @@ async function executeProcessor(state: AgentState): Promise<Partial<AgentState>>
     // Support processors returning trace/citations
     const processorTrace = resultWithMeta.trace ?? [];
     const processorCitations = resultWithMeta.citations ?? [];
+
+    if (typeof result === 'object' && result !== null) {
+      const outcome = (result as { outcome?: unknown }).outcome;
+      const prompt = typeof (result as { prompt?: unknown }).prompt === 'string'
+        ? (result as { prompt: string }).prompt
+        : null;
+
+      if (outcome === 'setup_required' || outcome === 'conflict_detected') {
+        const effectivePrompt = prompt
+          ?? (outcome === 'conflict_detected'
+            ? 'Calendar conflict detected. Please confirm how to proceed.'
+            : 'setup_required: additional setup is required before this action can be completed.');
+
+        const extra: Record<string, Json | undefined> = {};
+        const asAny = result as Record<string, unknown>;
+        if (outcome === 'conflict_detected' && typeof asAny.conflict !== 'undefined') {
+          extra.conflict = coerceJson(asAny.conflict);
+        }
+        if (typeof asAny.details === 'string') {
+          extra.details = asAny.details;
+        }
+
+        const escalationResult = buildEscalationPayload({
+          reason: effectivePrompt,
+          prompt: effectivePrompt,
+          confidenceScore: 0,
+          trigger: 'approval_guardrail',
+          extra,
+        });
+
+        const step = AuditLogger.createStep('Tool Execution', `Escalated: ${effectivePrompt}`, {
+          confidence_score: 0,
+          confidence_threshold: CONFIDENCE_THRESHOLD,
+          ambiguity_detected: true,
+          escalation_trigger: 'approval_guardrail',
+          output_summary: effectivePrompt,
+        });
+
+        return {
+          task: {
+            ...state.task,
+            status: 'escalation',
+            result: escalationResult,
+          },
+          result,
+          error: effectivePrompt,
+          trace: [...processorTrace, step],
+          citations: processorCitations,
+        };
+      }
+    }
     
     const step = AuditLogger.createStep('Tool Execution', `Executed ${domainAction} successfully`, {
       output_summary: JSON.stringify(result).substring(0, 100) + '...'
@@ -437,6 +512,203 @@ async function processMorningBrief(state: AgentState) { return executeProcessor(
 async function processProtocolGenerate(state: AgentState) { return executeProcessor(state); }
 async function processChannelSend(state: AgentState) { return executeProcessor(state); }
 async function processRelancingNudge(state: AgentState) { return executeProcessor(state); }
+async function processStatusReport(state: AgentState) { return executeProcessor(state); }
+async function processAssistantCommand(state: AgentState): Promise<Partial<AgentState>> {
+  if (state.error) return {};
+
+  const processor = ProcessorRegistry.getProcessor('assistant.command');
+  if (!processor) {
+    const step = AuditLogger.createStep('Assistant Command', 'Unsupported domain.action: assistant.command');
+    return { error: 'Unsupported domain.action: assistant.command', trace: [step] };
+  }
+
+  try {
+    const result = await processor.process(state.task);
+    const resultWithMeta = result as {
+      delegated_domain_action?: unknown;
+      delegated_payload?: unknown;
+      summary?: unknown;
+      trace?: ReasoningStep[];
+      citations?: Citation[];
+    };
+
+    const delegatedDomainAction = typeof resultWithMeta.delegated_domain_action === 'string'
+      ? resultWithMeta.delegated_domain_action
+      : null;
+
+    if (!delegatedDomainAction) {
+      const step = AuditLogger.createStep('Assistant Command', 'Escalated: command delegation failed', {
+        confidence_score: 0,
+        confidence_threshold: CONFIDENCE_THRESHOLD,
+        ambiguity_detected: true,
+        escalation_trigger: 'ambiguity_detected',
+      });
+
+      const escalationResult = buildEscalationPayload({
+        reason: 'Command delegation failed',
+        prompt: 'Please rephrase your request with explicit action details.',
+        confidenceScore: 0,
+        trigger: 'ambiguity_detected',
+      });
+
+      return {
+        task: {
+          ...state.task,
+          status: 'escalation',
+          result: escalationResult,
+        },
+        error: 'Command delegation failed',
+        trace: [step],
+      };
+    }
+
+    const delegatedPayload =
+      resultWithMeta.delegated_payload && typeof resultWithMeta.delegated_payload === 'object' && !Array.isArray(resultWithMeta.delegated_payload)
+        ? (resultWithMeta.delegated_payload as Record<string, unknown>)
+        : {};
+
+    const delegatedTask: Task = {
+      ...state.task,
+      domain_action: delegatedDomainAction,
+      payload: delegatedPayload,
+      result: {
+        command_center: {
+          original_domain_action: 'assistant.command',
+          delegated_domain_action: delegatedDomainAction,
+          summary: typeof resultWithMeta.summary === 'string' ? resultWithMeta.summary : `Delegated to ${delegatedDomainAction}`,
+        },
+      },
+    };
+
+    return {
+      task: delegatedTask,
+      result,
+      trace: resultWithMeta.trace ?? [],
+      citations: resultWithMeta.citations ?? [],
+    };
+  } catch (err: unknown) {
+    const safeMessage = redactErrorMessage(err);
+    const reason = safeMessage.startsWith('CONFIRMATION_REQUIRED')
+      ? 'High-risk command requires confirmation'
+      : safeMessage.startsWith('COMMAND_AMBIGUOUS')
+        ? 'Command is ambiguous'
+        : safeMessage.startsWith('COMMAND_INVALID')
+          ? 'Command is invalid'
+          : 'Command processing failed';
+
+    const step = AuditLogger.createStep('Assistant Command', `Escalated: ${reason}`, {
+      confidence_score: 0,
+      confidence_threshold: CONFIDENCE_THRESHOLD,
+      ambiguity_detected: true,
+      escalation_trigger: 'ambiguity_detected',
+      output_summary: safeMessage,
+    });
+
+    const escalationResult = buildEscalationPayload({
+      reason,
+      prompt: reason === 'High-risk command requires confirmation'
+        ? 'Confirm this high-risk command before queueing execution.'
+        : 'Please provide explicit command details and retry.',
+      confidenceScore: 0,
+      trigger: 'ambiguity_detected',
+    });
+
+    return {
+      task: {
+        ...state.task,
+        status: 'escalation',
+        result: escalationResult,
+      },
+      error: reason,
+      trace: [step],
+    };
+  }
+}
+async function processRelancingUpdate(state: AgentState): Promise<Partial<AgentState>> {
+  if (state.error) return {};
+
+  const processor = ProcessorRegistry.getProcessor('relancing.update');
+  if (!processor) {
+    const step = AuditLogger.createStep('Relancing Update', 'Unsupported domain.action: relancing.update');
+    return { error: 'Unsupported domain.action: relancing.update', trace: [step] };
+  }
+
+  try {
+    const result = await processor.process(state.task);
+    const resultWithMeta = result as { trace?: ReasoningStep[]; citations?: Citation[] };
+    const processorTrace = resultWithMeta.trace ?? [];
+    const processorCitations = resultWithMeta.citations ?? [];
+    const outcome = (result as { outcome?: unknown } | null)?.outcome;
+
+    if (outcome === 'setup_required') {
+      const prompt = String((result as { prompt?: unknown } | null)?.prompt ?? 'setup_required: relancing setup is required.');
+      const escalationResult = buildEscalationPayload({
+        reason: prompt,
+        prompt,
+        confidenceScore: 0,
+        trigger: 'ambiguity_detected',
+      });
+
+      const step = AuditLogger.createStep('Relancing Update', 'Escalated: setup required', {
+        confidence_score: 0,
+        confidence_threshold: CONFIDENCE_THRESHOLD,
+        ambiguity_detected: true,
+        escalation_trigger: 'ambiguity_detected',
+        output_summary: prompt,
+      });
+
+      return {
+        task: {
+          ...state.task,
+          status: 'escalation',
+          result: escalationResult,
+        },
+        error: 'setup_required',
+        trace: [...processorTrace, step],
+        citations: processorCitations,
+      };
+    }
+
+    if (outcome === 'ambiguity_escalated') {
+      const prompt = String((result as { prompt?: unknown } | null)?.prompt ?? 'ambiguity_escalated: relancing update needs clarification.');
+      const escalationResult = buildEscalationPayload({
+        reason: prompt,
+        prompt,
+        confidenceScore: 0,
+        trigger: 'ambiguity_detected',
+      });
+
+      const step = AuditLogger.createStep('Relancing Update', 'Escalated: ambiguity detected', {
+        confidence_score: 0,
+        confidence_threshold: CONFIDENCE_THRESHOLD,
+        ambiguity_detected: true,
+        escalation_trigger: 'ambiguity_detected',
+        output_summary: prompt,
+      });
+
+      return {
+        task: {
+          ...state.task,
+          status: 'escalation',
+          result: escalationResult,
+        },
+        error: 'ambiguity_escalated',
+        trace: [...processorTrace, step],
+        citations: processorCitations,
+      };
+    }
+
+    const step = AuditLogger.createStep('Relancing Update', 'Processed relancing.update', {
+      output_summary: JSON.stringify(result).substring(0, 2000),
+    });
+
+    return { result, trace: [...processorTrace, step], citations: processorCitations };
+  } catch (err: unknown) {
+    const safeMessage = redactErrorMessage(err);
+    const step = AuditLogger.createStep('Relancing Update', `Execution failed: ${safeMessage}`);
+    return { error: 'relancing.update failed', trace: [step] };
+  }
+}
 
 function extractEmailAddress(raw: string): string | null {
   const angleMatch = raw.match(/<([^>]+)>/);
@@ -847,7 +1119,7 @@ async function processThreadAction(state: AgentState): Promise<Partial<AgentStat
 /**
  * Finalize node: Updates task status to 'done' or 'error' in Supabase.
  */
-async function finalizeTask(state: AgentState, config?: RunnableConfig): Promise<Partial<AgentState>> {
+async function finalizeTask(state: AgentState, _config?: RunnableConfig): Promise<Partial<AgentState>> {
   let status: Task['status'] = 'done';
   
   if (state.task.status === 'escalation' || state.task.status === 'error' || state.task.status === 'paused') {
@@ -972,6 +1244,49 @@ function routeAfterProtocol(state: AgentState) {
   return "check_perimeter";
 }
 
+function routeAfterPerimeter(state: AgentState) {
+  if (state.error || state.task.status === 'escalation') {
+    const existingResult = state.task.result as { escalation?: boolean } | undefined;
+    if (state.task.status === 'escalation' && existingResult?.escalation) {
+      return 'finalize';
+    }
+    return state.task.status === 'escalation' ? "escalate" : "finalize";
+  }
+  return "load_workspace_context";
+}
+
+function routeAfterWorkspaceContext(state: AgentState) {
+  if (state.error || state.task.status === 'escalation') return "finalize";
+  
+  const domainAction = state.task.domain_action;
+  
+  if (domainAction === 'system.analyze') {
+    return "reasoning";
+  }
+
+  if (domainAction === 'thread.action') {
+    return 'thread_action';
+  }
+
+  if (domainAction === 'calendar.create') {
+    return 'calendar_conflict';
+  }
+  
+  // Dynamic routing based on registry
+  if (ProcessorRegistry.getProcessor(domainAction)) {
+    return domainAction.replace('.', '_');
+  }
+
+  return "unsupported_domain";
+}
+
+function routeAfterAssistantCommand(state: AgentState) {
+  if (state.error || state.task.status === 'escalation') {
+    return 'finalize';
+  }
+
+  return 'check_perimeter';
+}
 
 /**
  * Routing logic after reasoning
@@ -991,35 +1306,12 @@ function routeAfterReasoning(state: AgentState) {
   return "finalize";
 }
 
-/**
- * Routing logic after perimeter check
- */
-function routeTask(state: AgentState) {
-  if (state.error) {
-    const existingResult = state.task.result as { escalation?: boolean } | undefined;
-    if (state.task.status === 'escalation' && existingResult?.escalation) {
-      return 'finalize';
-    }
-
-    return state.task.status === 'escalation' ? "escalate" : "finalize";
-  }
-  
-  const domainAction = state.task.domain_action;
-  
-  if (domainAction === 'system.analyze') {
-    return "reasoning";
+function routeAfterCalendarConflict(state: AgentState) {
+  if (state.error || state.task.status === 'escalation') {
+    return 'finalize';
   }
 
-  if (domainAction === 'thread.action') {
-    return 'thread_action';
-  }
-  
-  // Dynamic routing based on registry
-  if (ProcessorRegistry.getProcessor(domainAction)) {
-    return domainAction.replace('.', '_');
-  }
-
-  return "unsupported_domain";
+  return 'calendar_create';
 }
 
 // Define the graph
@@ -1027,7 +1319,9 @@ const workflow = new StateGraph(AgentStateAnnotation)
   .addNode("emergency_brake", checkEmergencyBrake)
   .addNode("initialize", initializeTask)
   .addNode("load_protocol", loadProtocol)
+  .addNode("load_workspace_context", loadWorkspaceContext)
   .addNode("check_perimeter", checkPerimeter)
+  .addNode('calendar_conflict', calendarConflictNode)
   .addNode("reasoning", reasoningNode)
   .addNode("escalate", escalateNode)
   .addNode("email_draft", processEmailDraft)
@@ -1039,6 +1333,9 @@ const workflow = new StateGraph(AgentStateAnnotation)
   .addNode("protocol_generate", processProtocolGenerate)
   .addNode('channel_send', processChannelSend)
   .addNode("relancing_nudge", processRelancingNudge)
+  .addNode('status_report', processStatusReport)
+  .addNode('relancing_update', processRelancingUpdate)
+  .addNode('assistant_command', processAssistantCommand)
   .addNode("thread_action", processThreadAction)
   .addNode("unsupported_domain", handleUnsupportedDomain)
   .addNode("finalize", finalizeTask)
@@ -1046,7 +1343,10 @@ const workflow = new StateGraph(AgentStateAnnotation)
   .addConditionalEdges("emergency_brake", routeAfterBrake)
   .addConditionalEdges("initialize", routeAfterInit)
   .addConditionalEdges("load_protocol", routeAfterProtocol)
-  .addConditionalEdges("check_perimeter", routeTask)
+  .addConditionalEdges("check_perimeter", routeAfterPerimeter)
+  .addConditionalEdges("load_workspace_context", routeAfterWorkspaceContext)
+  .addConditionalEdges('calendar_conflict', routeAfterCalendarConflict)
+  .addConditionalEdges('assistant_command', routeAfterAssistantCommand)
   .addConditionalEdges("reasoning", routeAfterReasoning)
 
   .addEdge("escalate", "finalize")
@@ -1059,6 +1359,8 @@ const workflow = new StateGraph(AgentStateAnnotation)
   .addEdge("protocol_generate", "finalize")
   .addEdge('channel_send', 'finalize')
   .addEdge("relancing_nudge", "finalize")
+  .addEdge('status_report', 'finalize')
+  .addEdge('relancing_update', 'finalize')
   .addEdge("thread_action", "finalize")
   .addEdge("unsupported_domain", "finalize")
   .addEdge("finalize", END);

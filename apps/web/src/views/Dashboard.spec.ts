@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils';
 import Dashboard from './Dashboard.vue';
 import { createPinia, setActivePinia } from 'pinia';
 import PrimeVue from 'primevue/config';
+import { buildStatusReportPayload } from '@ai-assistant/shared';
 import { useUserStore } from '../stores/user';
 import { supabase } from '../services/supabase';
 
@@ -25,7 +26,7 @@ vi.mock('primevue/useconfirm', () => ({
 vi.mock('../services/supabase', () => ({
   supabase: {
     from: vi.fn((table: string) => {
-      if (table === 'morning_briefs') {
+      if (table === 'morning_briefs' || table === 'status_reports') {
         return {
           select: vi.fn(() => ({
             eq: vi.fn(() => ({
@@ -124,7 +125,7 @@ describe('Dashboard.vue', () => {
 
     // 2. Data state
     (supabase.from as any).mockImplementation((table: string) => {
-      if (table === 'morning_briefs') {
+      if (table === 'morning_briefs' || table === 'status_reports') {
         return {
           select: vi.fn(() => ({
             eq: vi.fn(() => ({
@@ -171,7 +172,7 @@ describe('Dashboard.vue', () => {
     // 3. Empty state
     // Create a NEW wrapper to ensure clean state and fresh onMounted call
     (supabase.from as any).mockImplementation((table: string) => {
-      if (table === 'morning_briefs') {
+      if (table === 'morning_briefs' || table === 'status_reports') {
         return {
           select: vi.fn(() => ({
             eq: vi.fn(() => ({
@@ -331,6 +332,103 @@ describe('Dashboard.vue', () => {
     expect(supabase.from).toHaveBeenCalledWith('tasks');
   });
 
+  it('maps relancing.update blocker results into blocker filters', async () => {
+    const userStore = useUserStore();
+    userStore.profile = { id: 'user-1', organization_id: 'org-1' } as any;
+
+    const wrapper = mountView();
+
+    (wrapper.vm as any).tasks = [
+      {
+        id: 'relancing-task-1',
+        domain_action: 'relancing.update',
+        status: 'done',
+        payload: {},
+        result: {
+          summary: 'Blocker recorded and relancing cycle paused.',
+          intents: ['blocker_report'],
+          blocker_paused: true,
+        },
+        created_at: new Date().toISOString(),
+      },
+    ];
+
+    await wrapper.vm.$nextTick();
+
+    const outcomeItems = (wrapper.vm as any).outcomeItems as Array<{ topics?: string[] }>;
+    expect(outcomeItems[0].topics).toContain('Blocker');
+  });
+
+  it('does not count unrelated escalations as blocker filter results', async () => {
+    const userStore = useUserStore();
+    userStore.profile = { id: 'user-1', organization_id: 'org-1' } as any;
+
+    const wrapper = mountView();
+    await vi.waitFor(() => {
+      expect((wrapper.vm as any).loading).toBe(false);
+    });
+
+    (wrapper.vm as any).tasks = [
+      {
+        id: 'escalation-task-1',
+        domain_action: 'email.draft',
+        status: 'escalation',
+        topic: 'Finance',
+        payload: {},
+        result: {
+          summary: 'Needs approval',
+        },
+        created_at: new Date().toISOString(),
+      },
+      {
+        id: 'relancing-task-1',
+        domain_action: 'relancing.update',
+        status: 'done',
+        payload: {},
+        result: {
+          summary: 'Blocker recorded and relancing cycle paused.',
+          intents: ['blocker_report'],
+          blocker_paused: true,
+        },
+        created_at: new Date().toISOString(),
+      },
+    ];
+
+    await wrapper.vm.$nextTick();
+
+    expect((wrapper.vm as any).filterCounts.blockers).toBe(1);
+    (wrapper.vm as any).activeFilter = 'blockers';
+    await wrapper.vm.$nextTick();
+    expect(((wrapper.vm as any).briefingItems as Array<{ id: string }>).map((item) => item.id)).toEqual(['relancing-task-1']);
+  });
+
+  it('maps relancing.update resume results into resumed topic chips', async () => {
+    const userStore = useUserStore();
+    userStore.profile = { id: 'user-1', organization_id: 'org-1' } as any;
+
+    const wrapper = mountView();
+
+    (wrapper.vm as any).tasks = [
+      {
+        id: 'relancing-task-resume',
+        domain_action: 'relancing.update',
+        status: 'done',
+        payload: {},
+        result: {
+          summary: 'Relancing update resumed the cycle for "Q2 Launch".',
+          intents: ['status_update'],
+          blocker_resumed: true,
+        },
+        created_at: new Date().toISOString(),
+      },
+    ];
+
+    await wrapper.vm.$nextTick();
+
+    const outcomeItems = (wrapper.vm as any).outcomeItems as Array<{ topics?: string[] }>;
+    expect(outcomeItems[0].topics).toContain('Resumed');
+  });
+
   it('calculates momentum metrics correctly', async () => {
     const userStore = useUserStore();
     userStore.profile = { id: 'user-1', organization_id: 'org-1' } as any;
@@ -346,7 +444,7 @@ describe('Dashboard.vue', () => {
     ];
 
     (supabase.from as any).mockImplementation((table: string) => {
-      if (table === 'morning_briefs') {
+      if (table === 'morning_briefs' || table === 'status_reports') {
         return {
           select: vi.fn(() => ({
             eq: vi.fn(() => ({
@@ -400,7 +498,7 @@ describe('Dashboard.vue', () => {
     userStore.profile = { id: 'user-1', organization_id: 'org-1' } as any;
 
     (supabase.from as any).mockImplementation((table: string) => {
-      if (table === 'morning_briefs') {
+      if (table === 'morning_briefs' || table === 'status_reports') {
         return {
           select: vi.fn(() => ({
             eq: vi.fn(() => ({
@@ -465,7 +563,7 @@ describe('Dashboard.vue', () => {
     };
 
     (supabase.from as any).mockImplementation((table: string) => {
-      if (table === 'morning_briefs') {
+      if (table === 'morning_briefs' || table === 'status_reports') {
         return {
           select: vi.fn(() => ({
             eq: vi.fn(() => ({
@@ -553,6 +651,157 @@ describe('Dashboard.vue', () => {
     );
   });
 
+  it('renders latest status report draft with highlighted critical actions', async () => {
+    const userStore = useUserStore();
+    userStore.profile = { id: 'user-1', organization_id: 'org-1', full_name: 'Alexis CEO' } as any;
+
+    const mockReport = {
+      id: 'report-1',
+      organization_id: 'org-1',
+      source_task_id: 'task-1',
+      report_period_start: '2026-03-01T00:00:00.000Z',
+      report_period_end: '2026-03-08T00:00:00.000Z',
+      idempotency_key: 'status-report:org-1:2026-03-01:2026-03-08',
+      narrative: 'Weekly draft narrative.',
+      wins: [
+        {
+          title: 'Release prep moved forward',
+          detail: 'Team completed testing checklist.',
+          source_type: 'task',
+          source_id: 'task-2',
+        },
+      ],
+      blockers_risks: [
+        {
+          title: 'Launch API blocker',
+          detail: 'Platform approval still pending.',
+          source_type: 'relancing_update',
+          source_id: 'rel-2',
+        },
+      ],
+      commitments: [
+        {
+          title: 'Weekly stakeholder update',
+          detail: 'Send recap after unblock confirmation.',
+          source_type: 'task',
+          source_id: 'task-3',
+        },
+      ],
+      next_actions: [
+        {
+          title: 'Confirm access owner',
+          detail: 'Escalate to platform lead if approval slips another day.',
+          source_type: 'task',
+          source_id: 'task-4',
+        },
+      ],
+      critical_actions: [
+        {
+          title: 'Unblock Launch dependency',
+          action_required: 'Review API access blocker with platform team.',
+          priority: 'high',
+          rationale: 'Blocker report detected.',
+          source_type: 'relancing_update',
+          source_id: 'rel-1',
+        },
+      ],
+      metadata: { source_ids: ['rel-1'], source_links: [] },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    (supabase.from as any).mockImplementation((table: string) => {
+      if (table === 'morning_briefs') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              order: vi.fn(() => ({
+                limit: vi.fn(() => ({
+                  single: vi.fn(() => Promise.resolve({ data: null, error: { code: 'PGRST116' } })),
+                })),
+              })),
+            })),
+          })),
+        };
+      }
+
+      if (table === 'status_reports') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              order: vi.fn(() => ({
+                limit: vi.fn(() => ({
+                  single: vi.fn(() => Promise.resolve({ data: mockReport, error: null })),
+                })),
+              })),
+            })),
+          })),
+        };
+      }
+
+      if (table === 'workspace_integrations') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                maybeSingle: vi.fn(() => Promise.resolve({ data: { user_id: 'user-1' }, error: null })),
+              })),
+            })),
+          })),
+        };
+      }
+
+      return {
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            order: vi.fn(() => ({
+              limit: vi.fn(() => Promise.resolve({ data: [], error: null })),
+            })),
+          })),
+        })),
+      };
+    });
+
+    const wrapper = mountView();
+
+    await vi.waitFor(() => {
+      const text = wrapper.text();
+      expect(text).toContain('Status Report Draft');
+      expect(text).toContain('Unblock Launch dependency');
+      expect(text).toContain('Review API access blocker with platform team.');
+      expect(text).toContain('Wins');
+      expect(text).toContain('Release prep moved forward');
+      expect(text).toContain('Blockers & Risks');
+      expect(text).toContain('Launch API blocker');
+      expect(text).toContain('Commitments');
+      expect(text).toContain('Weekly stakeholder update');
+      expect(text).toContain('Next Actions');
+      expect(text).toContain('Confirm access owner');
+    });
+  });
+
+  it('queues status.report task from manual dashboard trigger', async () => {
+    const userStore = useUserStore();
+    userStore.profile = { id: 'user-1', organization_id: 'org-1' } as any;
+
+    const wrapper = mountView();
+
+    await (wrapper.vm as any).triggerStatusReport();
+
+    const expectedPayload = buildStatusReportPayload('org-1', new Date(), {
+      force: true,
+      manualTrigger: true,
+    });
+
+    expect(tasksInsertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        domain_action: 'status.report',
+        topic: 'Relancing',
+        payload: expectedPayload,
+      }),
+    );
+  });
+
   it('shows confidence context in escalation peek when metadata exists', async () => {
     const userStore = useUserStore();
     userStore.profile = { id: 'user-1', organization_id: 'org-1' } as any;
@@ -623,5 +872,15 @@ describe('Dashboard.vue', () => {
     await wrapper.vm.$nextTick();
 
     expect(wrapper.text()).not.toContain('Confidence Context');
+  });
+
+  it('exposes relancing setup action for header button handler', async () => {
+    const userStore = useUserStore();
+    userStore.profile = { id: 'user-1', organization_id: 'org-1', full_name: 'Alexis CEO' } as any;
+
+    const wrapper = mountView();
+
+    await wrapper.vm.$nextTick();
+    expect(typeof (wrapper.vm as any).openRelancingSetupDialog).toBe('function');
   });
 });

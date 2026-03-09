@@ -1,6 +1,5 @@
 import { BaseProcessor, ProcessorResult } from './BaseProcessor.js';
 import { Task } from '@ai-assistant/shared';
-import { supabase } from "../services/supabase.js";
 import { mcpService } from '../services/mcp.js';
 
 /**
@@ -46,4 +45,3 @@ export class EmailDraftProcessor extends BaseProcessor {
     };
   }
 }
-

@@ -157,6 +157,127 @@ export type Database = {
           },
         ]
       }
+      command_conversations: {
+        Row: {
+          channel: string
+          created_at: string
+          created_by: string | null
+          external_thread_id: string | null
+          id: string
+          metadata: Json
+          organization_id: string
+          title: string | null
+          updated_at: string
+        }
+        Insert: {
+          channel?: string
+          created_at?: string
+          created_by?: string | null
+          external_thread_id?: string | null
+          id?: string
+          metadata?: Json
+          organization_id: string
+          title?: string | null
+          updated_at?: string
+        }
+        Update: {
+          channel?: string
+          created_at?: string
+          created_by?: string | null
+          external_thread_id?: string | null
+          id?: string
+          metadata?: Json
+          organization_id?: string
+          title?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "command_conversations_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "command_conversations_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      command_messages: {
+        Row: {
+          channel: string
+          content: string
+          conversation_id: string
+          correlation_id: string | null
+          created_at: string
+          id: string
+          metadata: Json
+          organization_id: string
+          role: string
+          source_task_id: string | null
+          state: string | null
+          thread_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          channel?: string
+          content: string
+          conversation_id: string
+          correlation_id?: string | null
+          created_at?: string
+          id?: string
+          metadata?: Json
+          organization_id: string
+          role: string
+          source_task_id?: string | null
+          state?: string | null
+          thread_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          channel?: string
+          content?: string
+          conversation_id?: string
+          correlation_id?: string | null
+          created_at?: string
+          id?: string
+          metadata?: Json
+          organization_id?: string
+          role?: string
+          source_task_id?: string | null
+          state?: string | null
+          thread_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "command_messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "command_conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "command_messages_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "command_messages_source_task_id_fkey"
+            columns: ["source_task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ingested_threads: {
         Row: {
           category: string | null
@@ -375,6 +496,427 @@ export type Database = {
           },
         ]
       }
+      project_member_assignments: {
+        Row: {
+          created_at: string
+          id: string
+          is_active: boolean
+          member_name: string
+          member_user_id: string | null
+          organization_id: string
+          project_context_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          member_name: string
+          member_user_id?: string | null
+          organization_id: string
+          project_context_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          member_name?: string
+          member_user_id?: string | null
+          organization_id?: string
+          project_context_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_member_assignments_member_user_id_fkey"
+            columns: ["member_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_member_assignments_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_member_assignments_project_context_id_fkey"
+            columns: ["project_context_id"]
+            isOneToOne: false
+            referencedRelation: "project_scheduling_contexts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      project_nudge_dispatches: {
+        Row: {
+          created_at: string
+          id: string
+          member_assignment_id: string
+          nudge_window_end: string
+          nudge_window_start: string
+          organization_id: string
+          project_context_id: string
+          reason_code: string
+          task_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          member_assignment_id: string
+          nudge_window_end: string
+          nudge_window_start: string
+          organization_id: string
+          project_context_id: string
+          reason_code: string
+          task_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          member_assignment_id?: string
+          nudge_window_end?: string
+          nudge_window_start?: string
+          organization_id?: string
+          project_context_id?: string
+          reason_code?: string
+          task_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_nudge_dispatches_member_assignment_id_fkey"
+            columns: ["member_assignment_id"]
+            isOneToOne: false
+            referencedRelation: "project_member_assignments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_nudge_dispatches_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_nudge_dispatches_project_context_id_fkey"
+            columns: ["project_context_id"]
+            isOneToOne: false
+            referencedRelation: "project_scheduling_contexts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_nudge_dispatches_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      project_scheduling_contexts: {
+        Row: {
+          blocker_active: boolean
+          blocker_reported_by: string | null
+          blocker_summary: string | null
+          created_at: string
+          deadline: string | null
+          id: string
+          last_nudge_at: string | null
+          next_nudge_at: string | null
+          organization_id: string
+          project_name: string
+          scheduler_config: Json
+          setup_status: Database["public"]["Enums"]["project_setup_status"]
+          updated_at: string
+        }
+        Insert: {
+          blocker_active?: boolean
+          blocker_reported_by?: string | null
+          blocker_summary?: string | null
+          created_at?: string
+          deadline?: string | null
+          id?: string
+          last_nudge_at?: string | null
+          next_nudge_at?: string | null
+          organization_id: string
+          project_name?: string
+          scheduler_config?: Json
+          setup_status?: Database["public"]["Enums"]["project_setup_status"]
+          updated_at?: string
+        }
+        Update: {
+          blocker_active?: boolean
+          blocker_reported_by?: string | null
+          blocker_summary?: string | null
+          created_at?: string
+          deadline?: string | null
+          id?: string
+          last_nudge_at?: string | null
+          next_nudge_at?: string | null
+          organization_id?: string
+          project_name?: string
+          scheduler_config?: Json
+          setup_status?: Database["public"]["Enums"]["project_setup_status"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "project_scheduling_contexts_blocker_reported_by_fkey"
+            columns: ["blocker_reported_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_scheduling_contexts_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relancing_update_events: {
+        Row: {
+          channel: string
+          correlation_id: string | null
+          event_type: string
+          external_message_id: string | null
+          id: string
+          idempotency_key: string
+          occurred_at: string
+          organization_id: string
+          raw_payload: Json
+          relancing_update_id: string | null
+          task_id: string | null
+        }
+        Insert: {
+          channel: string
+          correlation_id?: string | null
+          event_type: string
+          external_message_id?: string | null
+          id?: string
+          idempotency_key: string
+          occurred_at?: string
+          organization_id: string
+          raw_payload?: Json
+          relancing_update_id?: string | null
+          task_id?: string | null
+        }
+        Update: {
+          channel?: string
+          correlation_id?: string | null
+          event_type?: string
+          external_message_id?: string | null
+          id?: string
+          idempotency_key?: string
+          occurred_at?: string
+          organization_id?: string
+          raw_payload?: Json
+          relancing_update_id?: string | null
+          task_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relancing_update_events_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relancing_update_events_relancing_update_id_fkey"
+            columns: ["relancing_update_id"]
+            isOneToOne: false
+            referencedRelation: "relancing_updates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relancing_update_events_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      relancing_updates: {
+        Row: {
+          blocker_summary: string | null
+          channel: string
+          correlation_id: string | null
+          created_at: string
+          dependency: string | null
+          eta_hint: string | null
+          external_message_id: string | null
+          id: string
+          idempotency_key: string
+          intents: Database["public"]["Enums"]["relancing_update_intent"][]
+          member_assignment_id: string
+          message_text: string
+          organization_id: string
+          progress_summary: string | null
+          project_context_id: string
+          requested_help: string | null
+          source_task_id: string | null
+          source_user_id: string | null
+          thread_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          blocker_summary?: string | null
+          channel: string
+          correlation_id?: string | null
+          created_at?: string
+          dependency?: string | null
+          eta_hint?: string | null
+          external_message_id?: string | null
+          id?: string
+          idempotency_key: string
+          intents: Database["public"]["Enums"]["relancing_update_intent"][]
+          member_assignment_id: string
+          message_text: string
+          organization_id: string
+          progress_summary?: string | null
+          project_context_id: string
+          requested_help?: string | null
+          source_task_id?: string | null
+          source_user_id?: string | null
+          thread_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          blocker_summary?: string | null
+          channel?: string
+          correlation_id?: string | null
+          created_at?: string
+          dependency?: string | null
+          eta_hint?: string | null
+          external_message_id?: string | null
+          id?: string
+          idempotency_key?: string
+          intents?: Database["public"]["Enums"]["relancing_update_intent"][]
+          member_assignment_id?: string
+          message_text?: string
+          organization_id?: string
+          progress_summary?: string | null
+          project_context_id?: string
+          requested_help?: string | null
+          source_task_id?: string | null
+          source_user_id?: string | null
+          thread_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relancing_updates_member_assignment_id_fkey"
+            columns: ["member_assignment_id"]
+            isOneToOne: false
+            referencedRelation: "project_member_assignments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relancing_updates_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relancing_updates_project_context_id_fkey"
+            columns: ["project_context_id"]
+            isOneToOne: false
+            referencedRelation: "project_scheduling_contexts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relancing_updates_source_task_id_fkey"
+            columns: ["source_task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relancing_updates_source_user_id_fkey"
+            columns: ["source_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      status_reports: {
+        Row: {
+          blockers_risks: Json
+          commitments: Json
+          created_at: string
+          critical_actions: Json
+          id: string
+          idempotency_key: string
+          metadata: Json
+          narrative: string
+          next_actions: Json
+          organization_id: string
+          report_period_end: string
+          report_period_start: string
+          source_task_id: string | null
+          updated_at: string
+          wins: Json
+        }
+        Insert: {
+          blockers_risks?: Json
+          commitments?: Json
+          created_at?: string
+          critical_actions?: Json
+          id?: string
+          idempotency_key: string
+          metadata?: Json
+          narrative: string
+          next_actions?: Json
+          organization_id: string
+          report_period_end: string
+          report_period_start: string
+          source_task_id?: string | null
+          updated_at?: string
+          wins?: Json
+        }
+        Update: {
+          blockers_risks?: Json
+          commitments?: Json
+          created_at?: string
+          critical_actions?: Json
+          id?: string
+          idempotency_key?: string
+          metadata?: Json
+          narrative?: string
+          next_actions?: Json
+          organization_id?: string
+          report_period_end?: string
+          report_period_start?: string
+          source_task_id?: string | null
+          updated_at?: string
+          wins?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "status_reports_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "status_reports_source_task_id_fkey"
+            columns: ["source_task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tasks: {
         Row: {
           created_at: string
@@ -461,6 +1003,7 @@ export type Database = {
           content_markdown: string
           created_at: string
           id: string
+          metadata: Json
           organization_id: string
           title: string
           updated_at: string
@@ -470,6 +1013,7 @@ export type Database = {
           content_markdown: string
           created_at?: string
           id?: string
+          metadata?: Json
           organization_id: string
           title: string
           updated_at?: string
@@ -479,6 +1023,7 @@ export type Database = {
           content_markdown?: string
           created_at?: string
           id?: string
+          metadata?: Json
           organization_id?: string
           title?: string
           updated_at?: string
@@ -607,6 +1152,8 @@ export type Database = {
     }
     Enums: {
       agency_tier: "Public" | "Controlled" | "Restricted"
+      project_setup_status: "incomplete" | "complete"
+      relancing_update_intent: "status_update" | "blocker_report"
       task_status: "queued" | "processing" | "done" | "error" | "escalation" | "paused"
       user_role: "CEO" | "PM" | "Team Member" | "Simple User"
     }
@@ -737,6 +1284,7 @@ export const Constants = {
   public: {
     Enums: {
       agency_tier: ["Public", "Controlled", "Restricted"],
+      project_setup_status: ["incomplete", "complete"],
       task_status: ["queued", "processing", "done", "error", "escalation", "paused"],
       user_role: ["CEO", "PM", "Team Member", "Simple User"],
     },

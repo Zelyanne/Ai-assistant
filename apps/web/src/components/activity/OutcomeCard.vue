@@ -87,14 +87,6 @@ const tierSeverity = computed(() => {
   }
 });
 
-function getTopicSeverity(topic: string): string {
-  const lower = topic.toLowerCase();
-  if (lower.includes('blocker') || lower.includes('urgent') || lower.includes('critical')) return 'danger';
-  if (lower.includes('investor') || lower.includes('client') || lower.includes('revenue')) return 'success';
-  if (lower.includes('risk') || lower.includes('deadline')) return 'warn';
-  return 'info';
-}
-
 function toPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
@@ -144,14 +136,17 @@ const escalationHint = computed(() => {
     @keydown.enter="!isProcessing && emit('click')"
   >
     <template #title>
-      <div class="flex justify-between items-start gap-3" :class="{ 'mb-1': isMini }">
+      <div
+        class="flex justify-between items-start gap-3"
+        :class="{ 'mb-1': isMini }"
+      >
         <div class="flex items-start gap-3 flex-1">
           <Checkbox 
             v-if="selectable" 
             v-model="isSelected" 
             :binary="true" 
-            @click.stop 
-            class="mt-1"
+            class="mt-1" 
+            @click.stop
           />
           <h3 
             class="text-executive-primary leading-tight font-sans"
@@ -161,15 +156,29 @@ const escalationHint = computed(() => {
           </h3>
         </div>
         <div class="flex flex-col items-end gap-1">
-          <Badge :value="statusLabel" :severity="statusSeverity" class="font-technical text-[9px] uppercase tracking-tighter" />
-          <ProgressSpinner v-if="isProcessing" style="width: 14px; height: 14px" strokeWidth="8" />
+          <Badge
+            :value="statusLabel"
+            :severity="statusSeverity"
+            class="font-technical text-[9px] uppercase tracking-tighter"
+          />
+          <ProgressSpinner
+            v-if="isProcessing"
+            style="width: 14px; height: 14px"
+            stroke-width="8"
+          />
         </div>
       </div>
     </template>
     <template #subtitle>
       <div class="flex items-center gap-2 mt-1 flex-wrap">
         <span class="text-xs text-slate-400 font-technical">{{ timestamp }}</span>
-        <Badge v-if="agencyTier" :value="agencyTier" :severity="tierSeverity" size="small" class="opacity-70 scale-90 origin-left" />
+        <Badge
+          v-if="agencyTier"
+          :value="agencyTier"
+          :severity="tierSeverity"
+          size="small"
+          class="opacity-70 scale-90 origin-left"
+        />
       </div>
     </template>
     <template #content>
@@ -196,17 +205,20 @@ const escalationHint = computed(() => {
       </div>
     </template>
     <template #footer>
-      <div class="flex justify-end gap-2" :class="{ 'mt-2': isMini }">
+      <div
+        class="flex justify-end gap-2"
+        :class="{ 'mt-2': isMini }"
+      >
         <slot name="actions">
           <Button 
             v-if="taskId"
+            v-tooltip.top="isMini ? 'View Trace' : ''"
             :icon="isMini ? 'pi pi-search' : 'pi pi-search'"
-            :label="isMini ? '' : 'View Trace'"
-            text 
+            :label="isMini ? '' : 'View Trace'" 
+            text
             :size="isMini ? 'small' : 'small'"
             class="p-button-technical"
             :class="{ 'p-0 h-8 w-8': isMini }"
-            v-tooltip.top="isMini ? 'View Trace' : ''"
             @click.stop="emit('open-trace', taskId)"
           />
         </slot>

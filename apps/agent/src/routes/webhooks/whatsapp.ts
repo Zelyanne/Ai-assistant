@@ -62,6 +62,10 @@ export async function handleWhatsAppWebhook(req: Request, res: Response, deps: W
     ? body.user_id
     : (typeof req.query.user_id === 'string' ? req.query.user_id : null);
 
+  const domainAction = typeof body.domain_action === 'string'
+    ? body.domain_action
+    : (typeof req.query.domain_action === 'string' ? req.query.domain_action : undefined);
+
   const taskId = typeof body.task_id === 'string'
     ? body.task_id
     : (typeof req.query.task_id === 'string' ? req.query.task_id : undefined);
@@ -93,6 +97,7 @@ export async function handleWhatsAppWebhook(req: Request, res: Response, deps: W
       organization_id: organizationId,
       user_id: userId,
       correlation_id: correlationId,
+      domain_action: domainAction,
     });
 
     res.status(202).json({

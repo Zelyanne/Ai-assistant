@@ -8,7 +8,6 @@ import InputText from 'primevue/inputtext';
 import Card from 'primevue/card';
 import Message from 'primevue/message';
 import ProgressSpinner from 'primevue/progressspinner';
-import SelectButton from 'primevue/selectbutton';
 
 const router = useRouter();
 const userStore = useUserStore();
@@ -76,7 +75,7 @@ onMounted(async () => {
   }
 });
 
-const handleCreateOrganization = async (role: 'CEO' | 'Simple User', tier: string = 'Restricted') => {
+const handleCreateOrganization = async (role: 'CEO' | 'Simple User', _tier?: string) => {
   loading.value = true;
   errorMessage.value = '';
   
@@ -98,10 +97,9 @@ const handleCreateOrganization = async (role: 'CEO' | 'Simple User', tier: strin
     }
 
     // Call the RPC function to initialize organization with the selected tier
-    const { data: orgData, error: rpcError } = await supabase.rpc('initialize_organization', {
+    const { error: rpcError } = await (supabase as any).rpc('initialize_organization', {
       org_name: finalOrgName,
       user_role: finalRole,
-      default_tier: tier
     });
 
     if (rpcError) throw rpcError;
@@ -124,144 +122,232 @@ const handleCreateOrganization = async (role: 'CEO' | 'Simple User', tier: strin
 <template>
   <div class="min-h-screen bg-executive-background flex items-center justify-center p-6 font-sans">
     <div class="w-full max-w-2xl">
-      <div v-if="isLoadingProfile" class="text-center py-12">
+      <div
+        v-if="isLoadingProfile"
+        class="text-center py-12"
+      >
         <ProgressSpinner aria-label="Loading profile" />
-        <p class="text-slate-500 mt-4">Setting up your workspace...</p>
+        <p class="text-slate-500 mt-4">
+          Setting up your workspace...
+        </p>
       </div>
 
-      <div v-else-if="loadError" class="text-center py-12">
-        <Message severity="error" class="mb-6">{{ loadError }}</Message>
-        <Button label="Try Again" icon="pi pi-refresh" @click="fetchProfileWithRetry" />
+      <div
+        v-else-if="loadError"
+        class="text-center py-12"
+      >
+        <Message
+          severity="error"
+          class="mb-6"
+        >
+          {{ loadError }}
+        </Message>
+        <Button
+          label="Try Again"
+          icon="pi pi-refresh"
+          @click="fetchProfileWithRetry"
+        />
       </div>
 
       <template v-else>
         <div class="text-center mb-10">
-          <h1 class="text-3xl font-bold text-executive-primary tracking-tight">Setup Your Workspace</h1>
-          <p class="text-slate-500 mt-2">Choose how you want to use AI Assistant</p>
+          <h1 class="text-3xl font-bold text-executive-primary tracking-tight">
+            Setup Your Workspace
+          </h1>
+          <p class="text-slate-500 mt-2">
+            Choose how you want to use AI Assistant
+          </p>
         </div>
 
-        <Message v-if="errorMessage" severity="error" class="mb-6">{{ errorMessage }}</Message>
+        <Message
+          v-if="errorMessage"
+          severity="error"
+          class="mb-6"
+        >
+          {{ errorMessage }}
+        </Message>
 
         <!-- Initial Selection -->
-        <div v-if="!showCreateTeam && !showSoloTierSelection" class="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <!-- Solo Option -->
-        <Card class="border-2 border-transparent hover:border-executive-primary transition-all cursor-pointer overflow-hidden shadow-sm" @click="showSoloTierSelection = true">
-          <template #title>
-            <div class="flex items-center gap-3">
-              <i class="pi pi-user text-2xl text-executive-primary"></i>
-              <span>Start Solo</span>
-            </div>
-          </template>
-          <template #content>
-            <p class="text-slate-600 mb-6">
-              Perfect for individuals or self-employed professionals. One-click setup for your personal productivity environment.
-            </p>
-            <Button 
-              label="I'm Working Solo" 
-              class="w-full" 
-              severity="contrast" 
-              @click.stop="showSoloTierSelection = true"
-            />
-          </template>
-        </Card>
-
-        <!-- Team Option -->
-        <Card class="border-2 border-transparent hover:border-executive-primary transition-all cursor-pointer overflow-hidden shadow-sm" @click="showCreateTeam = true">
-          <template #title>
-            <div class="flex items-center gap-3">
-              <i class="pi pi-users text-2xl text-executive-primary"></i>
-              <span>Create a Team</span>
-            </div>
-          </template>
-          <template #content>
-            <p class="text-slate-600 mb-6">
-              Build an organization, invite team members, and coordinate tasks with background intelligence.
-            </p>
-            <Button 
-              label="Setup Organization" 
-              class="w-full" 
-              outlined 
-              @click.stop="showCreateTeam = true"
-            />
-          </template>
-        </Card>
-      </div>
-
-      <!-- Solo Tier Selection -->
-      <Card v-else-if="showSoloTierSelection" class="shadow-sm border border-slate-200">
-        <template #title>Configure Your Agent</template>
-        <template #subtitle>Choose your agent's autonomy level. You can change this later.</template>
-        <template #content>
-          <div class="flex flex-col gap-6 mt-4">
-            <div class="flex flex-col gap-3">
-              <div 
-                v-for="opt in tierOptions" 
-                :key="opt.value"
-                class="flex items-center gap-4 p-4 border rounded-lg cursor-pointer transition-colors"
-                :class="selectedTier === opt.value ? 'border-executive-primary bg-slate-50' : 'border-slate-200'"
-                @click="selectedTier = opt.value"
-              >
-                <div class="h-10 w-10 rounded-full bg-white shadow-sm flex items-center justify-center border border-slate-100">
-                  <i :class="[opt.icon, selectedTier === opt.value ? 'text-executive-primary' : 'text-slate-400']"></i>
-                </div>
-                <div class="flex-1">
-                  <div class="font-bold text-executive-primary">{{ opt.label }}</div>
-                  <div class="text-xs text-slate-500 font-technical">{{ opt.description }}</div>
-                </div>
-                <div class="h-5 w-5 rounded-full border-2 flex items-center justify-center" :class="selectedTier === opt.value ? 'border-executive-primary' : 'border-slate-300'">
-                  <div v-if="selectedTier === opt.value" class="h-2.5 w-2.5 rounded-full bg-executive-primary"></div>
-                </div>
+        <div
+          v-if="!showCreateTeam && !showSoloTierSelection"
+          class="grid grid-cols-1 md:grid-cols-2 gap-6"
+        >
+          <!-- Solo Option -->
+          <Card
+            class="border-2 border-transparent hover:border-executive-primary transition-all cursor-pointer overflow-hidden shadow-sm"
+            @click="showSoloTierSelection = true"
+          >
+            <template #title>
+              <div class="flex items-center gap-3">
+                <i class="pi pi-user text-2xl text-executive-primary" />
+                <span>Start Solo</span>
               </div>
-            </div>
-
-            <div class="flex gap-3 mt-4">
-              <Button label="Back" severity="secondary" outlined class="flex-1" @click="showSoloTierSelection = false" :disabled="loading" />
-              <Button label="Finish Setup" severity="contrast" class="flex-1" @click="handleCreateOrganization('Simple User', selectedTier)" :loading="loading" />
-            </div>
-          </div>
-        </template>
-      </Card>
-
-      <!-- Create Team Form -->
-      <Card v-else class="shadow-sm border border-slate-200">
-        <template #title>Create Your Organization</template>
-        <template #content>
-          <div class="flex flex-col gap-4 mt-2">
-            <div class="flex flex-col gap-2">
-              <label for="orgName" class="text-xs font-semibold uppercase tracking-wider text-slate-500 font-technical">Organization Name</label>
-              <InputText 
-                id="orgName" 
-                v-model="orgName" 
-                placeholder="Acme Corp" 
-                class="w-full font-technical"
-                :disabled="loading"
-                autofocus
+            </template>
+            <template #content>
+              <p class="text-slate-600 mb-6">
+                Perfect for individuals or self-employed professionals. One-click setup for your personal productivity environment.
+              </p>
+              <Button 
+                label="I'm Working Solo" 
+                class="w-full" 
+                severity="contrast" 
+                @click.stop="showSoloTierSelection = true"
               />
-            </div>
-            
-            <div class="flex flex-col gap-2 mt-4">
-              <label class="text-xs font-semibold uppercase tracking-wider text-slate-500 font-technical">Default Autonomy Level</label>
-              <div class="grid grid-cols-3 gap-2">
+            </template>
+          </Card>
+
+          <!-- Team Option -->
+          <Card
+            class="border-2 border-transparent hover:border-executive-primary transition-all cursor-pointer overflow-hidden shadow-sm"
+            @click="showCreateTeam = true"
+          >
+            <template #title>
+              <div class="flex items-center gap-3">
+                <i class="pi pi-users text-2xl text-executive-primary" />
+                <span>Create a Team</span>
+              </div>
+            </template>
+            <template #content>
+              <p class="text-slate-600 mb-6">
+                Build an organization, invite team members, and coordinate tasks with background intelligence.
+              </p>
+              <Button 
+                label="Setup Organization" 
+                class="w-full" 
+                outlined 
+                @click.stop="showCreateTeam = true"
+              />
+            </template>
+          </Card>
+        </div>
+
+        <!-- Solo Tier Selection -->
+        <Card
+          v-else-if="showSoloTierSelection"
+          class="shadow-sm border border-slate-200"
+        >
+          <template #title>
+            Configure Your Agent
+          </template>
+          <template #subtitle>
+            Choose your agent's autonomy level. You can change this later.
+          </template>
+          <template #content>
+            <div class="flex flex-col gap-6 mt-4">
+              <div class="flex flex-col gap-3">
                 <div 
                   v-for="opt in tierOptions" 
                   :key="opt.value"
-                  class="flex flex-col items-center gap-2 p-2 border rounded cursor-pointer text-center"
-                  :class="selectedTier === opt.value ? 'border-executive-primary bg-slate-50' : 'border-slate-100'"
+                  class="flex items-center gap-4 p-4 border rounded-lg cursor-pointer transition-colors"
+                  :class="selectedTier === opt.value ? 'border-executive-primary bg-slate-50' : 'border-slate-200'"
                   @click="selectedTier = opt.value"
                 >
-                  <i :class="[opt.icon, 'text-sm', selectedTier === opt.value ? 'text-executive-primary' : 'text-slate-400']"></i>
-                  <span class="text-[10px] font-bold">{{ opt.label }}</span>
+                  <div class="h-10 w-10 rounded-full bg-white shadow-sm flex items-center justify-center border border-slate-100">
+                    <i :class="[opt.icon, selectedTier === opt.value ? 'text-executive-primary' : 'text-slate-400']" />
+                  </div>
+                  <div class="flex-1">
+                    <div class="font-bold text-executive-primary">
+                      {{ opt.label }}
+                    </div>
+                    <div class="text-xs text-slate-500 font-technical">
+                      {{ opt.description }}
+                    </div>
+                  </div>
+                  <div
+                    class="h-5 w-5 rounded-full border-2 flex items-center justify-center"
+                    :class="selectedTier === opt.value ? 'border-executive-primary' : 'border-slate-300'"
+                  >
+                    <div
+                      v-if="selectedTier === opt.value"
+                      class="h-2.5 w-2.5 rounded-full bg-executive-primary"
+                    />
+                  </div>
                 </div>
               </div>
+
+              <div class="flex gap-3 mt-4">
+                <Button
+                  label="Back"
+                  severity="secondary"
+                  outlined
+                  class="flex-1"
+                  :disabled="loading"
+                  @click="showSoloTierSelection = false"
+                />
+                <Button
+                  label="Finish Setup"
+                  severity="contrast"
+                  class="flex-1"
+                  :loading="loading"
+                  @click="handleCreateOrganization('Simple User', selectedTier)"
+                />
+              </div>
             </div>
+          </template>
+        </Card>
+
+        <!-- Create Team Form -->
+        <Card
+          v-else
+          class="shadow-sm border border-slate-200"
+        >
+          <template #title>
+            Create Your Organization
+          </template>
+          <template #content>
+            <div class="flex flex-col gap-4 mt-2">
+              <div class="flex flex-col gap-2">
+                <label
+                  for="orgName"
+                  class="text-xs font-semibold uppercase tracking-wider text-slate-500 font-technical"
+                >Organization Name</label>
+                <InputText 
+                  id="orgName" 
+                  v-model="orgName" 
+                  placeholder="Acme Corp" 
+                  class="w-full font-technical"
+                  :disabled="loading"
+                  autofocus
+                />
+              </div>
             
-            <div class="flex gap-3 mt-6">
-              <Button label="Back" severity="secondary" outlined class="flex-1" @click="showCreateTeam = false" :disabled="loading" />
-              <Button label="Create & Continue" severity="contrast" class="flex-1" @click="handleCreateOrganization('CEO', selectedTier)" :loading="loading" :disabled="!orgName" />
+              <div class="flex flex-col gap-2 mt-4">
+                <label class="text-xs font-semibold uppercase tracking-wider text-slate-500 font-technical">Default Autonomy Level</label>
+                <div class="grid grid-cols-3 gap-2">
+                  <div 
+                    v-for="opt in tierOptions" 
+                    :key="opt.value"
+                    class="flex flex-col items-center gap-2 p-2 border rounded cursor-pointer text-center"
+                    :class="selectedTier === opt.value ? 'border-executive-primary bg-slate-50' : 'border-slate-100'"
+                    @click="selectedTier = opt.value"
+                  >
+                    <i :class="[opt.icon, 'text-sm', selectedTier === opt.value ? 'text-executive-primary' : 'text-slate-400']" />
+                    <span class="text-[10px] font-bold">{{ opt.label }}</span>
+                  </div>
+                </div>
+              </div>
+            
+              <div class="flex gap-3 mt-6">
+                <Button
+                  label="Back"
+                  severity="secondary"
+                  outlined
+                  class="flex-1"
+                  :disabled="loading"
+                  @click="showCreateTeam = false"
+                />
+                <Button
+                  label="Create & Continue"
+                  severity="contrast"
+                  class="flex-1"
+                  :loading="loading"
+                  :disabled="!orgName"
+                  @click="handleCreateOrganization('CEO', selectedTier)"
+                />
+              </div>
             </div>
-          </div>
-        </template>
-      </Card>
+          </template>
+        </Card>
       </template>
     </div>
   </div>

@@ -20,6 +20,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function readCorrelationId(payload: unknown): string | undefined {
+  if (!isRecord(payload)) {
+    return undefined;
+  }
+
+  return typeof payload.correlation_id === 'string' ? payload.correlation_id : undefined;
+}
+
 function toJson(value: unknown): Json {
   if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
     return value;
@@ -46,6 +54,51 @@ function asRecordJson(value: unknown): Record<string, Json | undefined> {
   }
 
   return toJson(value) as Record<string, Json | undefined>;
+}
+
+function toLower(value: string | undefined): string {
+  return (value ?? '').trim().toLowerCase();
+}
+
+function hasRelancingRoutingHint(normalized: NormalizedInboundEnvelope): boolean {
+  const topic = toLower(normalized.topic);
+  if (topic.includes('relancing') || topic.includes('nudge')) {
+    return true;
+  }
+
+  const metadata = isRecord(normalized.channel_metadata) ? normalized.channel_metadata : {};
+  const rawPayload = isRecord(normalized.raw_payload) ? normalized.raw_payload : {};
+
+  const metadataDomainAction = typeof metadata.domain_action === 'string' ? metadata.domain_action : undefined;
+  const payloadDomainAction = typeof rawPayload.domain_action === 'string' ? rawPayload.domain_action : undefined;
+  if (metadataDomainAction === 'relancing.update' || payloadDomainAction === 'relancing.update') {
+    return true;
+  }
+
+  const markerKeys = [
+    'relancing_context_id',
+    'project_context_id',
+    'member_assignment_id',
+    'relancing_cycle_id',
+    'nudge_dispatch_id',
+  ];
+
+  for (const key of markerKeys) {
+    if (typeof metadata[key] === 'string' || typeof rawPayload[key] === 'string') {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function looksLikeRelancingReply(messageText: string | undefined): boolean {
+  const text = toLower(messageText);
+  if (!text) {
+    return false;
+  }
+
+  return /\b(status|progress|blocked|blocker|stuck|dependency|eta|unblocked|on track|need help)\b/i.test(text);
 }
 
 function mergeTaskResult(
@@ -149,15 +202,91 @@ export class ChannelRouterService {
     this.supabaseClient = deps.supabaseClient;
   }
 
+  private async resolveInboundDomainAction(normalized: NormalizedInboundEnvelope): Promise<string> {
+    if (normalized.domain_action !== 'thread.action') {
+      return normalized.domain_action;
+    }
+
+    if (hasRelancingRoutingHint(normalized)) {
+      return 'relancing.update';
+    }
+
+    if (!normalized.user_id || !looksLikeRelancingReply(normalized.message_text)) {
+      return normalized.domain_action;
+    }
+
+    const { data, error } = await this.supabaseClient
+      .from('project_member_assignments')
+      .select('id')
+      .eq('organization_id', normalized.organization_id)
+      .eq('member_user_id', normalized.user_id)
+      .eq('is_active', true)
+      .limit(1);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return Array.isArray(data) && data.length > 0 ? 'relancing.update' : normalized.domain_action;
+  }
+
   async enqueueInbound(channel: Channel, payload: unknown): Promise<EnqueueInboundResult> {
     const adapter = this.registry.get(channel);
     const normalized = NormalizedInboundEnvelopeSchema.parse(adapter.normalizeInbound(payload));
+    const resolvedDomainAction = await this.resolveInboundDomainAction(normalized);
     const correlationId = normalized.correlation_id ?? randomUUID();
+
+    const { data: existingTask, error: existingError } = await this.supabaseClient
+      .from('tasks')
+      .select('id, payload')
+      .eq('organization_id', normalized.organization_id)
+      .eq('domain_action', resolvedDomainAction)
+      .eq('payload->>channel', normalized.channel)
+      .eq('payload->>external_message_id', normalized.external_message_id)
+      .maybeSingle();
+
+    if (existingError) {
+      throw new Error(existingError.message);
+    }
+
+    if (existingTask && typeof (existingTask as { id?: unknown }).id === 'string') {
+      const existingCorrelationId = readCorrelationId((existingTask as { payload?: unknown }).payload) ?? correlationId;
+
+      await AuditLogger.flush(
+        normalized.organization_id,
+        (existingTask as { id: string }).id,
+        'channel-router',
+        'channel_inbound_duplicate_prevented',
+        [
+          AuditLogger.createStep('Channel Inbound', `Duplicate ${channel} inbound suppressed for ${resolvedDomainAction}`, {
+            input_summary: `external_message_id=${normalized.external_message_id}; thread_id=${normalized.thread_id}`,
+            output_summary: `task_id=${(existingTask as { id: string }).id}; correlation_id=${existingCorrelationId}`,
+          }),
+        ],
+        [
+          AuditLogger.createCitation(
+            'channel_message',
+            normalized.external_message_id,
+            `Duplicate inbound ${channel} message suppressed`,
+          ),
+        ],
+      );
+
+      return {
+        task_id: (existingTask as { id: string }).id,
+        correlation_id: existingCorrelationId,
+        envelope: {
+          ...normalized,
+          domain_action: resolvedDomainAction,
+          correlation_id: existingCorrelationId,
+        },
+      };
+    }
 
     const taskInsert: TasksInsert = {
       organization_id: normalized.organization_id,
       user_id: normalized.user_id ?? null,
-      domain_action: normalized.domain_action,
+      domain_action: resolvedDomainAction,
       status: 'queued',
       topic: normalized.topic ?? null,
       payload: {
@@ -168,8 +297,8 @@ export class ChannelRouterService {
         user_id: normalized.user_id ?? null,
         message_text: normalized.message_text,
         correlation_id: correlationId,
-        channel_metadata: normalized.channel_metadata,
-        raw_payload: normalized.raw_payload,
+        channel_metadata: toJson(normalized.channel_metadata),
+        raw_payload: toJson(normalized.raw_payload),
       },
       result: {
         channel_delivery: {
@@ -197,10 +326,10 @@ export class ChannelRouterService {
       'channel-router',
       'channel_inbound_enqueued',
       [
-        AuditLogger.createStep('Channel Inbound', `Queued ${channel} message for ${normalized.domain_action}`, {
-          input_summary: `external_message_id=${normalized.external_message_id}; thread_id=${normalized.thread_id}`,
-          output_summary: `task_id=${data.id}; correlation_id=${correlationId}`,
-        }),
+          AuditLogger.createStep('Channel Inbound', `Queued ${channel} message for ${resolvedDomainAction}`, {
+            input_summary: `external_message_id=${normalized.external_message_id}; thread_id=${normalized.thread_id}`,
+            output_summary: `task_id=${data.id}; correlation_id=${correlationId}`,
+          }),
       ],
       [
         AuditLogger.createCitation(
@@ -216,6 +345,7 @@ export class ChannelRouterService {
       correlation_id: correlationId,
       envelope: {
         ...normalized,
+        domain_action: resolvedDomainAction,
         correlation_id: correlationId,
       },
     };
@@ -239,8 +369,8 @@ export class ChannelRouterService {
         user_id: normalized.user_id ?? null,
         message_text: normalized.message_text,
         correlation_id: correlationId,
-        channel_metadata: normalized.channel_metadata,
-        provider_payload: normalized.provider_payload,
+        channel_metadata: toJson(normalized.channel_metadata),
+        provider_payload: typeof normalized.provider_payload === 'undefined' ? undefined : toJson(normalized.provider_payload),
       },
       result: {
         channel_delivery: {

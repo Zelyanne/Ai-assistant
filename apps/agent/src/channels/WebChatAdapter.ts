@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { z } from 'zod';
 import {
   DeliveryEventEnvelope,
@@ -22,6 +22,41 @@ const WebChatInboundSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
 });
 
+function metadataIdentity(metadata: Record<string, unknown> | undefined): string | undefined {
+  if (!metadata) return undefined;
+
+  const candidates = [
+    metadata.client_message_id,
+    metadata.message_id,
+    metadata.external_message_id,
+    metadata.id,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+
+  return undefined;
+}
+
+function buildDeterministicFallbackMessageId(input: {
+  threadId: string;
+  messageText: string | undefined;
+  correlationId: string | undefined;
+  metadata: Record<string, unknown> | undefined;
+}): string {
+  const fingerprint = JSON.stringify({
+    thread_id: input.threadId,
+    message_text: input.messageText ?? null,
+    correlation_id: input.correlationId ?? null,
+    metadata_identity: metadataIdentity(input.metadata) ?? null,
+  });
+  const digest = createHash('sha256').update(fingerprint).digest('hex').slice(0, 24);
+  return `web-${digest}`;
+}
+
 export class WebChatAdapter implements ChannelAdapter {
   readonly channel = 'web' as const;
 
@@ -31,13 +66,21 @@ export class WebChatAdapter implements ChannelAdapter {
 
   normalizeInbound(payload: unknown): NormalizedInboundEnvelope {
     const parsed = WebChatInboundSchema.parse(payload);
+    const resolvedExternalMessageId = parsed.external_message_id
+      ?? metadataIdentity(parsed.metadata)
+      ?? buildDeterministicFallbackMessageId({
+        threadId: parsed.thread_id,
+        messageText: parsed.message_text,
+        correlationId: parsed.correlation_id,
+        metadata: parsed.metadata,
+      });
 
     return NormalizedInboundEnvelopeSchema.parse({
       channel: this.channel,
       organization_id: parsed.organization_id,
       user_id: parsed.user_id ?? null,
       thread_id: parsed.thread_id,
-      external_message_id: parsed.external_message_id ?? `web-${randomUUID()}`,
+      external_message_id: resolvedExternalMessageId,
       domain_action: parsed.domain_action ?? 'thread.action',
       topic: parsed.topic,
       message_text: parsed.message_text,

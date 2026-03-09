@@ -4,7 +4,6 @@ import { useRouter, useRoute } from 'vue-router';
 import TabMenu from 'primevue/tabmenu';
 import { supabase } from '../../services/supabase';
 import { useUserStore } from '../../stores/user';
-import { formatDate } from '@vueuse/core';
 import Button from 'primevue/button';
 
 const router = useRouter();
@@ -71,37 +70,52 @@ router.afterEach(() => {
   <div class="messages-layout space-y-6">
     <header class="flex justify-between items-center px-6 pt-6">
       <div>
-        <h1 class="text-3xl font-bold text-executive-primary tracking-tight font-sans">Messages</h1>
-        <p class="text-slate-500 mt-2 font-technical">AI-analyzed email stream</p>
+        <h1 class="text-3xl font-bold text-executive-primary tracking-tight font-sans">
+          Messages
+        </h1>
+        <p class="text-slate-500 mt-2 font-technical">
+          AI-analyzed email stream
+        </p>
       </div>
       <div class="flex items-center gap-4">
-        <div v-if="lastSync" class="text-sm text-slate-500 italic">
-             Last synced: {{ new Date(lastSync).toLocaleString() }}
+        <div
+          v-if="lastSync"
+          class="text-sm text-slate-500 italic"
+        >
+          Last synced: {{ new Date(lastSync).toLocaleString() }}
         </div>
         <Button 
-            icon="pi pi-refresh" 
-            text 
-            rounded 
-            aria-label="Refresh" 
-            @click="refreshSync"
-            :loading="loading"
+          icon="pi pi-refresh" 
+          text 
+          rounded 
+          aria-label="Refresh" 
+          :loading="loading"
+          @click="refreshSync"
         />
       </div>
     </header>
 
     <div class="px-6">
-        <TabMenu :model="items" :activeIndex="activeIndex" @tab-change="onTabChange">
-            <template #item="{ item, props }">
-                <a v-bind="props.action" class="flex align-items-center gap-2" v-tooltip.top="item.tooltip">
-                    <span :class="item.icon" />
-                    <span class="font-bold">{{ item.label }}</span>
-                </a>
-            </template>
-        </TabMenu>
+      <TabMenu
+        :model="items"
+        :active-index="activeIndex"
+        @tab-change="onTabChange"
+      >
+        <template #item="{ item, props }">
+          <a
+            v-tooltip.top="item.tooltip"
+            v-bind="props.action"
+            class="flex align-items-center gap-2"
+          >
+            <span :class="item.icon" />
+            <span class="font-bold">{{ item.label }}</span>
+          </a>
+        </template>
+      </TabMenu>
     </div>
 
     <div class="content px-6 pb-6">
-        <slot></slot>
+      <slot />
     </div>
   </div>
 </template>

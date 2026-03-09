@@ -22,10 +22,19 @@ const timelineItems = [
 <template>
   <div class="thread-summary space-y-4 font-sans">
     <!-- 3-Bullet Layout using PrimeVue Timeline for scannability (AC 4, 5) -->
-    <Timeline :value="timelineItems" class="customized-timeline">
+    <Timeline
+      :value="timelineItems"
+      class="customized-timeline"
+    >
       <template #marker="slotProps">
-        <span class="flex w-6 h-6 items-center justify-center text-white rounded-full z-10 shadow-sm" :style="{ backgroundColor: slotProps.item.color }">
-          <i :class="slotProps.item.icon" style="font-size: 0.75rem"></i>
+        <span
+          class="flex w-6 h-6 items-center justify-center text-white rounded-full z-10 shadow-sm"
+          :style="{ backgroundColor: slotProps.item.color }"
+        >
+          <i
+            :class="slotProps.item.icon"
+            style="font-size: 0.75rem"
+          />
         </span>
       </template>
       <template #content="slotProps">
@@ -34,15 +43,34 @@ const timelineItems = [
             <span class="text-[10px] font-bold uppercase tracking-widest text-slate-400">{{ slotProps.item.label }}</span>
           </template>
           <template #content>
-            <div v-if="Array.isArray(slotProps.item.value)" class="space-y-2 mt-1">
-              <div v-for="(item, index) in slotProps.item.value" :key="index" class="flex items-start gap-3">
+            <div
+              v-if="Array.isArray(slotProps.item.value)"
+              class="space-y-2 mt-1"
+            >
+              <div
+                v-for="(item, index) in slotProps.item.value"
+                :key="index"
+                class="flex items-start gap-3"
+              >
                 <!-- Checkbox for action items to enhance scannability and interaction (AC 5) -->
-                <Checkbox v-if="slotProps.item.label === 'Action Items'" :binary="true" class="mt-0.5" />
+                <Checkbox
+                  v-if="slotProps.item.label === 'Action Items'"
+                  :binary="true"
+                  class="mt-0.5"
+                />
                 <span class="text-sm text-slate-700 leading-snug">{{ item }}</span>
               </div>
-              <div v-if="slotProps.item.value.length === 0" class="text-sm text-slate-400 italic">None identified</div>
+              <div
+                v-if="slotProps.item.value.length === 0"
+                class="text-sm text-slate-400 italic"
+              >
+                None identified
+              </div>
             </div>
-            <p v-else class="text-sm text-slate-700 leading-snug mt-1">
+            <p
+              v-else
+              class="text-sm text-slate-700 leading-snug mt-1"
+            >
               {{ slotProps.item.value }}
             </p>
           </template>
@@ -51,13 +79,19 @@ const timelineItems = [
     </Timeline>
 
     <!-- Source Citation: Traceability to original message (AC 6) -->
-    <div v-if="externalId" class="flex justify-end pt-2 border-t border-slate-100">
+    <div
+      v-if="externalId"
+      class="flex justify-end pt-2 border-t border-slate-100"
+    >
       <a 
         :href="`https://mail.google.com/mail/u/0/#all/${props.externalId}`" 
         target="_blank" 
         class="text-[10px] text-blue-500 hover:text-blue-700 flex items-center gap-1 font-mono uppercase tracking-tight"
       >
-        <i class="pi pi-external-link" style="font-size: 0.7rem"></i>
+        <i
+          class="pi pi-external-link"
+          style="font-size: 0.7rem"
+        />
         Source Citation: {{ props.externalId }}
       </a>
     </div>

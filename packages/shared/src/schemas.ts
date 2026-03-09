@@ -41,6 +41,53 @@ export type Channel = z.infer<typeof ChannelSchema>;
 export const DeliveryStateSchema = z.enum(['queued', 'sent', 'delivered', 'failed']);
 export type DeliveryState = z.infer<typeof DeliveryStateSchema>;
 
+export const CommandRoleSchema = z.enum(['user', 'assistant', 'system']);
+export type CommandRole = z.infer<typeof CommandRoleSchema>;
+
+export const CommandMessageStateSchema = z.enum([
+  'intent_preview',
+  'queued',
+  'processing',
+  'done',
+  'error',
+  'escalation',
+  'paused',
+]);
+
+export type CommandMessageState = z.infer<typeof CommandMessageStateSchema>;
+
+export const CommandConversationSchema = z.object({
+  id: z.string().uuid().optional(),
+  organization_id: z.string().uuid(),
+  created_by: z.string().uuid().nullable().optional(),
+  title: z.string().nullable().optional(),
+  channel: ChannelSchema.default('web'),
+  external_thread_id: z.string().nullable().optional(),
+  metadata: z.record(z.unknown()).default({}),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
+});
+
+export type CommandConversation = z.infer<typeof CommandConversationSchema>;
+
+export const CommandMessageSchema = z.object({
+  id: z.string().uuid().optional(),
+  conversation_id: z.string().uuid(),
+  organization_id: z.string().uuid(),
+  role: CommandRoleSchema,
+  content: z.string().trim().min(1),
+  state: CommandMessageStateSchema.optional(),
+  source_task_id: z.string().uuid().nullable().optional(),
+  channel: ChannelSchema.default('web'),
+  correlation_id: z.string().optional(),
+  thread_id: z.string().optional(),
+  metadata: z.record(z.unknown()).default({}),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
+});
+
+export type CommandMessage = z.infer<typeof CommandMessageSchema>;
+
 export const NormalizedInboundEnvelopeSchema = z.object({
   channel: ChannelSchema,
   external_message_id: z.string().min(1),
@@ -346,6 +393,70 @@ export const MorningBriefSchema = z.object({
 
 export type MorningBrief = z.infer<typeof MorningBriefSchema>;
 
+export const StatusReportPrioritySchema = z.enum(['high', 'medium', 'low']);
+export type StatusReportPriority = z.infer<typeof StatusReportPrioritySchema>;
+
+export const StatusReportSectionItemSchema = z.object({
+  title: z.string().min(1),
+  detail: z.string().min(1),
+  source_type: z.string().optional(),
+  source_id: z.string().optional(),
+});
+
+export type StatusReportSectionItem = z.infer<typeof StatusReportSectionItemSchema>;
+
+export const StatusReportCriticalActionSchema = z.object({
+  title: z.string().min(1),
+  action_required: z.string().min(1),
+  priority: StatusReportPrioritySchema,
+  rationale: z.string().min(1),
+  source_type: z.string().optional(),
+  source_id: z.string().optional(),
+});
+
+export type StatusReportCriticalAction = z.infer<typeof StatusReportCriticalActionSchema>;
+
+export const StatusReportMetadataSchema = z
+  .object({
+    source_ids: z.array(z.string()).default([]),
+    source_links: z.array(CitationSchema).default([]),
+    generated_by: z.string().optional(),
+    window_key: z.string().optional(),
+  })
+  .passthrough();
+
+export type StatusReportMetadata = z.infer<typeof StatusReportMetadataSchema>;
+
+export const StatusReportSchema = z.object({
+  id: z.string().uuid().optional(),
+  organization_id: z.string().uuid(),
+  source_task_id: z.string().uuid().nullable().optional(),
+  report_period_start: z.string(),
+  report_period_end: z.string(),
+  idempotency_key: z.string().min(1),
+  narrative: z.string().min(1),
+  wins: z.array(StatusReportSectionItemSchema).default([]),
+  blockers_risks: z.array(StatusReportSectionItemSchema).default([]),
+  commitments: z.array(StatusReportSectionItemSchema).default([]),
+  next_actions: z.array(StatusReportSectionItemSchema).default([]),
+  critical_actions: z.array(StatusReportCriticalActionSchema).default([]),
+  metadata: StatusReportMetadataSchema.default({ source_ids: [], source_links: [] }),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
+});
+
+export type StatusReport = z.infer<typeof StatusReportSchema>;
+
+export const StatusReportPayloadSchema = z.object({
+  report_period_start: z.string().datetime().optional(),
+  report_period_end: z.string().datetime().optional(),
+  idempotency_key: z.string().trim().min(1).optional(),
+  manual_trigger: z.boolean().optional(),
+  force: z.boolean().optional(),
+});
+
+export type StatusReportPayload = z.infer<typeof StatusReportPayloadSchema>;
+
 export const UserProtocolSchema = z.object({
   id: z.string().uuid().optional(),
   organization_id: z.string().uuid(),
@@ -455,6 +566,48 @@ export const RelancingSetupInputSchema = z.object({
 });
 
 export type RelancingSetupInput = z.infer<typeof RelancingSetupInputSchema>;
+
+export const RelancingUpdateIntentSchema = z.enum(['status_update', 'blocker_report']);
+export type RelancingUpdateIntent = z.infer<typeof RelancingUpdateIntentSchema>;
+
+export const RelancingUpdateSchema = z
+  .object({
+    id: z.string().uuid().optional(),
+    organization_id: z.string().uuid(),
+    project_context_id: z.string().uuid(),
+    member_assignment_id: z.string().uuid(),
+    source_task_id: z.string().uuid().nullable().optional(),
+    source_user_id: z.string().uuid().nullable().optional(),
+
+    channel: ChannelSchema,
+    external_message_id: z.string().min(1).optional(),
+    thread_id: z.string().min(1).optional(),
+    correlation_id: z.string().min(1).optional(),
+    idempotency_key: z.string().trim().min(1),
+
+    message_text: z.string().min(1),
+    intents: z.array(RelancingUpdateIntentSchema).min(1),
+
+    progress_summary: z.string().optional(),
+    blocker_summary: z.string().optional(),
+    dependency: z.string().optional(),
+    requested_help: z.string().optional(),
+    eta_hint: z.string().optional(),
+
+    created_at: z.string().optional(),
+    updated_at: z.string().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.external_message_id && !value.correlation_id) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Either external_message_id or correlation_id is required for relancing update idempotency',
+        path: ['external_message_id'],
+      });
+    }
+  });
+
+export type RelancingUpdate = z.infer<typeof RelancingUpdateSchema>;
 
 export const ProtocolGenerationResultSchema = z.object({
   markdown: z.string(),

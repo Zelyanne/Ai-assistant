@@ -11,8 +11,8 @@ import { PerimeterGuard } from '../guards/PerimeterGuard.js';
 export class ThreadSummarizer extends BaseProcessor {
   async process(task: Task): Promise<ProcessorResult> {
     this.clearTrace();
-    const { organization_id, user_id } = task;
-    const threadId = task.payload.thread_id;
+    const { organization_id } = task;
+    const threadId = typeof task.payload.thread_id === 'string' ? task.payload.thread_id : null;
 
     if (!threadId) {
       throw new Error("thread_id is required in task payload");

@@ -105,9 +105,17 @@ export async function reasoningNode(state: AgentState): Promise<Partial<AgentSta
   }
 
   // Incorporate active protocol rules if available (AC 4)
-  const prompt = state.active_protocol_rules
+  let prompt = state.active_protocol_rules
     ? `SPECIFIC LEADERSHIP PROTOCOL RULES:\n${state.active_protocol_rules}\n\nTASK:\n${basePrompt}`
     : basePrompt;
+
+  // Incorporate workspace context if available (AC 6.3)
+  if (state.workspace_context_items && state.workspace_context_items.length > 0) {
+    const contextLines = state.workspace_context_items.map(
+      (item) => `--- DOCUMENT: ${item.reference.title || item.reference.file_id} ---\n${item.content}`
+    );
+    prompt = `WORKSPACE CONTEXT (READ-ONLY):\n${contextLines.join('\n\n')}\n\n${prompt}`;
+  }
 
   // Task 8: Update reasoningNode to support dynamic tool injection
   const taskPayload = task.payload as any;

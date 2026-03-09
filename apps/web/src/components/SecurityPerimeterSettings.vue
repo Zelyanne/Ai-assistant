@@ -21,12 +21,14 @@ const fetchSettings = async () => {
   try {
     const { data: profile } = await supabase
       .from('profiles')
-      .select('preferred_briefing_time')
+      .select('*')
       .eq('id', userStore.profile.id)
       .single()
 
-    if (profile?.preferred_briefing_time) {
-      briefingTime.value = profile.preferred_briefing_time.slice(0, 5)
+    const preferredBriefingTime = (profile as { preferred_briefing_time?: string | null } | null)?.preferred_briefing_time
+
+    if (preferredBriefingTime) {
+      briefingTime.value = preferredBriefingTime.slice(0, 5)
     }
   } catch (err: any) {
     console.error('Error fetching settings:', err)
@@ -40,8 +42,8 @@ const saveSettings = async () => {
 
   saving.value = true
   try {
-    const { error } = await supabase
-      .from('profiles')
+    const profilesTable = supabase.from('profiles') as any
+    const { error } = await profilesTable
       .update({
         preferred_briefing_time: `${briefingTime.value}:00`,
       })
@@ -75,42 +77,55 @@ onMounted(fetchSettings)
 
 <template>
   <div class="space-y-6">
-    <div v-if="loading" class="flex justify-center py-12">
+    <div
+      v-if="loading"
+      class="flex justify-center py-12"
+    >
       <ProgressSpinner style="width: 50px; height: 50px" />
     </div>
 
-    <div v-else class="space-y-6">
+    <div
+      v-else
+      class="space-y-6"
+    >
       <div class="flex flex-col gap-4">
-        <h3 class="text-lg font-bold text-executive-primary font-sans">Agency Perimeter Manager</h3>
+        <h3 class="text-lg font-bold text-executive-primary font-sans">
+          Agency Perimeter Manager
+        </h3>
         <p class="text-sm text-slate-500 font-technical">
           Drag topics between tiers to control what your proxy agent can do autonomously.
         </p>
 
         <AgencyPerimeterBoard
           v-if="userStore.profile?.organization_id"
-          :organizationId="userStore.profile.organization_id"
-          :canWrite="userStore.isCEO"
+          :organization-id="userStore.profile.organization_id"
+          :can-write="userStore.isCEO"
         />
       </div>
 
       <!-- Briefing Schedule Section -->
       <div class="pt-6 border-t border-slate-100 flex flex-col gap-4">
-        <h3 class="text-lg font-bold text-executive-primary font-sans">Morning Briefing Schedule</h3>
+        <h3 class="text-lg font-bold text-executive-primary font-sans">
+          Morning Briefing Schedule
+        </h3>
         <p class="text-sm text-slate-500 font-technical">
           When should your agent generate your executive summary? The agent will only generate a brief if new relevant activity is detected.
         </p>
         
         <div class="flex items-center gap-4 max-w-xs">
           <div class="flex-1 flex flex-col gap-2">
-            <label for="briefingTime" class="text-xs font-bold uppercase tracking-wider text-slate-400 font-technical">Delivery Time</label>
+            <label
+              for="briefingTime"
+              class="text-xs font-bold uppercase tracking-wider text-slate-400 font-technical"
+            >Delivery Time</label>
             <div class="flex items-center gap-2">
-              <i class="pi pi-clock text-slate-400"></i>
+              <i class="pi pi-clock text-slate-400" />
               <input 
                 id="briefingTime" 
-                type="time" 
-                v-model="briefingTime"
+                v-model="briefingTime" 
+                type="time"
                 class="p-inputtext p-component font-technical w-full"
-              />
+              >
             </div>
           </div>
         </div>

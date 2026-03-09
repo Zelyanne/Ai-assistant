@@ -28,9 +28,14 @@ export async function loadProtocol(state: AgentState): Promise<Partial<AgentStat
     // 3. Blocker Detection (AC 6)
     // We check the payload for any indicator of a blocker from previous interactions.
     // In a real scenario, this might involve checking the thread history or specific payload fields.
-    const hasBlocker = task.payload?.context?.some((c: any) => 
-      c.type === 'message' && /blocker|blocked|waiting for/i.test(c.content)
-    );
+    const contextEntries = Array.isArray(task.payload?.context) ? task.payload.context : [];
+    const hasBlocker = contextEntries.some((entry: unknown) => {
+      if (!entry || typeof entry !== 'object') return false;
+      const contextEntry = entry as { type?: unknown; content?: unknown };
+      return contextEntry.type === 'message'
+        && typeof contextEntry.content === 'string'
+        && /blocker|blocked|waiting for/i.test(contextEntry.content);
+    });
 
     if (hasBlocker) {
       console.log(`[Graph][${task.id}] Blocker detected. Pausing task.`);
@@ -38,11 +43,10 @@ export async function loadProtocol(state: AgentState): Promise<Partial<AgentStat
       await supabase
         .from('tasks')
         .update({ status: 'paused', updated_at: new Date().toISOString() }) 
-        .eq('id', task.id);
+        .eq('id', task.id ?? '');
 
       const step = AuditLogger.createStep('Protocol Engine', 'Blocker detected in context. Task paused.', {
         confidence_score: 1,
-        source: 'protocol.md#Blocker-Logic'
       });
 
       return { 
@@ -70,8 +74,8 @@ export async function loadProtocol(state: AgentState): Promise<Partial<AgentStat
     const tierMatch = rules.match(/Required Agency Tier: (Public|Controlled|Restricted)/i);
     let updatedTask = { ...task };
     
-    if (tierMatch) {
-      const overriddenTier = tierMatch[1] as any;
+    if (tierMatch?.[1]) {
+      const overriddenTier = tierMatch[1];
       console.log(`[Graph][${task.id}] Protocol overriding agency tier to: ${overriddenTier}`);
       
       // We store the override in task payload or metadata so checkPerimeter can use it.

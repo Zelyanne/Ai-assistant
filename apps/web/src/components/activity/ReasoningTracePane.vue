@@ -6,34 +6,48 @@
     class="reasoning-trace-drawer w-full md:w-[32rem]"
     :modal="true"
   >
-    <div v-if="loading" class="flex flex-col items-center justify-center h-48 gap-4">
-      <i class="pi pi-spin pi-spinner text-4xl text-primary"></i>
+    <div
+      v-if="loading"
+      class="flex flex-col items-center justify-center h-48 gap-4"
+    >
+      <i class="pi pi-spin pi-spinner text-4xl text-primary" />
       <span class="text-surface-500">Analyzing reasoning path...</span>
     </div>
 
-    <div v-else-if="error" class="p-4 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 rounded-lg text-red-600 dark:text-red-400">
+    <div
+      v-else-if="error"
+      class="p-4 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 rounded-lg text-red-600 dark:text-red-400"
+    >
       <div class="flex items-center gap-2 mb-2">
-        <i class="pi pi-exclamation-triangle"></i>
+        <i class="pi pi-exclamation-triangle" />
         <span class="font-bold">Error Loading Trace</span>
       </div>
-      <p class="text-sm">{{ error }}</p>
+      <p class="text-sm">
+        {{ error }}
+      </p>
     </div>
 
-    <div v-else-if="traceLog" class="flex flex-col gap-8">
+    <div
+      v-else-if="traceLog"
+      class="flex flex-col gap-8"
+    >
       <!-- Logic Timeline -->
       <section>
         <h3 class="text-lg font-semibold mb-6 flex items-center gap-2 text-indigo-700 dark:text-indigo-400">
-          <i class="pi pi-sitemap"></i>
+          <i class="pi pi-sitemap" />
           Execution Logic
         </h3>
         
-        <Timeline :value="traceLog.reasoning_trace" class="custom-timeline">
+        <Timeline
+          :value="traceLog.reasoning_trace"
+          class="custom-timeline"
+        >
           <template #marker="slotProps">
             <span 
               class="flex w-8 h-8 items-center justify-center text-white rounded-full z-10 shadow-sm"
               :class="getConfidenceClass(slotProps.item.confidence_score)"
             >
-              <i :class="getConfidenceIcon(slotProps.item.confidence_score)"></i>
+              <i :class="getConfidenceIcon(slotProps.item.confidence_score)" />
             </span>
           </template>
           
@@ -49,7 +63,10 @@
               <p class="text-surface-600 dark:text-surface-400 text-sm leading-relaxed">
                 {{ slotProps.item.message }}
               </p>
-              <div v-if="slotProps.item.confidence_score !== undefined" class="mt-1">
+              <div
+                v-if="slotProps.item.confidence_score !== undefined"
+                class="mt-1"
+              >
                 <Badge 
                   :value="`Confidence: ${(slotProps.item.confidence_score * 100).toFixed(0)}%`" 
                   :severity="getConfidenceSeverity(slotProps.item.confidence_score)"
@@ -62,19 +79,25 @@
       </section>
 
       <!-- Citations Section -->
-      <section v-if="traceLog.citations?.length" class="border-t border-surface-200 dark:border-surface-700 pt-6">
+      <section
+        v-if="traceLog.citations?.length"
+        class="border-t border-surface-200 dark:border-surface-700 pt-6"
+      >
         <h3 class="text-lg font-semibold mb-4 flex items-center gap-2 text-teal-700 dark:text-teal-400">
-          <i class="pi pi-link"></i>
+          <i class="pi pi-link" />
           Evidence & Citations
         </h3>
         <ul class="list-none p-0 m-0 flex flex-col gap-3">
-          <li v-for="(citation, index) in traceLog.citations" :key="index">
+          <li
+            v-for="(citation, index) in traceLog.citations"
+            :key="index"
+          >
             <a 
               :href="citation.link" 
               target="_blank" 
               class="flex items-start gap-3 p-3 rounded-lg border border-surface-200 dark:border-surface-700 hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors no-underline group"
             >
-              <i class="pi pi-external-link mt-1 text-surface-400 group-hover:text-primary"></i>
+              <i class="pi pi-external-link mt-1 text-surface-400 group-hover:text-primary" />
               <div class="flex flex-col gap-0.5">
                 <span class="font-medium text-surface-900 dark:text-surface-0 group-hover:text-primary transition-colors">
                   {{ citation.description }}
@@ -89,7 +112,10 @@
       </section>
     </div>
 
-    <div v-else class="text-center p-8 text-surface-500">
+    <div
+      v-else
+      class="text-center p-8 text-surface-500"
+    >
       No reasoning trace found for this task.
     </div>
   </Drawer>

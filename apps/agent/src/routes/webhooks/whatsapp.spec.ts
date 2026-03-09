@@ -103,6 +103,46 @@ describe('WhatsApp webhook handler', () => {
     expect(deps.routerService.enqueueInbound).toHaveBeenCalled();
   });
 
+  it('passes query param domain_action through for explicit routing', async () => {
+    const adapter = {
+      validateWebhook: vi.fn(() => ({ valid: true })),
+    };
+
+    const deps: WhatsAppWebhookDeps = {
+      registry: {
+        get: vi.fn(() => adapter),
+      } as unknown as ChannelAdapterRegistry,
+      routerService: {
+        enqueueInbound: vi.fn().mockResolvedValue({
+          task_id: '66666666-6666-4666-8666-666666666666',
+          correlation_id: 'corr-456',
+          envelope: {},
+        }),
+        handleDeliveryEvent: vi.fn(),
+      } as unknown as ChannelRouterService,
+    };
+
+    const req = createMockRequest({
+      body: {
+        organization_id: '11111111-1111-1111-1111-111111111111',
+        Body: 'hello from whatsapp',
+      },
+      query: {
+        domain_action: 'relancing.update',
+      },
+    });
+    const res = createMockResponse();
+
+    await handleWhatsAppWebhook(req, res as unknown as Response, deps);
+
+    expect(deps.routerService.enqueueInbound).toHaveBeenCalledWith(
+      'whatsapp',
+      expect.objectContaining({
+        domain_action: 'relancing.update',
+      }),
+    );
+  });
+
   it('routes delivery callbacks to delivery persistence flow', async () => {
     const adapter = {
       validateWebhook: vi.fn(() => ({ valid: true })),

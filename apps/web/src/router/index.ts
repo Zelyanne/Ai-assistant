@@ -50,6 +50,18 @@ const routes = [
         meta: { requiresAuth: true }
       },
       {
+        path: 'command-center',
+        name: 'command-center',
+        component: () => import('../views/CommandCenter.vue'),
+        meta: { requiresAuth: true }
+      },
+      {
+        path: 'audit-log',
+        name: 'audit-log',
+        component: () => import('../views/AuditLog.vue'),
+        meta: { requiresAuth: true }
+      },
+      {
         path: 'admin',
         name: 'admin',
         component: () => import('../views/AdminHub.vue'),

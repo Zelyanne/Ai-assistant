@@ -54,7 +54,10 @@ defineEmits(['toggle-menu']);
         text 
         @click="$emit('toggle-menu')"
       />
-      <router-link to="/dashboard" class="flex items-center gap-2 no-underline">
+      <router-link
+        to="/dashboard"
+        class="flex items-center gap-2 no-underline"
+      >
         <span class="text-xl font-bold text-executive-primary tracking-tight">AI Assistant</span>
       </router-link>
     </div>
@@ -63,29 +66,43 @@ defineEmits(['toggle-menu']);
       <!-- Emergency Brake -->
       <div class="flex items-center gap-3 shrink-0">
         <div class="hidden sm:flex flex-col leading-tight">
-          <div class="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Emergency Brake</div>
-          <div v-if="safetyControls.emergencyBrakeEnabled" class="flex items-center gap-2 text-rose-700 font-semibold">
-            <span class="h-2 w-2 rounded-full bg-rose-600 animate-pulse"></span>
+          <div class="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
+            Emergency Brake
+          </div>
+          <div
+            v-if="safetyControls.emergencyBrakeEnabled"
+            class="flex items-center gap-2 text-rose-700 font-semibold"
+          >
+            <span class="h-2 w-2 rounded-full bg-rose-600 animate-pulse" />
             <span>Brake Engaged</span>
           </div>
-          <div v-else class="text-slate-500 text-sm">Normal Mode</div>
+          <div
+            v-else
+            class="text-slate-500 text-sm"
+          >
+            Normal Mode
+          </div>
         </div>
 
         <ToggleSwitch
           v-model="brakeModel"
+          v-tooltip.bottom="toggleTooltip"
           :disabled="toggleDisabled"
           :aria-label="'Emergency Brake Toggle'"
           data-testid="emergency-brake-toggle"
-          v-tooltip.bottom="toggleTooltip"
         />
       </div>
 
-      <div class="h-8 w-px bg-executive-background mx-2"></div>
+      <div class="h-8 w-px bg-executive-background mx-2" />
 
       <div class="flex items-center gap-3">
         <div class="text-right hidden sm:block">
-          <div class="text-sm font-semibold text-executive-primary leading-none">{{ userStore.profile?.full_name || 'User' }}</div>
-          <div class="text-xs text-slate-500 mt-1">{{ userStore.profile?.role }}</div>
+          <div class="text-sm font-semibold text-executive-primary leading-none">
+            {{ userStore.profile?.full_name || 'User' }}
+          </div>
+          <div class="text-xs text-slate-500 mt-1">
+            {{ userStore.profile?.role }}
+          </div>
         </div>
         <div class="h-10 w-10 rounded-full bg-executive-background flex items-center justify-center text-executive-primary font-bold">
           {{ userStore.profile?.email?.[0].toUpperCase() }}

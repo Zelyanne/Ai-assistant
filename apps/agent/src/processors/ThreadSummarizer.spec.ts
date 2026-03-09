@@ -13,7 +13,6 @@ vi.mock('../config/index.js', () => ({
 import { ThreadSummarizer } from './ThreadSummarizer.js';
 import { supabase } from "../services/supabase.js";
 import { LLMProviderFactory } from '../services/llm/factory.js';
-import { PerimeterGuard } from '../guards/PerimeterGuard.js';
 
 vi.mock('../services/supabase.js', () => ({
   supabase: {

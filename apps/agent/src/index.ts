@@ -8,6 +8,7 @@ import { GoogleIngestionService } from './services/google.js';
 import { googleAuthService } from './services/googleAuth.js';
 import { briefingScheduler } from './services/BriefingScheduler.js';
 import { relancingScheduler } from './services/RelancingScheduler.js';
+import { statusReportScheduler } from './services/StatusReportScheduler.js';
 import { initOTel, shutdownOTel } from './services/llm/otel-setup.js';
 import { telegramWebhookRouter } from './routes/webhooks/telegram.js';
 import { whatsAppWebhookRouter } from './routes/webhooks/whatsapp.js';
@@ -189,6 +190,9 @@ briefingScheduler.start();
 // --- Relancing Scheduler ---
 relancingScheduler.start();
 
+// --- Status Report Scheduler ---
+statusReportScheduler.start();
+
 // --- Graceful Shutdown ---
 const shutdown = async (signal: string) => {
   console.log(`\n[Shutdown] Received ${signal}. Cleaning up...`);
@@ -196,6 +200,7 @@ const shutdown = async (signal: string) => {
   clearInterval(ingestionIntervalId);
   briefingScheduler.stop();
   relancingScheduler.stop();
+  statusReportScheduler.stop();
   
   if (config.ENABLE_LANGFUSE_TRACING) {
     await shutdownOTel();

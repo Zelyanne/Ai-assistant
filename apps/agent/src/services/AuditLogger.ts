@@ -1,7 +1,9 @@
-import { supabase } from './supabase.js';
-import { ReasoningStep, Citation, Database } from '@ai-assistant/shared';
+import { supabase } from "./supabase.js";
+import { ReasoningStep, Citation, Database } from "@ai-assistant/shared";
+import { PerimeterGuard } from "../guards/PerimeterGuard.js";
 
-type AgentActivityLogInsert = Database['public']['Tables']['agent_activity_log']['Insert'];
+type AgentActivityLogInsert =
+  Database["public"]["Tables"]["agent_activity_log"]["Insert"];
 
 export class AuditLogger {
   /**
@@ -10,13 +12,15 @@ export class AuditLogger {
   static createStep(
     step_name: string,
     message: string,
-    options: Partial<Omit<ReasoningStep, 'step_name' | 'message' | 'timestamp'>> = {}
+    options: Partial<
+      Omit<ReasoningStep, "step_name" | "message" | "timestamp">
+    > = {},
   ): ReasoningStep {
     return {
       timestamp: new Date().toISOString(),
       step_name,
       message,
-      ...options
+      ...options,
     };
   }
 
@@ -27,13 +31,13 @@ export class AuditLogger {
     source_type: string,
     source_id: string,
     description: string,
-    link: string = ''
+    link: string = "",
   ): Citation {
     return {
       source_type,
       source_id,
       description,
-      link
+      link,
     };
   }
 
@@ -46,25 +50,59 @@ export class AuditLogger {
     agentId: string,
     actionTaken: string,
     trace: ReasoningStep[],
-    citations: Citation[]
+    citations: Citation[],
   ): Promise<void> {
-    
+    const guard = new PerimeterGuard();
+
+    // 1. Ensure stable task citation if taskId exists
+    const finalCitations = [...citations];
+    if (
+      taskId &&
+      !finalCitations.some(
+        (c) => c.source_type === "task" && c.source_id === taskId,
+      )
+    ) {
+      finalCitations.unshift(
+        this.createCitation("task", taskId, "Originating task"),
+      );
+    }
+
+    // 2. Redact PII from all free-form strings in trace and citations
+    const redactedTrace = trace.map((step) => ({
+      ...step,
+      message: guard.redactPII(step.message),
+      input_summary: step.input_summary
+        ? guard.redactPII(step.input_summary)
+        : undefined,
+      output_summary: step.output_summary
+        ? guard.redactPII(step.output_summary)
+        : undefined,
+    }));
+
+    const redactedCitations = finalCitations.map((citation) => ({
+      ...citation,
+      description: guard.redactPII(citation.description),
+    }));
+
     // Explicitly type the payload to match Supabase generated types
     const logData: AgentActivityLogInsert = {
       organization_id: organizationId,
       task_id: taskId,
       agent_id: agentId,
       action_taken: actionTaken,
-      reasoning_trace: trace as unknown as Database['public']['Tables']['agent_activity_log']['Row']['reasoning_trace'],
-      citations: citations as unknown as Database['public']['Tables']['agent_activity_log']['Row']['citations']
+      reasoning_trace:
+        redactedTrace as unknown as Database["public"]["Tables"]["agent_activity_log"]["Row"]["reasoning_trace"],
+      citations:
+        redactedCitations as unknown as Database["public"]["Tables"]["agent_activity_log"]["Row"]["citations"],
     };
 
-    const { error } = await supabase
-      .from('agent_activity_log')
-      .insert(logData);
+    const { error } = await supabase.from("agent_activity_log").insert(logData);
 
     if (error) {
-      console.error(`[AuditLogger][${taskId}] Failed to flush log:`, error.message);
+      console.error(
+        `[AuditLogger][${taskId}] Failed to flush log:`,
+        error.message,
+      );
       throw new Error(`Audit logging failed: ${error.message}`);
     }
   }

@@ -52,27 +52,59 @@ watch(selectedLabels, (newVal) => {
 
 <template>
   <div class="gmail-label-selector">
-    <h3 class="text-lg font-semibold mb-2">Email Ingestion Labels</h3>
-    <p class="text-sm text-gray-500 mb-4">Select which Gmail labels to include in AI analysis. If none selected, ALL emails will be ingested (legacy behavior).</p>
+    <h3 class="text-lg font-semibold mb-2">
+      Email Ingestion Labels
+    </h3>
+    <p class="text-sm text-gray-500 mb-4">
+      Select which Gmail labels to include in AI analysis. If none selected, ALL emails will be ingested (legacy behavior).
+    </p>
     
-    <div v-if="loading" class="flex justify-center p-4">
+    <div
+      v-if="loading"
+      class="flex justify-center p-4"
+    >
       <ProgressSpinner style="width: 30px; height: 30px" />
     </div>
 
-    <Message v-if="error" severity="error" :text="error" />
+    <Message
+      v-if="error"
+      severity="error"
+      :text="error"
+    />
 
-    <div v-if="!loading && !error" class="labels-grid max-h-60 overflow-y-auto border border-gray-200 rounded p-4">
-      <div v-for="label in labels" :key="label.id" class="field-checkbox flex items-center mb-2">
-        <Checkbox :inputId="label.id" name="label" :value="label.id" v-model="selectedLabels" />
-        <label :for="label.id" class="ml-2 text-sm cursor-pointer">{{ label.name }}</label>
+    <div
+      v-if="!loading && !error"
+      class="labels-grid max-h-60 overflow-y-auto border border-gray-200 rounded p-4"
+    >
+      <div
+        v-for="label in labels"
+        :key="label.id"
+        class="field-checkbox flex items-center mb-2"
+      >
+        <Checkbox
+          v-model="selectedLabels"
+          :input-id="label.id"
+          name="label"
+          :value="label.id"
+        />
+        <label
+          :for="label.id"
+          class="ml-2 text-sm cursor-pointer"
+        >{{ label.name }}</label>
       </div>
     </div>
     
-    <div v-if="!loading && !error && labels.length === 0" class="text-gray-500 text-center py-4">
+    <div
+      v-if="!loading && !error && labels.length === 0"
+      class="text-gray-500 text-center py-4"
+    >
       No labels found or not connected.
     </div>
 
-    <div v-if="selectedLabels.length === 0 && !loading" class="mt-2 text-xs text-orange-500 flex items-center gap-1">
+    <div
+      v-if="selectedLabels.length === 0 && !loading"
+      class="mt-2 text-xs text-orange-500 flex items-center gap-1"
+    >
       <i class="pi pi-exclamation-triangle" />
       <span>Warning: No labels selected implies ALL emails will be ingested.</span>
     </div>

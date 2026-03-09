@@ -1,13 +1,14 @@
-import { Task, ReasoningTrace, ReasoningStep } from '@ai-assistant/shared';
+import { Task, ReasoningTrace, ReasoningStep, Citation } from '@ai-assistant/shared';
 import { createAgent, modelCallLimitMiddleware } from 'langchain';
 import { ChatMistralAI } from '@langchain/mistralai';
 import { StructuredTool } from '@langchain/core/tools';
 import { config } from '../config/index.js';
-import { supabase } from '../services/supabase.js';
 import { tracingService } from '../services/llm/tracing.js';
 
 export interface ProcessorResult {
   [key: string]: any;
+  trace?: ReasoningStep[];
+  citations?: Citation[];
 }
 
 /**

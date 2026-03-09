@@ -1,6 +1,6 @@
-import { ref } from 'vue';
-import { supabase } from '../services/supabase';
-import { AgentActivityLog } from '@ai-assistant/shared';
+import { ref } from "vue";
+import { supabase } from "../services/supabase";
+import { AgentActivityLog } from "@ai-assistant/shared";
 
 export function useReasoningTrace() {
   const loading = ref(false);
@@ -11,18 +11,19 @@ export function useReasoningTrace() {
     loading.value = true;
     error.value = null;
     try {
+      // Use maybeSingle() instead of single() so 0 rows doesn't throw an error.
       const { data, error: fetchError } = await supabase
-        .from('agent_activity_log')
-        .select('*')
-        .eq('task_id', taskId)
-        .order('created_at', { ascending: false })
+        .from("agent_activity_log")
+        .select("*")
+        .eq("task_id", taskId)
+        .order("created_at", { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
 
       if (fetchError) throw fetchError;
-      traceLog.value = data as AgentActivityLog;
+      traceLog.value = data as AgentActivityLog | null;
     } catch (err: any) {
-      console.error('[useReasoningTrace] Failed to fetch trace:', err);
+      console.error("[useReasoningTrace] Failed to fetch trace:", err);
       error.value = err.message;
     } finally {
       loading.value = false;
@@ -33,6 +34,6 @@ export function useReasoningTrace() {
     loading,
     error,
     traceLog,
-    fetchTrace
+    fetchTrace,
   };
 }

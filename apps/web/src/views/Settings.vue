@@ -20,7 +20,7 @@ const fetchIntegration = async () => {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user || !userStore.profile?.organization_id) return;
 
-  const { data, error } = await supabase
+  const { data } = await supabase
     .from('workspace_integrations')
     .select('*')
     .eq('organization_id', userStore.profile.organization_id)
@@ -29,7 +29,9 @@ const fetchIntegration = async () => {
 
   if (data) {
     integration.value = data;
-    currentPreferences.value = data.label_preferences || [];
+    currentPreferences.value = Array.isArray(data.label_preferences)
+      ? data.label_preferences.filter((value): value is string => typeof value === 'string')
+      : [];
   }
 };
 
@@ -68,16 +70,22 @@ onMounted(fetchIntegration);
   <Toast />
   <div class="space-y-8 p-6 lg:p-10 max-w-5xl mx-auto">
     <header>
-      <h1 class="text-3xl font-bold text-executive-primary tracking-tight font-sans">Settings</h1>
-      <p class="text-slate-500 mt-2 font-technical">Manage your account, platform integrations, and agent behavior.</p>
+      <h1 class="text-3xl font-bold text-executive-primary tracking-tight font-sans">
+        Settings
+      </h1>
+      <p class="text-slate-500 mt-2 font-technical">
+        Manage your account, platform integrations, and agent behavior.
+      </p>
     </header>
 
     <div class="grid grid-cols-1 gap-8">
       <!-- Agent Security -->
       <section class="bg-white p-8 rounded-executive border border-slate-200 shadow-sm">
         <div class="flex items-center gap-3 mb-6">
-          <i class="pi pi-shield text-xl text-executive-primary"></i>
-          <h2 class="text-xl font-bold text-executive-primary font-sans">Security & Autonomy</h2>
+          <i class="pi pi-shield text-xl text-executive-primary" />
+          <h2 class="text-xl font-bold text-executive-primary font-sans">
+            Security & Autonomy
+          </h2>
         </div>
         <SecurityPerimeterSettings />
       </section>
@@ -85,33 +93,40 @@ onMounted(fetchIntegration);
       <!-- Integrations -->
       <section class="bg-white p-8 rounded-executive border border-slate-200 shadow-sm">
         <div class="flex items-center gap-3 mb-6">
-          <i class="pi pi-link text-xl text-executive-primary"></i>
-          <h2 class="text-xl font-bold text-executive-primary font-sans">Connected Workspaces</h2>
+          <i class="pi pi-link text-xl text-executive-primary" />
+          <h2 class="text-xl font-bold text-executive-primary font-sans">
+            Connected Workspaces
+          </h2>
         </div>
         <WorkspaceIntegration />
       </section>
 
       <!-- Email Ingestion Settings -->
-      <section v-if="integration" class="bg-white p-8 rounded-executive border border-slate-200 shadow-sm">
+      <section
+        v-if="integration"
+        class="bg-white p-8 rounded-executive border border-slate-200 shadow-sm"
+      >
         <div class="flex items-center justify-between mb-6">
           <div class="flex items-center gap-3">
-            <i class="pi pi-filter text-xl text-executive-primary"></i>
-            <h2 class="text-xl font-bold text-executive-primary font-sans">Email Ingestion</h2>
+            <i class="pi pi-filter text-xl text-executive-primary" />
+            <h2 class="text-xl font-bold text-executive-primary font-sans">
+              Email Ingestion
+            </h2>
           </div>
           <Button 
             v-if="hasChanges"
             label="Save Changes" 
             icon="pi pi-check" 
-            @click="savePreferences" 
-            :loading="saving"
+            :loading="saving" 
             severity="success"
             size="small"
+            @click="savePreferences"
           />
         </div>
         
         <GmailLabelSelector 
-          :organizationId="integration.organization_id" 
-          :initialPreferences="integration.label_preferences || []"
+          :organization-id="integration.organization_id" 
+          :initial-preferences="integration.label_preferences || []"
           @update:preferences="handlePreferenceUpdate"
         />
       </section>

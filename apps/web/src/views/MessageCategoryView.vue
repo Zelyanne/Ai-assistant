@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted } from 'vue';
 import { supabase } from '../services/supabase';
 import { useUserStore } from '../stores/user';
 import MessagesLayout from '../components/messages/MessagesLayout.vue';
@@ -54,33 +54,50 @@ onMounted(fetchEmails);
 <template>
   <MessagesLayout>
     <div class="mb-4 flex items-center gap-2">
-        <label class="font-bold text-gray-700">Filter by Category:</label>
-        <Dropdown 
-            v-model="selectedCategory" 
-            :options="categories" 
-            @change="onCategoryChange" 
-            class="w-56"
-        />
+      <label class="font-bold text-gray-700">Filter by Category:</label>
+      <Dropdown 
+        v-model="selectedCategory" 
+        :options="categories" 
+        class="w-56" 
+        @change="onCategoryChange"
+      />
     </div>
 
-    <div v-if="loading" class="flex justify-center p-10">
-        <ProgressSpinner />
+    <div
+      v-if="loading"
+      class="flex justify-center p-10"
+    >
+      <ProgressSpinner />
     </div>
     
-    <Message v-if="error" severity="error" :text="error" />
+    <Message
+      v-if="error"
+      severity="error"
+      :text="error"
+    />
 
     <div v-if="!loading && !error">
-        <div v-if="emails.length === 0" class="text-center text-gray-500 py-10">
-            No emails found in this category.
-        </div>
+      <div
+        v-if="emails.length === 0"
+        class="text-center text-gray-500 py-10"
+      >
+        No emails found in this category.
+      </div>
         
-        <div v-else class="h-[calc(100vh-300px)] min-h-[500px]">
-             <VirtualScroller :items="emails" :itemSize="120" class="h-full">
-                <template v-slot:item="{ item, options }">
-                    <EmailListItem :email="item" />
-                </template>
-             </VirtualScroller>
-        </div>
+      <div
+        v-else
+        class="h-[calc(100vh-300px)] min-h-[500px]"
+      >
+        <VirtualScroller
+          :items="emails"
+          :item-size="120"
+          class="h-full"
+        >
+          <template #item="{ item }">
+            <EmailListItem :email="item" />
+          </template>
+        </VirtualScroller>
+      </div>
     </div>
   </MessagesLayout>
 </template>

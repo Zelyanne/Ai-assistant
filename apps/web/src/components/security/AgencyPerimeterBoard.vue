@@ -415,7 +415,13 @@ const onColumnDrop = async (tier: AgencyTier, e: DragEvent) => {
       Read-only mode: only the CEO can create/update/delete topics.
     </Message>
 
-    <Message v-if="inlineError" severity="error" :closable="false" class="rounded-xl" data-testid="inline-error">
+    <Message
+      v-if="inlineError"
+      severity="error"
+      :closable="false"
+      class="rounded-xl"
+      data-testid="inline-error"
+    >
       {{ inlineError }}
     </Message>
 
@@ -436,36 +442,52 @@ const onColumnDrop = async (tier: AgencyTier, e: DragEvent) => {
         severity="contrast"
         :loading="creating"
         :disabled="writeBlocked"
-        @click="createTopic"
         data-testid="new-topic-submit"
+        @click="createTopic"
       />
     </div>
 
-    <div v-if="loading" class="flex justify-center py-10">
+    <div
+      v-if="loading"
+      class="flex justify-center py-10"
+    >
       <ProgressSpinner style="width: 40px; height: 40px" />
     </div>
 
-    <div v-else class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div
+      v-else
+      class="grid grid-cols-1 md:grid-cols-3 gap-4"
+    >
       <section
         v-for="t in tiers"
         :key="t.tier"
         class="rounded-2xl border border-slate-200 bg-white overflow-hidden"
         :class="dragOverTier === t.tier ? 'ring-2 ring-executive-primary' : ''"
+        :data-testid="`tier-dropzone-${t.tier}`"
         @dragover="(e) => onColumnDragOver(t.tier, e)"
         @dragleave="() => onColumnDragLeave(t.tier)"
         @drop="(e) => onColumnDrop(t.tier, e)"
-        :data-testid="`tier-dropzone-${t.tier}`"
       >
         <header class="flex items-center justify-between px-4 py-3 bg-slate-50 border-b border-slate-100">
           <div class="flex items-center gap-2">
-            <i :class="[t.icon, 'text-executive-primary']"></i>
-            <div class="font-bold text-executive-primary font-sans">{{ t.title }}</div>
+            <i :class="[t.icon, 'text-executive-primary']" />
+            <div class="font-bold text-executive-primary font-sans">
+              {{ t.title }}
+            </div>
           </div>
-          <div class="text-xs text-slate-500 font-technical">{{ topicsByTier[t.tier].length }}</div>
+          <div class="text-xs text-slate-500 font-technical">
+            {{ topicsByTier[t.tier].length }}
+          </div>
         </header>
 
-        <div class="p-3 space-y-2 min-h-24" :data-testid="`tier-column-${t.tier}`">
-          <div v-if="topicsByTier[t.tier].length === 0" class="text-xs text-slate-400 font-technical px-2 py-3">
+        <div
+          class="p-3 space-y-2 min-h-24"
+          :data-testid="`tier-column-${t.tier}`"
+        >
+          <div
+            v-if="topicsByTier[t.tier].length === 0"
+            class="text-xs text-slate-400 font-technical px-2 py-3"
+          >
             No topics.
           </div>
 
@@ -475,32 +497,45 @@ const onColumnDrop = async (tier: AgencyTier, e: DragEvent) => {
             class="rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm flex items-center justify-between gap-2"
             :class="writeBlocked ? 'opacity-90' : 'hover:shadow-md transition-shadow'"
             :draggable="!writeBlocked"
+            :data-testid="`topic-card-${p.id}`"
             @dragstart="(e) => onCardDragStart(String(p.id), e)"
             @dragend="onCardDragEnd"
-            :data-testid="`topic-card-${p.id}`"
           >
             <div class="min-w-0 flex-1">
-              <div v-if="editingId === p.id" class="flex items-center gap-2">
-                <InputText v-model="editingName" class="w-full font-technical" data-testid="rename-input" />
+              <div
+                v-if="editingId === p.id"
+                class="flex items-center gap-2"
+              >
+                <InputText
+                  v-model="editingName"
+                  class="w-full font-technical"
+                  data-testid="rename-input"
+                />
                 <Button
                   icon="pi pi-check"
                   severity="success"
                   text
                   :disabled="savingId === p.id"
-                  @click="commitRename(p)"
                   data-testid="rename-commit"
+                  @click="commitRename(p)"
                 />
                 <Button
                   icon="pi pi-times"
                   severity="secondary"
                   text
                   :disabled="savingId === p.id"
-                  @click="cancelRename"
                   data-testid="rename-cancel"
+                  @click="cancelRename"
                 />
               </div>
-              <div v-else class="flex items-center gap-2">
-                <span class="truncate font-technical text-slate-800" :title="p.topic_name">{{ p.topic_name }}</span>
+              <div
+                v-else
+                class="flex items-center gap-2"
+              >
+                <span
+                  class="truncate font-technical text-slate-800"
+                  :title="p.topic_name"
+                >{{ p.topic_name }}</span>
                 <span
                   v-if="isGeneral(p)"
                   class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-100 text-slate-600"
@@ -518,8 +553,8 @@ const onColumnDrop = async (tier: AgencyTier, e: DragEvent) => {
                 severity="secondary"
                 text
                 :disabled="writeBlocked || savingId === p.id"
-                @click="beginRename(p)"
                 data-testid="rename-start"
+                @click="beginRename(p)"
               />
               <Button
                 v-if="!isGeneral(p)"
@@ -527,10 +562,13 @@ const onColumnDrop = async (tier: AgencyTier, e: DragEvent) => {
                 severity="danger"
                 text
                 :disabled="writeBlocked || savingId === p.id"
-                @click="deleteTopic(p)"
                 data-testid="delete-topic"
+                @click="deleteTopic(p)"
               />
-              <i v-if="savingId === p.id" class="pi pi-spin pi-spinner text-slate-400" />
+              <i
+                v-if="savingId === p.id"
+                class="pi pi-spin pi-spinner text-slate-400"
+              />
             </div>
           </article>
         </div>

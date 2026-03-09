@@ -1,5 +1,4 @@
 import { supabase } from './supabase.js';
-import { Task } from '@ai-assistant/shared';
 
 /**
  * Service to handle scheduled morning briefs based on user preferences.
@@ -7,6 +6,7 @@ import { Task } from '@ai-assistant/shared';
 export class BriefingScheduler {
   private intervalId: NodeJS.Timeout | null = null;
   private readonly CHECK_INTERVAL = 60 * 1000; // Check every minute
+  private readonly DEFAULT_BRIEFING_TIME = '08:00';
 
   /**
    * Starts the scheduler.
@@ -36,20 +36,28 @@ export class BriefingScheduler {
       const now = new Date();
       const currentHhMm = now.toTimeString().slice(0, 5); // "08:00"
 
-      // 1. Find users whose preferred_briefing_time matches current time
-      // and who haven't had a brief generated TODAY.
+      // 1. Find users due for the default morning brief time
+      // and who haven't had a brief generated today.
+      if (currentHhMm !== this.DEFAULT_BRIEFING_TIME) {
+        return;
+      }
+
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
 
       const { data: users, error } = await supabase
         .from('profiles')
-        .select('id, organization_id, preferred_briefing_time, last_brief_generated_at')
-        .eq('preferred_briefing_time', `${currentHhMm}:00`);
+        .select('id, organization_id, last_brief_generated_at')
+        .not('organization_id', 'is', null);
 
       if (error) throw error;
       if (!users || users.length === 0) return;
 
       for (const user of users) {
+        if (!user.organization_id) {
+          continue;
+        }
+
         // Double check: was it already generated today?
         const lastGen = user.last_brief_generated_at ? new Date(user.last_brief_generated_at) : null;
         if (lastGen && lastGen >= todayStart) {

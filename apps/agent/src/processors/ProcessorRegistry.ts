@@ -8,6 +8,9 @@ import { MorningBriefProcessor } from './MorningBriefProcessor.js';
 import { EmailSendProcessor } from './EmailSendProcessor.js';
 import { RelancingNudgeProcessor } from './RelancingNudgeProcessor.js';
 import { ChannelSendProcessor } from './ChannelSendProcessor.js';
+import { RelancingUpdateProcessor } from './RelancingUpdateProcessor.js';
+import { StatusReportProcessor } from './StatusReportProcessor.js';
+import { AssistantCommandProcessor } from './AssistantCommandProcessor.js';
 
 export class ProcessorRegistry {
   private static processors: Map<string, BaseProcessor> = new Map();
@@ -21,7 +24,10 @@ export class ProcessorRegistry {
     this.processors.set('protocol.generate', new ProtocolGenerateProcessor());
     this.processors.set('morning.brief', new MorningBriefProcessor());
     this.processors.set('relancing.nudge', new RelancingNudgeProcessor());
+    this.processors.set('relancing.update', new RelancingUpdateProcessor());
+    this.processors.set('status.report', new StatusReportProcessor());
     this.processors.set('channel.send', new ChannelSendProcessor());
+    this.processors.set('assistant.command', new AssistantCommandProcessor());
   }
 
 

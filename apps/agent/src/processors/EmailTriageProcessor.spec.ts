@@ -12,8 +12,6 @@ vi.mock('../config/index.js', () => ({
 
 import { EmailTriageProcessor } from './EmailTriageProcessor.js';
 import { supabase } from "../services/supabase.js";
-import { PerimeterGuard } from '../guards/PerimeterGuard.js';
-import { mcpService } from '../services/mcp.js';
 
 vi.mock('../services/supabase.js', () => ({
   supabase: {
@@ -61,7 +59,7 @@ describe('EmailTriageProcessor', () => {
       })
     };
     processor = new EmailTriageProcessor();
-    // @ts-ignore - access protected method for mocking
+    // @ts-expect-error - access protected method for mocking
     vi.spyOn(processor, 'createAgentInstance').mockReturnValue(mockAgent);
   });
 

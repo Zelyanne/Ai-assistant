@@ -107,4 +107,43 @@ describe('Telegram webhook handler', () => {
       }),
     );
   });
+
+  it('passes query param domain_action through for explicit routing', async () => {
+    const adapter = {
+      validateWebhook: vi.fn(() => ({ valid: true })),
+    };
+
+    const deps: TelegramWebhookDeps = {
+      registry: {
+        get: vi.fn(() => adapter),
+      } as unknown as ChannelAdapterRegistry,
+      routerService: {
+        enqueueInbound: vi.fn().mockResolvedValue({
+          task_id: '44444444-4444-4444-8444-444444444444',
+          correlation_id: 'corr-123',
+          envelope: {},
+        }),
+      } as unknown as ChannelRouterService,
+    };
+
+    const req = createMockRequest({
+      body: {
+        organization_id: '11111111-1111-1111-1111-111111111111',
+        update_id: 999,
+      },
+      query: {
+        domain_action: 'relancing.update',
+      },
+    });
+    const res = createMockResponse();
+
+    await handleTelegramWebhook(req, res as unknown as Response, deps);
+
+    expect(deps.routerService.enqueueInbound).toHaveBeenCalledWith(
+      'telegram',
+      expect.objectContaining({
+        domain_action: 'relancing.update',
+      }),
+    );
+  });
 });

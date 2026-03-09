@@ -81,13 +81,61 @@ type MockChain = {
   then: ReturnType<typeof vi.fn>;
 };
 
+const supabaseState = {
+  currentTable: '',
+  filters: new Map<string, unknown>(),
+  duplicateRelancingUpdate: false,
+  calendarEvents: [] as Array<Record<string, unknown>>,
+};
+
 const mockChain: MockChain = {
   update: vi.fn().mockReturnThis(),
   insert: vi.fn().mockReturnThis(),
   select: vi.fn().mockReturnThis(),
-  eq: vi.fn().mockReturnThis(),
-  single: vi.fn(() => Promise.resolve({ data: { tier: 'Public' }, error: null })),
-  then: vi.fn((resolve) => resolve({ data: null, error: null }))
+  eq: vi.fn((key: string, value: unknown) => {
+    supabaseState.filters.set(key, value);
+    return mockChain;
+  }),
+  single: vi.fn(() => {
+    if (supabaseState.currentTable === 'project_scheduling_contexts') {
+      return Promise.resolve({
+        data: {
+          id: String(supabaseState.filters.get('id') ?? 'ctx-1'),
+          setup_status: 'complete',
+          project_name: 'Q2 Launch',
+        },
+        error: null,
+      });
+    }
+
+    if (supabaseState.currentTable === 'relancing_updates') {
+      if (supabaseState.duplicateRelancingUpdate) {
+        return Promise.resolve({ data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint' } });
+      }
+      return Promise.resolve({ data: { id: 'rel-upd-1' }, error: null });
+    }
+
+    return Promise.resolve({ data: { tier: 'Public' }, error: null });
+  }),
+  then: vi.fn((resolve) => {
+    if (supabaseState.currentTable === 'calendar_events') {
+      return resolve({ data: supabaseState.calendarEvents, error: null });
+    }
+
+    if (supabaseState.currentTable === 'project_member_assignments') {
+      const userId = supabaseState.filters.get('member_user_id');
+      const isActive = supabaseState.filters.get('is_active');
+      if (typeof userId === 'string' && isActive === true) {
+        return resolve({
+          data: [{ id: 'assign-1', project_context_id: 'ctx-1' }],
+          error: null,
+        });
+      }
+      return resolve({ data: [], error: null });
+    }
+
+    return resolve({ data: null, error: null });
+  })
 };
 
 // Ensure eq always returns mockChain to allow chaining
@@ -95,7 +143,11 @@ mockChain.eq.mockReturnValue(mockChain);
 
 vi.mock('../services/supabase.js', () => ({
   supabase: {
-    from: vi.fn(() => mockChain)
+    from: vi.fn((table: string) => {
+      supabaseState.currentTable = table;
+      supabaseState.filters = new Map();
+      return mockChain;
+    })
   }
 }));
 
@@ -111,16 +163,19 @@ vi.mock('../services/ProtocolService.js', () => ({
 }));
 
 // Mock MCPService to avoid subprocess spawning during graph tests
-const { mockExecuteTool } = vi.hoisted(() => ({
-  mockExecuteTool: vi.fn().mockResolvedValue({ message: 'Success' })
+const { mockExecuteTool, mockGetLangChainTools } = vi.hoisted(() => ({
+  mockExecuteTool: vi.fn(),
+  mockGetLangChainTools: vi.fn(),
 }));
 
 vi.mock('../services/mcp.js', () => ({
   MCPService: class {
     executeTool = mockExecuteTool;
+    getLangChainTools = mockGetLangChainTools;
   },
   mcpService: {
-    executeTool: mockExecuteTool
+    executeTool: mockExecuteTool,
+    getLangChainTools: mockGetLangChainTools,
   }
 }));
 
@@ -141,12 +196,74 @@ describe('Agent Controller Graph Routing', () => {
     mockChain.update.mockReturnThis();
     mockChain.insert.mockReturnThis();
     mockChain.select.mockReturnThis();
-    mockChain.eq.mockReturnThis();
+    mockChain.eq.mockImplementation((key: string, value: unknown) => {
+      supabaseState.filters.set(key, value);
+      return mockChain;
+    });
     mockChain.single.mockReset();
-    mockChain.single.mockResolvedValue({ data: { tier: 'Public' }, error: null });
+    supabaseState.currentTable = '';
+    supabaseState.filters = new Map();
+    supabaseState.duplicateRelancingUpdate = false;
+    supabaseState.calendarEvents = [];
+
+    mockGetLangChainTools.mockResolvedValue([
+      { name: 'create_calendar_event' },
+      { name: 'query_calendar_freebusy' },
+      { name: 'patch_calendar_event' },
+    ]);
+    mockExecuteTool.mockImplementation(async (_orgId: string, toolName: string) => {
+      if (toolName === 'query_calendar_freebusy') {
+        return {
+          calendars: {
+            primary: {
+              busy: [],
+            },
+          },
+        };
+      }
+
+      return { message: 'Success' };
+    });
+
+    mockChain.single.mockImplementation(() => {
+      if (supabaseState.currentTable === 'project_scheduling_contexts') {
+        return Promise.resolve({
+          data: {
+            id: String(supabaseState.filters.get('id') ?? 'ctx-1'),
+            setup_status: 'complete',
+            project_name: 'Q2 Launch',
+          },
+          error: null,
+        });
+      }
+
+      if (supabaseState.currentTable === 'relancing_updates') {
+        if (supabaseState.duplicateRelancingUpdate) {
+          return Promise.resolve({ data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint' } });
+        }
+        return Promise.resolve({ data: { id: 'rel-upd-1' }, error: null });
+      }
+
+      return Promise.resolve({ data: { tier: 'Public' }, error: null });
+    });
     
     // Mock then for promise-like behavior in updates/inserts
-    mockChain.then.mockImplementation((resolve: (value: { data: null; error: null }) => void) => resolve({ data: null, error: null }));
+    mockChain.then.mockImplementation((resolve) => {
+      if (supabaseState.currentTable === 'calendar_events') {
+        return resolve({ data: supabaseState.calendarEvents, error: null });
+      }
+
+      if (supabaseState.currentTable === 'project_member_assignments') {
+        const userId = supabaseState.filters.get('member_user_id');
+        const isActive = supabaseState.filters.get('is_active');
+        if (typeof userId === 'string' && isActive === true) {
+          return resolve({ data: [{ id: 'assign-1', project_context_id: 'ctx-1' }], error: null });
+        }
+        return resolve({ data: [], error: null });
+      }
+
+      return resolve({ data: null, error: null });
+    });
   });
 
   it('should route email.draft to EmailDraftProcessor and accept tracing config', async () => {
@@ -173,6 +290,90 @@ describe('Agent Controller Graph Routing', () => {
     expect(result.result.message).toContain('Email draft created');
   });
 
+  it('should route assistant.command to delegated email.draft execution', async () => {
+    const mockTask = {
+      ...baseTask,
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'Draft an update email',
+        target_domain_action: 'email.draft',
+        target_payload: {
+          recipient: 'test@example.com',
+          subject: 'Status Update',
+          body: 'Draft body',
+        },
+      },
+    };
+
+    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
+
+    expect(result.error).toBeUndefined();
+    expect(result.result.message).toContain('Email draft created');
+  });
+
+  it('should escalate assistant.command when high-risk confirmation is missing', async () => {
+    const mockTask = {
+      ...baseTask,
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'Send this email now',
+        high_risk: true,
+        confirmed: false,
+        recipient: 'test@example.com',
+        subject: 'Urgent',
+        body: 'Please review',
+      },
+    };
+
+    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
+
+    expect(result.task.status).toBe('escalation');
+    expect(result.task.result.escalation).toBe(true);
+    expect(result.task.result.reason).toContain('High-risk command requires confirmation');
+    expect(mockExecuteTool).not.toHaveBeenCalled();
+  });
+
+  it('should escalate assistant.command when command intent cannot be mapped', async () => {
+    const mockTask = {
+      ...baseTask,
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'do that thing from last week',
+      },
+    };
+
+    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
+
+    expect(result.task.status).toBe('escalation');
+    expect(result.task.result.escalation).toBe(true);
+    expect(result.task.result.reason).toContain('Command is ambiguous');
+    expect(mockExecuteTool).not.toHaveBeenCalled();
+  });
+
+  it('should pause assistant.command when Emergency Brake is enabled', async () => {
+    const { SafetyControlsService } = await import('../services/SafetyControlsService.js');
+    vi.mocked(SafetyControlsService.isEmergencyBrakeEnabled).mockResolvedValueOnce(true);
+
+    const mockTask = {
+      ...baseTask,
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'Draft an email to product team',
+        target_domain_action: 'email.draft',
+        target_payload: {
+          recipient: 'team@example.com',
+          subject: 'Product update',
+          body: 'Sharing update',
+        },
+      },
+    };
+
+    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
+
+    expect(result.task.status).toBe('paused');
+    expect(mockExecuteTool).not.toHaveBeenCalled();
+  });
+
 
   it('should route calendar.create to CalendarCreateProcessor', async () => {
     const mockTask = { 
@@ -185,6 +386,94 @@ describe('Agent Controller Graph Routing', () => {
 
     expect(result.error).toBeUndefined();
     expect(result.result.message).toContain('Calendar event created');
+  });
+
+  it('should escalate calendar.create when conflict is detected and avoid create_calendar_event call', async () => {
+    mockExecuteTool.mockImplementationOnce(async (_orgId: string, toolName: string) => {
+      if (toolName === 'query_calendar_freebusy') {
+        return {
+          calendars: {
+            primary: {
+              busy: [
+                {
+                  start: '2026-01-18T10:15:00Z',
+                  end: '2026-01-18T10:45:00Z',
+                },
+              ],
+            },
+          },
+        };
+      }
+
+      return { message: 'Success' };
+    });
+
+    const mockTask = {
+      ...baseTask,
+      domain_action: 'calendar.create',
+      payload: {
+        summary: 'Conflict meeting',
+        startTime: '2026-01-18T10:00:00Z',
+        endTime: '2026-01-18T11:00:00Z',
+      },
+    };
+
+    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
+
+    expect(result.task.status).toBe('escalation');
+    expect(result.task.result.escalation).toBe(true);
+    expect(result.task.result.reason).toContain('Calendar conflict detected');
+    expect(result.task.result.conflict).toBeDefined();
+    expect(result.task.result.conflict.overlaps.length).toBeGreaterThan(0);
+    expect(mockExecuteTool).not.toHaveBeenCalledWith(
+      mockTask.organization_id,
+      'create_calendar_event',
+      expect.any(Object),
+    );
+  });
+
+  it('should execute calendar.create when no conflict exists', async () => {
+    const mockTask = {
+      ...baseTask,
+      domain_action: 'calendar.create',
+      payload: {
+        summary: 'No conflict meeting',
+        startTime: '2026-01-18T14:00:00Z',
+        endTime: '2026-01-18T15:00:00Z',
+      },
+    };
+
+    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
+
+    expect(result.error).toBeUndefined();
+    expect(result.task.status).toBe('processing');
+    expect(mockExecuteTool).toHaveBeenCalledWith(
+      mockTask.organization_id,
+      'create_calendar_event',
+      expect.any(Object),
+    );
+  });
+
+  it('should escalate calendar.create with setup_required when calendar write tool is missing', async () => {
+    mockGetLangChainTools.mockResolvedValue([
+      { name: 'query_calendar_freebusy' },
+    ]);
+
+    const mockTask = {
+      ...baseTask,
+      domain_action: 'calendar.create',
+      payload: {
+        summary: 'Needs setup',
+        startTime: '2026-01-18T14:00:00Z',
+        endTime: '2026-01-18T15:00:00Z',
+      },
+    };
+
+    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
+
+    expect(result.task.status).toBe('escalation');
+    expect(result.task.result.escalation).toBe(true);
+    expect(String(result.task.result.reason)).toContain('setup_required');
   });
 
   it('should route relancing.nudge to RelancingNudgeProcessor', async () => {
@@ -211,6 +500,114 @@ describe('Agent Controller Graph Routing', () => {
 
     expect(result.error).toBeUndefined();
     expect(result.result.summary).toContain('Relancing nudge prepared');
+  });
+
+  it('should route relancing.update and escalate with setup_required when user_id is missing', async () => {
+    const mockTask = {
+      ...baseTask,
+      domain_action: 'relancing.update',
+      user_id: null,
+      payload: {
+        channel: 'telegram',
+        external_message_id: 'ext-1',
+        thread_id: 'thread-1',
+        organization_id: baseTask.organization_id,
+        user_id: null,
+        message_text: 'Status update',
+        correlation_id: 'corr-1',
+        channel_metadata: {},
+        raw_payload: {},
+      },
+    };
+
+    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
+
+    expect(result.task.status).toBe('escalation');
+    expect(result.task.result.escalation).toBe(true);
+    expect(String(result.task.result.reason)).toContain('setup_required');
+  });
+
+  it('should route status.report and apply confidence gate before processor execution', async () => {
+    const mockTask = {
+      ...baseTask,
+      domain_action: 'status.report',
+      payload: {
+        confidence_score: 0.5,
+      },
+    };
+
+    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
+
+    expect(result.task.status).toBe('escalation');
+    expect(result.task.result.escalation).toBe(true);
+    expect(result.task.result.escalation_trigger).toBe('low_confidence');
+  });
+
+  it('should pause status.report when Emergency Brake is enabled', async () => {
+    const { SafetyControlsService } = await import('../services/SafetyControlsService.js');
+    vi.mocked(SafetyControlsService.isEmergencyBrakeEnabled).mockResolvedValueOnce(true);
+
+    const mockTask = {
+      ...baseTask,
+      domain_action: 'status.report',
+      payload: {
+        manual_trigger: true,
+      },
+    };
+
+    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
+
+    expect(result.task.status).toBe('paused');
+  });
+
+  it('should pause relancing.update when Emergency Brake is enabled', async () => {
+    const { SafetyControlsService } = await import('../services/SafetyControlsService.js');
+    vi.mocked(SafetyControlsService.isEmergencyBrakeEnabled).mockResolvedValueOnce(true);
+
+    const mockTask = {
+      ...baseTask,
+      domain_action: 'relancing.update',
+      user_id: '22222222-2222-4222-8222-222222222222',
+      payload: {
+        channel: 'telegram',
+        external_message_id: 'ext-2',
+        thread_id: 'thread-1',
+        organization_id: baseTask.organization_id,
+        user_id: '22222222-2222-4222-8222-222222222222',
+        message_text: 'Blocked on API access',
+        correlation_id: 'corr-2',
+        channel_metadata: {},
+        raw_payload: {},
+      },
+    };
+
+    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
+
+    expect(result.task.status).toBe('paused');
+  });
+
+  it('should escalate relancing.update when the reply is ambiguous', async () => {
+    const mockTask = {
+      ...baseTask,
+      domain_action: 'relancing.update',
+      user_id: '22222222-2222-4222-8222-222222222222',
+      payload: {
+        channel: 'telegram',
+        external_message_id: 'ext-3',
+        thread_id: 'thread-1',
+        organization_id: baseTask.organization_id,
+        user_id: '22222222-2222-4222-8222-222222222222',
+        message_text: 'ok',
+        correlation_id: 'corr-3',
+        channel_metadata: {},
+        raw_payload: {},
+      },
+    };
+
+    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
+
+    expect(result.task.status).toBe('escalation');
+    expect(result.task.result.escalation_trigger).toBe('ambiguity_detected');
   });
 
   it('should escalate calendar.create when payload confidence is below threshold (no tool execution)', async () => {

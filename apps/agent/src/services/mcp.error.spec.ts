@@ -95,7 +95,7 @@ describe('MCPService Connection Error Handling', () => {
     
     try {
       await mcpService.executeTool(orgId, 'any-tool', {});
-    } catch (e) {
+    } catch {
       // Expect connection failure if we don't mock connect()
     }
 

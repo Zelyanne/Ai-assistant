@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { BaseProcessor } from './BaseProcessor';
-import { Task } from '@ai-assistant/shared';
+import { BaseProcessor } from './BaseProcessor.js';
+import type { Task } from '@ai-assistant/shared';
 
 class TestProcessor extends BaseProcessor {
   async process(task: Task): Promise<any> {

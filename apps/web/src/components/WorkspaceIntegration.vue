@@ -72,8 +72,16 @@ const handleConnect = async () => {
             <i class="pi pi-google text-blue-500 text-3xl" />
             <span class="font-bold text-xl text-gray-800">Google Workspace</span>
           </div>
-          <Tag v-if="connectionStatus === 'connected'" severity="success" value="Connected" />
-          <Tag v-else-if="connectionStatus === 'error'" severity="danger" value="Error" />
+          <Tag
+            v-if="connectionStatus === 'connected'"
+            severity="success"
+            value="Connected"
+          />
+          <Tag
+            v-else-if="connectionStatus === 'error'"
+            severity="danger"
+            value="Error"
+          />
         </div>
       </template>
       <template #content>
@@ -83,7 +91,10 @@ const handleConnect = async () => {
             This data is used to populate your personalized morning briefs.
           </p>
           
-          <div v-if="lastSync" class="mt-2 text-xs text-slate-400 italic">
+          <div
+            v-if="lastSync"
+            class="mt-2 text-xs text-slate-400 italic"
+          >
             Last synced: {{ new Date(lastSync).toLocaleString() }}
           </div>
 
@@ -102,7 +113,12 @@ const handleConnect = async () => {
             </div>
           </div>
 
-          <Message v-if="error" severity="error" class="mt-6" :closable="false">
+          <Message
+            v-if="error"
+            severity="error"
+            class="mt-6"
+            :closable="false"
+          >
             {{ error }}
           </Message>
         </div>
@@ -112,11 +128,11 @@ const handleConnect = async () => {
           <Button 
             :label="connectionStatus === 'connected' ? 'Reconnect Workspace' : 'Connect Workspace'" 
             icon="pi pi-external-link" 
-            iconPos="right"
+            icon-pos="right"
             :loading="loading" 
-            @click="handleConnect"
             :severity="connectionStatus === 'connected' ? 'secondary' : 'primary'"
             class="px-6 py-2"
+            @click="handleConnect"
           />
         </div>
       </template>

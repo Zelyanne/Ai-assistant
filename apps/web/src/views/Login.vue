@@ -53,15 +53,31 @@ const handleGoogleLogin = async () => {
           <div class="h-12 w-12 bg-executive-primary rounded-xl flex items-center justify-center mb-4 shadow-sm">
             <span class="text-white text-2xl font-bold">A</span>
           </div>
-          <h1 class="text-2xl font-bold text-executive-primary tracking-tight">AI Assistant</h1>
-          <p class="text-slate-500 mt-2 text-sm">Background Intelligence, Foreground Simplicity</p>
+          <h1 class="text-2xl font-bold text-executive-primary tracking-tight">
+            AI Assistant
+          </h1>
+          <p class="text-slate-500 mt-2 text-sm">
+            Background Intelligence, Foreground Simplicity
+          </p>
         </div>
 
-        <form @submit.prevent="handleLogin" class="space-y-6">
-          <Message v-if="errorMessage" severity="error" variant="simple">{{ errorMessage }}</Message>
+        <form
+          class="space-y-6"
+          @submit.prevent="handleLogin"
+        >
+          <Message
+            v-if="errorMessage"
+            severity="error"
+            variant="simple"
+          >
+            {{ errorMessage }}
+          </Message>
           
           <div class="flex flex-col gap-2">
-            <label for="email" class="text-xs font-semibold uppercase tracking-wider text-slate-500 font-technical">Email Address</label>
+            <label
+              for="email"
+              class="text-xs font-semibold uppercase tracking-wider text-slate-500 font-technical"
+            >Email Address</label>
             <InputText 
               id="email" 
               v-model="email" 
@@ -74,13 +90,16 @@ const handleGoogleLogin = async () => {
           </div>
 
           <div class="flex flex-col gap-2">
-            <label for="password" class="text-xs font-semibold uppercase tracking-wider text-slate-500 font-technical">Password</label>
+            <label
+              for="password"
+              class="text-xs font-semibold uppercase tracking-wider text-slate-500 font-technical"
+            >Password</label>
             <Password 
               id="password" 
               v-model="password" 
               placeholder="••••••••" 
               :feedback="false" 
-              toggleMask 
+              toggle-mask 
               required 
               fluid
               class="font-technical"
@@ -98,7 +117,7 @@ const handleGoogleLogin = async () => {
 
           <div class="relative my-6">
             <div class="absolute inset-0 flex items-center">
-              <span class="w-full border-t border-slate-200"></span>
+              <span class="w-full border-t border-slate-200" />
             </div>
             <div class="relative flex justify-center text-xs uppercase">
               <span class="bg-white px-2 text-slate-500 font-technical">Or continue with</span>
@@ -120,7 +139,12 @@ const handleGoogleLogin = async () => {
         <div class="mt-8 pt-8 border-t border-slate-100 text-center space-y-4">
           <p class="text-sm text-slate-600">
             Don't have an account? 
-            <router-link to="/register" class="text-executive-primary font-semibold hover:underline">Register</router-link>
+            <router-link
+              to="/register"
+              class="text-executive-primary font-semibold hover:underline"
+            >
+              Register
+            </router-link>
           </p>
           <p class="text-xs text-slate-400">
             Secure enterprise access governed by PerimeterGuard™

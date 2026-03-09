@@ -1,7 +1,7 @@
 import { ref } from 'vue';
 import { supabase } from '../services/supabase';
 import { useUserStore } from '../stores/user';
-import { Task } from '@ai-assistant/shared';
+import type { Json, Task } from '@ai-assistant/shared';
 
 export function useAgent() {
   const userStore = useUserStore();
@@ -11,7 +11,11 @@ export function useAgent() {
   /**
    * Submits a task to the database-as-queue.
    */
-  async function submitTask(domainAction: string, payload: Record<string, any>, topic = 'General'): Promise<Task | null> {
+  async function submitTask(
+    domainAction: string,
+    payload: Record<string, unknown>,
+    topic = 'General'
+  ): Promise<Task | null> {
     if (!userStore.profile?.organization_id) {
       error.value = 'Organization ID is missing';
       return null;
@@ -27,7 +31,7 @@ export function useAgent() {
           organization_id: userStore.profile.organization_id,
           user_id: userStore.profile.id,
           domain_action: domainAction,
-          payload,
+          payload: payload as unknown as Json,
           topic,
           status: 'queued'
         })
@@ -36,9 +40,13 @@ export function useAgent() {
 
       if (insertError) throw insertError;
       return data as Task;
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[useAgent] Failed to submit task:', err);
-      error.value = err.message;
+      if (err instanceof Error) {
+        error.value = err.message;
+      } else {
+        error.value = String(err);
+      }
       return null;
     } finally {
       loading.value = false;

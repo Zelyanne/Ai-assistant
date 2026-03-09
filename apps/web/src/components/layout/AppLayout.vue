@@ -16,14 +16,21 @@ const mobileMenuVisible = ref(false);
       <AppSidebar class="hidden md:flex shrink-0" />
 
       <!-- Mobile Sidebar Drawer -->
-      <Drawer v-model:visible="mobileMenuVisible" header="Navigation" class="!w-72">
+      <Drawer
+        v-model:visible="mobileMenuVisible"
+        header="Navigation"
+        class="!w-72"
+      >
         <AppSidebar class="!border-none !w-full" />
       </Drawer>
       
       <main class="flex-1 overflow-y-auto p-8 lg:p-12">
         <div class="max-w-6xl mx-auto">
           <router-view v-slot="{ Component }">
-            <transition name="fade" mode="out-in">
+            <transition
+              name="fade"
+              mode="out-in"
+            >
               <component :is="Component" />
             </transition>
           </router-view>

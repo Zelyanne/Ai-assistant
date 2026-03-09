@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EmailDraftProcessor } from './EmailDraftProcessor.js';
-import { mcpService } from '../services/mcp.js';
 
 // Mock dependencies
 const { mockExecuteTool } = vi.hoisted(() => ({

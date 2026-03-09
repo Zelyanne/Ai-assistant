@@ -66,30 +66,60 @@ onMounted(() => {
 <template>
   <div class="p-8">
     <div class="flex justify-between items-center mb-6">
-      <h1 class="text-3xl font-bold">Organization Management</h1>
-      <Tag :value="userStore.profile?.organization_id" icon="pi pi-building" severity="info" />
+      <h1 class="text-3xl font-bold">
+        Organization Management
+      </h1>
+      <Tag
+        :value="userStore.profile?.organization_id"
+        icon="pi pi-building"
+        severity="info"
+      />
     </div>
 
     <div class="card bg-white shadow rounded-lg overflow-hidden">
       <DataTable 
-        v-model:editingRows="editingRows" 
+        v-model:editing-rows="editingRows" 
         :value="users" 
-        editMode="row" 
-        dataKey="id" 
-        @row-edit-save="onRowEditSave"
+        edit-mode="row" 
+        data-key="id" 
         class="p-datatable-sm"
+        @row-edit-save="onRowEditSave"
       >
-        <Column field="full_name" header="Name" style="width: 25%"></Column>
-        <Column field="email" header="Email" style="width: 35%"></Column>
-        <Column field="role" header="Role" style="width: 25%">
+        <Column
+          field="full_name"
+          header="Name"
+          style="width: 25%"
+        />
+        <Column
+          field="email"
+          header="Email"
+          style="width: 35%"
+        />
+        <Column
+          field="role"
+          header="Role"
+          style="width: 25%"
+        >
           <template #body="slotProps">
-            <Tag :value="slotProps.data.role" :severity="getRoleSeverity(slotProps.data.role)" />
+            <Tag
+              :value="slotProps.data.role"
+              :severity="getRoleSeverity(slotProps.data.role)"
+            />
           </template>
           <template #editor="{ data, field }">
-            <Dropdown v-model="data[field]" :options="roles" placeholder="Select a Role" fluid />
+            <Dropdown
+              v-model="data[field]"
+              :options="roles"
+              placeholder="Select a Role"
+              fluid
+            />
           </template>
         </Column>
-        <Column :rowEditor="true" style="width: 15%; min-width: 8rem" bodyStyle="text-align:center"></Column>
+        <Column
+          :row-editor="true"
+          style="width: 15%; min-width: 8rem"
+          body-style="text-align:center"
+        />
       </DataTable>
     </div>
   </div>

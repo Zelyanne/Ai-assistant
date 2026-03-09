@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ProtocolGenerateProcessor } from './ProtocolGenerateProcessor';
-import { Task } from '@ai-assistant/shared';
+import { ProtocolGenerateProcessor } from './ProtocolGenerateProcessor.js';
+import type { Task } from '@ai-assistant/shared';
 
 // Mock dependencies
 vi.mock('../services/mcp.js', () => ({
@@ -39,16 +39,17 @@ describe('ProtocolGenerateProcessor', () => {
       })
     };
     processor = new ProtocolGenerateProcessor();
-    // @ts-ignore - access protected method for mocking
-    vi.spyOn(processor, 'createAgentInstance' as any).mockReturnValue(mockAgent);
+    vi.spyOn(processor as any, 'createAgentInstance').mockReturnValue(mockAgent);
   });
 
   it('should throw error for invalid payload', async () => {
     const task = {
       id: 'task-123',
       domain_action: 'protocol.generate',
+      organization_id: 'org-1',
+      status: 'queued',
       payload: {} // Missing philosophy
-    } as Task;
+    } as unknown as Task;
 
     await expect(processor.process(task)).rejects.toThrow(/Invalid payload/);
   });
@@ -58,8 +59,9 @@ describe('ProtocolGenerateProcessor', () => {
       id: 'task-123',
       domain_action: 'protocol.generate',
       organization_id: 'org-1',
+      status: 'queued',
       payload: { philosophy: 'Be kind.' }
-    } as Task;
+    } as unknown as Task;
 
     const result = await processor.process(task);
 

@@ -9,9 +9,13 @@ type ChainMode = 'none' | 'insert' | 'insert-select' | 'select' | 'update';
 function createSupabaseMock() {
   const state = {
     mode: 'none' as ChainMode,
-    insertResponse: { data: { id: '44444444-4444-4444-8444-444444444444' }, error: null },
-    selectResponse: { data: { result: {} }, error: null },
-    updateResponse: { error: null },
+    insertResponse: { data: { id: '44444444-4444-4444-8444-444444444444' }, error: null } as {
+      data: unknown;
+      error: unknown;
+    },
+    maybeSingleResponse: { data: null, error: null } as { data: unknown; error: unknown },
+    selectResponse: { data: { result: {} }, error: null } as { data: unknown; error: unknown },
+    updateResponse: { error: null } as { error: unknown },
   };
 
   const chain = {
@@ -23,6 +27,7 @@ function createSupabaseMock() {
       state.mode = state.mode === 'insert' ? 'insert-select' : 'select';
       return chain;
     }),
+    maybeSingle: vi.fn(async () => state.maybeSingleResponse),
     single: vi.fn(async () => (state.mode === 'insert-select' ? state.insertResponse : state.selectResponse)),
     update: vi.fn(() => {
       state.mode = 'update';
@@ -132,6 +137,69 @@ describe('ChannelRouterService', () => {
           external_message_id: 'ext-1',
           thread_id: 'thread-1',
         }),
+      }),
+    );
+    expect(flushSpy).toHaveBeenCalledOnce();
+  });
+
+  it('returns existing task when inbound message is a duplicate', async () => {
+    const { mockSupabase, chain, state } = createSupabaseMock();
+    const registry = new ChannelAdapterRegistry([createAdapterStub()]);
+    const flushSpy = vi.spyOn(AuditLogger, 'flush').mockResolvedValue(undefined);
+
+    state.maybeSingleResponse = {
+      data: {
+        id: '99999999-9999-4999-8999-999999999999',
+        payload: {
+          correlation_id: 'corr-existing',
+        },
+      },
+      error: null,
+    };
+
+    const service = new ChannelRouterService({
+      registry,
+      supabaseClient: mockSupabase as unknown as typeof import('./supabase.js').supabase,
+    });
+
+    const result = await service.enqueueInbound('telegram', { ignored: true });
+
+    expect(result.task_id).toBe('99999999-9999-4999-8999-999999999999');
+    expect(result.correlation_id).toBe('corr-existing');
+    expect(chain.insert).not.toHaveBeenCalled();
+    expect(flushSpy).toHaveBeenCalled();
+  });
+
+  it('auto-routes relancing hints to relancing.update', async () => {
+    const { mockSupabase, chain } = createSupabaseMock();
+    const adapter = createAdapterStub();
+    adapter.normalizeInbound = () => ({
+      channel: 'telegram',
+      organization_id: '11111111-1111-1111-1111-111111111111',
+      user_id: '22222222-2222-4222-8222-222222222222',
+      thread_id: 'thread-1',
+      external_message_id: 'ext-relancing-1',
+      domain_action: 'thread.action',
+      topic: 'Relancing',
+      message_text: 'Blocked waiting on API access.',
+      channel_metadata: { source: 'telegram' },
+      raw_payload: { update_id: 2 },
+      correlation_id: 'corr-relancing-1',
+    });
+
+    const registry = new ChannelAdapterRegistry([adapter]);
+    const flushSpy = vi.spyOn(AuditLogger, 'flush').mockResolvedValue(undefined);
+
+    const service = new ChannelRouterService({
+      registry,
+      supabaseClient: mockSupabase as unknown as typeof import('./supabase.js').supabase,
+    });
+
+    await service.enqueueInbound('telegram', { ignored: true });
+
+    expect(chain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        domain_action: 'relancing.update',
       }),
     );
     expect(flushSpy).toHaveBeenCalledOnce();

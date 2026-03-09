@@ -134,30 +134,47 @@ onMounted(fetchTopics);
             <Dropdown 
               v-model="newPriority" 
               :options="priorityOptions" 
-              optionLabel="label" 
-              optionValue="value"
+              option-label="label" 
+              option-value="value"
               class="w-full font-technical"
             />
           </div>
           <Button 
             icon="pi pi-plus" 
-            @click="addTopic" 
-            :loading="loading"
+            :loading="loading" 
             class="bg-executive-primary border-none"
+            @click="addTopic"
           />
         </div>
 
-        <Message v-if="error" severity="error">{{ error }}</Message>
+        <Message
+          v-if="error"
+          severity="error"
+        >
+          {{ error }}
+        </Message>
 
-        <DataTable :value="topics" class="p-datatable-sm font-technical" :loading="loading">
-          <Column field="topic" header="Topic"></Column>
-          <Column field="priority" header="Priority">
+        <DataTable
+          :value="topics"
+          class="p-datatable-sm font-technical"
+          :loading="loading"
+        >
+          <Column
+            field="topic"
+            header="Topic"
+          />
+          <Column
+            field="priority"
+            header="Priority"
+          >
             <template #body="slotProps">
-              <span :class="{
-                'text-red-600 font-bold': slotProps.data.priority === 'High',
-                'text-orange-600': slotProps.data.priority === 'Medium',
-                'text-slate-600': slotProps.data.priority === 'Low'
-              }">
+              <span
+                :class="{
+                  'text-red-600 font-bold': slotProps.data.priority === 'High',
+                  'text-orange-600': slotProps.data.priority === 'Medium',
+                  'text-slate-600': slotProps.data.priority === 'Low'
+                }"
+              >
                 {{ slotProps.data.priority }}
               </span>
             </template>
@@ -174,7 +191,9 @@ onMounted(fetchTopics);
             </template>
           </Column>
           <template #empty>
-            <div class="text-center p-4 text-slate-400 italic">No watch topics defined.</div>
+            <div class="text-center p-4 text-slate-400 italic">
+              No watch topics defined.
+            </div>
           </template>
         </DataTable>
       </div>

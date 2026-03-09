@@ -1,6 +1,16 @@
 import { google } from 'googleapis';
 import { config } from '../config/index.js';
 
+type TokenExchangeResult = {
+  tokens: {
+    access_token?: string | null;
+    refresh_token?: string | null;
+    expiry_date?: number | null;
+    [key: string]: unknown;
+  };
+  email: string | null | undefined;
+};
+
 export class GoogleAuthService {
   private oauth2Client;
 
@@ -35,7 +45,7 @@ export class GoogleAuthService {
   /**
    * Exchanges an authorization code for access and refresh tokens.
    */
-  async exchangeCodeForTokens(code: string) {
+  async exchangeCodeForTokens(code: string): Promise<TokenExchangeResult> {
     const { tokens } = await this.oauth2Client.getToken(code);
     this.oauth2Client.setCredentials(tokens);
 
@@ -44,7 +54,7 @@ export class GoogleAuthService {
     const userInfo = await oauth2.userinfo.get();
 
     return {
-      tokens,
+      tokens: tokens as Record<string, unknown>,
       email: userInfo.data.email,
     };
   }
@@ -52,10 +62,10 @@ export class GoogleAuthService {
   /**
    * Refreshes an access token using a refresh token.
    */
-  async refreshAccessToken(refreshToken: string) {
+  async refreshAccessToken(refreshToken: string): Promise<{ access_token?: string | null; expiry_date?: number | null; [key: string]: unknown }> {
     this.oauth2Client.setCredentials({ refresh_token: refreshToken });
     const { credentials } = await this.oauth2Client.refreshAccessToken();
-    return credentials;
+    return credentials as { access_token?: string | null; expiry_date?: number | null; [key: string]: unknown };
   }
 }
 

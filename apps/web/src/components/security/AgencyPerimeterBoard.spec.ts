@@ -145,7 +145,7 @@ describe('AgencyPerimeterBoard', () => {
     })
     await flushPromises()
 
-    expect(wrapper.get('[data-testid="read-only-banner"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="read-only-banner"]').exists()).toBe(true)
     expect(wrapper.get('[data-testid="tier-column-Restricted"]').text()).toContain('Project Logistics')
   })
 

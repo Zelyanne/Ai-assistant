@@ -6,8 +6,10 @@ const route = useRoute();
 
 const navItems = [
   { label: 'Dashboard', icon: 'pi pi-home', to: '/dashboard' },
+  { label: 'Command Center', icon: 'pi pi-comments', to: '/dashboard/command-center' },
   { label: 'Messages', icon: 'pi pi-envelope', to: '/messages/topic' },
   { label: 'Protocol', icon: 'pi pi-bolt', to: '/dashboard/brain-setup' },
+  { label: 'Audit Log', icon: 'pi pi-shield', to: '/dashboard/audit-log' },
   { label: 'Settings', icon: 'pi pi-cog', to: '/dashboard/settings' },
 ];
 
@@ -26,22 +28,28 @@ const isCollapsed = ref(false);
         :to="item.to"
         class="flex items-center gap-3 px-3 py-3 rounded-executive no-underline transition-colors"
         :class="[
-          route.path === item.to 
+          route.path.startsWith(item.to) && (item.to !== '/dashboard' || route.path === '/dashboard')
             ? 'bg-slate-100 text-executive-primary font-semibold' 
             : 'text-slate-500 hover:bg-slate-50 hover:text-executive-primary'
         ]"
       >
-        <i :class="item.icon" class="text-lg"></i>
-        <span v-if="!isCollapsed" class="text-sm">{{ item.label }}</span>
+        <i
+          :class="item.icon"
+          class="text-lg"
+        />
+        <span
+          v-if="!isCollapsed"
+          class="text-sm"
+        >{{ item.label }}</span>
       </router-link>
     </div>
 
     <div class="p-4 border-t border-executive-background">
       <button 
-        @click="isCollapsed = !isCollapsed"
         class="w-full flex items-center justify-center p-2 rounded-executive hover:bg-slate-50 text-slate-400 hover:text-executive-primary transition-colors"
+        @click="isCollapsed = !isCollapsed"
       >
-        <i :class="isCollapsed ? 'pi pi-angle-double-right' : 'pi pi-angle-double-left'"></i>
+        <i :class="isCollapsed ? 'pi pi-angle-double-right' : 'pi pi-angle-double-left'" />
       </button>
     </div>
   </aside>

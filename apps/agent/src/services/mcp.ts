@@ -113,7 +113,7 @@ export class MCPService {
             socket.on('timeout', () => {
               socket.destroy();
             });
-            socket.on('error', (err) => {
+            socket.on('error', (_err) => {
               socket.destroy();
             });
             socket.connect(MCP_SERVER_PORT, '127.0.0.1');
@@ -206,7 +206,7 @@ export class MCPService {
         throw new Error(`Integration user_id is missing for organization ${orgId}`);
     }
 
-    let creds = integration.encrypted_creds as any;
+    const creds = integration.encrypted_creds as any;
     console.log(`[MCP] Checking tokens for ${orgId}. Expiry: ${creds.expires_at}`);
     let accessToken = decrypt(creds.access_token, ENCRYPTION_SECRET);
     const expiresAt = creds.expires_at ? new Date(creds.expires_at).getTime() : 0;
