@@ -91,7 +91,7 @@ development_status:
   6-1-natural-language-command-center: done  # Scope updated to conversational execution chat
   6-2-calendar-conflict-resolution-logic: done
   6-3-cross-channel-context-gathering-docs-sheets: done
-  6-4-comprehensive-reasoning-trace-audit-logs: in-progress
+  6-4-comprehensive-reasoning-trace-audit-logs: review
   6-5-protocol-optimization-diff-summaries: backlog
   6-6-telegram-bidirectional-proxy-execution: backlog
   6-7-whatsapp-bidirectional-proxy-execution: backlog

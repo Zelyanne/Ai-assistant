@@ -129,3 +129,20 @@ openai/gpt-5.2
 ### File List
 
 - `_bmad-output/implementation-artifacts/6-4-comprehensive-reasoning-trace-audit-logs.md`
+
+### Implementation Plan
+
+1. Created migration `20260309220000_audit_log_improvements.sql` to drop the foreign key constraint on `agent_id` from `profiles` allowing background execution logging, and changed `agent_id` to TEXT.
+2. Updated `AuditLogger.ts` to type the data securely as JSONB shapes natively to match the table format and always insert the task citation as the first item when available.
+3. Created a comprehensive Web UI `AuditLog.vue` inside `apps/web/src/views/` containing:
+   - Pagination, filters (by Action Type and Task ID), table view with explicit indicators of action outcomes.
+   - An integrated `ReasoningTracePane` PrimeVue Drawer for looking up individual item histories.
+   - Realtime table population via Supabase channels to dynamically display executed tasks to users.
+4. Setup routing in `apps/web/src/router/index.ts` and sidebar navigation links in `AppSidebar.vue`.
+5. Fixed strict array defaults for reasoning traces and updated logic around `.maybeSingle()` inside composables `useReasoningTrace.ts` to allow graceful display of "no results found" UI logic.
+6. Expanded `AuditLogger.spec.ts` with tests to prove the stringly-typed agent ID mapping works, and `AuditLog.spec.ts` & `useReasoningTrace.spec.ts` to cover Vue components properly.
+
+### Completion Notes
+
+✅ Successfully implemented Story 6.4 Comprehensive Reasoning Trace & Audit Logs.
+The UI now fully displays system activity including agent outcomes in realtime. Background executions from things like the Channel Router and Agents can now log directly to `agent_activity_log` with standard payload shapes without running into Foreign Key Constraint failures. Tests are green and the codebase has been thoroughly checked.
