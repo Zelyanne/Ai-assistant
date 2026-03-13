@@ -2,6 +2,66 @@ import { Mistral } from 'mistralai';
 import { z } from 'zod';
 import { ILLMProvider, LLMOptions, LLMResponse, LLMUsage } from './types.js';
 
+const ARRAY_TYPE_NAME = 'ZodArray';
+
+function isSchemaLike(value: unknown): value is z.ZodTypeAny {
+  return typeof value === 'object' && value !== null && '_def' in value;
+}
+
+function unwrapSchemaTypeName(schema: z.ZodSchema<unknown>): string | undefined {
+  const unwrapMap: Record<string, string[]> = {
+    ZodEffects: ['schema'],
+    ZodOptional: ['innerType'],
+    ZodNullable: ['innerType'],
+    ZodDefault: ['innerType'],
+    ZodCatch: ['innerType'],
+    ZodBranded: ['type'],
+    ZodPipeline: ['out'],
+    ZodReadonly: ['innerType'],
+  };
+
+  const seen = new Set<z.ZodTypeAny>();
+  let current: z.ZodTypeAny = schema as z.ZodTypeAny;
+
+  while (!seen.has(current)) {
+    seen.add(current);
+
+    const def = (current as { _def?: Record<string, unknown> })._def;
+    const typeName = typeof def?.typeName === 'string' ? def.typeName : undefined;
+
+    if (!typeName) {
+      return undefined;
+    }
+
+    const unwrapKeys = unwrapMap[typeName];
+    if (!unwrapKeys) {
+      return typeName;
+    }
+
+    let nextSchema: z.ZodTypeAny | null = null;
+    for (const key of unwrapKeys) {
+      const candidate = def?.[key];
+      if (isSchemaLike(candidate)) {
+        nextSchema = candidate;
+        break;
+      }
+    }
+
+    if (!nextSchema) {
+      return typeName;
+    }
+
+    current = nextSchema;
+  }
+
+  return undefined;
+}
+
+function isTopLevelArraySchema(schema: z.ZodSchema<unknown>): boolean {
+  const typeName = unwrapSchemaTypeName(schema);
+  return typeName === ARRAY_TYPE_NAME;
+}
+
 export class MistralProvider implements ILLMProvider {
   private client: Mistral;
   private defaultModel: string;
@@ -20,13 +80,24 @@ export class MistralProvider implements ILLMProvider {
     const model = options?.model || this.defaultModel;
 
     try {
-      const response = await this.client.chat.complete({
+      const requestPayload: {
+        model: string;
+        messages: Array<{ role: 'user'; content: string }>;
+        responseFormat?: { type: 'json_object' };
+        temperature?: number;
+        maxTokens?: number;
+      } = {
         model,
         messages: [{ role: 'user', content: prompt }],
-        responseFormat: { type: 'json_object' },
         temperature: options?.temperature,
         maxTokens: options?.maxTokens,
-      });
+      };
+
+      if (!isTopLevelArraySchema(schema)) {
+        requestPayload.responseFormat = { type: 'json_object' };
+      }
+
+      const response = await this.client.chat.complete(requestPayload);
 
       const latencyMs = Math.round(performance.now() - startTime);
       const content = response.choices?.[0]?.message?.content;

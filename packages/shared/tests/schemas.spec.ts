@@ -3,6 +3,7 @@ import {
   TaskSchema,
   IngestedThreadSchema,
   AgentActivityLogSchema,
+  BatchedEmailTriageResultSchema,
   RelancingUpdateSchema,
   StatusReportSchema,
   CommandConversationSchema,
@@ -85,6 +86,45 @@ describe('Zod Schemas', () => {
         citations: []
       };
       const result = AgentActivityLogSchema.safeParse(log);
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('BatchedEmailTriageResultSchema', () => {
+    it('validates a batched triage response keyed by thread_id', () => {
+      const response = [
+        {
+          thread_id: 'thread-1',
+          classification: {
+            matches: [
+              {
+                topic: 'Urgent',
+                reason: 'Contains immediate customer deadline',
+                priority_score: 92,
+              },
+            ],
+            overall_priority_score: 92,
+            is_highlighted: true,
+          },
+        },
+      ];
+
+      const result = BatchedEmailTriageResultSchema.safeParse(response);
+      expect(result.success).toBe(true);
+    });
+
+    it('fails when a result item is missing thread_id', () => {
+      const invalidResponse = [
+        {
+          classification: {
+            matches: [],
+            overall_priority_score: 10,
+            is_highlighted: false,
+          },
+        },
+      ];
+
+      const result = BatchedEmailTriageResultSchema.safeParse(invalidResponse);
       expect(result.success).toBe(false);
     });
   });

@@ -1,32 +1,60 @@
-import { z } from 'zod';
+import { z } from "zod";
 
-export const TaskStatusSchema = z.enum(['queued', 'processing', 'done', 'error', 'escalation', 'paused']);
+const JsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(JsonValueSchema),
+    z.record(JsonValueSchema),
+  ]),
+);
+
+export const TaskStatusSchema = z.enum([
+  "queued",
+  "processing",
+  "done",
+  "error",
+  "escalation",
+  "paused",
+]);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
-export const AgencyTierSchema = z.enum(['Public', 'Controlled', 'Restricted']);
+export const AgencyTierSchema = z.enum(["Public", "Controlled", "Restricted"]);
 export type AgencyTier = z.infer<typeof AgencyTierSchema>;
 
 export const AgencyPerimeterSchema = z.object({
   id: z.string().uuid().optional(),
   organization_id: z.string().uuid(),
   topic_name: z.string(),
-  tier: AgencyTierSchema.default('Restricted'),
+  tier: AgencyTierSchema.default("Restricted"),
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
 });
 
 export type AgencyPerimeter = z.infer<typeof AgencyPerimeterSchema>;
 
-export const UserRoleSchema = z.enum(['CEO', 'PM', 'Team Member', 'Simple User']);
+export const UserRoleSchema = z.enum([
+  "CEO",
+  "PM",
+  "Team Member",
+  "Simple User",
+]);
 export type UserRole = z.infer<typeof UserRoleSchema>;
 
 export const TaskSchema = z.object({
   id: z.string().uuid().optional(),
   organization_id: z.string().uuid(),
   user_id: z.string().uuid().nullable().optional(),
-  domain_action: z.string().regex(/^[a-z]+\.[a-z]+$/, 'Action must be in domain.action format (e.g., email.ingest)'),
+  domain_action: z
+    .string()
+    .regex(
+      /^[a-z]+\.[a-z]+$/,
+      "Action must be in domain.action format (e.g., email.ingest)",
+    ),
   topic: z.string().optional(),
-  status: TaskStatusSchema.default('queued'),
+  status: TaskStatusSchema.default("queued"),
   payload: z.record(z.unknown()),
   result: z.record(z.unknown()).optional(),
   created_at: z.string().optional(),
@@ -35,23 +63,28 @@ export const TaskSchema = z.object({
 
 export type Task = z.infer<typeof TaskSchema>;
 
-export const ChannelSchema = z.enum(['web', 'telegram', 'whatsapp']);
+export const ChannelSchema = z.enum(["web", "telegram", "whatsapp"]);
 export type Channel = z.infer<typeof ChannelSchema>;
 
-export const DeliveryStateSchema = z.enum(['queued', 'sent', 'delivered', 'failed']);
+export const DeliveryStateSchema = z.enum([
+  "queued",
+  "sent",
+  "delivered",
+  "failed",
+]);
 export type DeliveryState = z.infer<typeof DeliveryStateSchema>;
 
-export const CommandRoleSchema = z.enum(['user', 'assistant', 'system']);
+export const CommandRoleSchema = z.enum(["user", "assistant", "system"]);
 export type CommandRole = z.infer<typeof CommandRoleSchema>;
 
 export const CommandMessageStateSchema = z.enum([
-  'intent_preview',
-  'queued',
-  'processing',
-  'done',
-  'error',
-  'escalation',
-  'paused',
+  "intent_preview",
+  "queued",
+  "processing",
+  "done",
+  "error",
+  "escalation",
+  "paused",
 ]);
 
 export type CommandMessageState = z.infer<typeof CommandMessageStateSchema>;
@@ -61,7 +94,7 @@ export const CommandConversationSchema = z.object({
   organization_id: z.string().uuid(),
   created_by: z.string().uuid().nullable().optional(),
   title: z.string().nullable().optional(),
-  channel: ChannelSchema.default('web'),
+  channel: ChannelSchema.default("web"),
   external_thread_id: z.string().nullable().optional(),
   metadata: z.record(z.unknown()).default({}),
   created_at: z.string().optional(),
@@ -78,7 +111,7 @@ export const CommandMessageSchema = z.object({
   content: z.string().trim().min(1),
   state: CommandMessageStateSchema.optional(),
   source_task_id: z.string().uuid().nullable().optional(),
-  channel: ChannelSchema.default('web'),
+  channel: ChannelSchema.default("web"),
   correlation_id: z.string().optional(),
   thread_id: z.string().optional(),
   metadata: z.record(z.unknown()).default({}),
@@ -94,7 +127,13 @@ export const NormalizedInboundEnvelopeSchema = z.object({
   thread_id: z.string().min(1),
   organization_id: z.string().uuid(),
   user_id: z.string().uuid().nullable().optional(),
-  domain_action: z.string().regex(/^[a-z]+\.[a-z]+$/, 'Action must be in domain.action format (e.g., thread.action)').default('thread.action'),
+  domain_action: z
+    .string()
+    .regex(
+      /^[a-z]+\.[a-z]+$/,
+      "Action must be in domain.action format (e.g., thread.action)",
+    )
+    .default("thread.action"),
   topic: z.string().optional(),
   message_text: z.string().optional(),
   channel_metadata: z.record(z.unknown()).default({}),
@@ -102,7 +141,9 @@ export const NormalizedInboundEnvelopeSchema = z.object({
   correlation_id: z.string().optional(),
 });
 
-export type NormalizedInboundEnvelope = z.infer<typeof NormalizedInboundEnvelopeSchema>;
+export type NormalizedInboundEnvelope = z.infer<
+  typeof NormalizedInboundEnvelopeSchema
+>;
 
 export const OutboundChannelMessageSchema = z.object({
   channel: ChannelSchema,
@@ -117,7 +158,9 @@ export const OutboundChannelMessageSchema = z.object({
   correlation_id: z.string().optional(),
 });
 
-export type OutboundChannelMessage = z.infer<typeof OutboundChannelMessageSchema>;
+export type OutboundChannelMessage = z.infer<
+  typeof OutboundChannelMessageSchema
+>;
 
 export const DeliveryEventEnvelopeSchema = z.object({
   channel: ChannelSchema,
@@ -156,7 +199,14 @@ export const ReasoningStepSchema = z.object({
   confidence_score: z.number().min(0).max(1).optional(),
   confidence_threshold: z.number().min(0).max(1).optional(),
   ambiguity_detected: z.boolean().optional(),
-  escalation_trigger: z.enum(['low_confidence', 'ambiguity_detected', 'restricted_topic', 'approval_guardrail']).optional(),
+  escalation_trigger: z
+    .enum([
+      "low_confidence",
+      "ambiguity_detected",
+      "restricted_topic",
+      "approval_guardrail",
+    ])
+    .optional(),
   input_summary: z.string().optional(),
   output_summary: z.string().optional(),
 });
@@ -170,17 +220,17 @@ export type ReasoningTrace = z.infer<typeof ReasoningTraceSchema>;
 export const CitationSchema = z.object({
   source_type: z.string(),
   source_id: z.string(),
-  link: z.string().url().optional().or(z.literal('')),
+  link: z.string().url().optional().or(z.literal("")),
   description: z.string(),
 });
 
 export type Citation = z.infer<typeof CitationSchema>;
 
 export const EscalationTriggerSchema = z.enum([
-  'low_confidence',
-  'ambiguity_detected',
-  'restricted_topic',
-  'approval_guardrail',
+  "low_confidence",
+  "ambiguity_detected",
+  "restricted_topic",
+  "approval_guardrail",
 ]);
 
 export type EscalationTrigger = z.infer<typeof EscalationTriggerSchema>;
@@ -210,7 +260,6 @@ export const AgentActivityLogSchema = z.object({
 });
 
 export type AgentActivityLog = z.infer<typeof AgentActivityLogSchema>;
-
 
 export const OrganizationSchema = z.object({
   id: z.string().uuid().optional(),
@@ -246,16 +295,58 @@ export const WorkspaceIntegrationSchema = z.object({
 export type WorkspaceIntegration = z.infer<typeof WorkspaceIntegrationSchema>;
 
 export const ThreadSummarySchema = z.object({
-  context: z.string().describe('High-level purpose of the thread.'),
-  decisions: z.array(z.string()).describe('Key updates or decisions made.'),
-  action_items: z.array(z.string()).describe('Specific tasks required from the user.'),
+  context: z.string().describe("High-level purpose of the thread."),
+  decisions: z.array(z.string()).describe("Key updates or decisions made."),
+  action_items: z
+    .array(z.string())
+    .describe("Specific tasks required from the user."),
 });
 
 export type ThreadSummary = z.infer<typeof ThreadSummarySchema>;
 
+export const EmailTriageMatchSchema = z.object({
+  topic: z.string(),
+  reason: z.string(),
+  priority_score: z.number().min(0).max(100),
+});
+
+export type EmailTriageMatch = z.infer<typeof EmailTriageMatchSchema>;
+
+export const EmailTriageClassificationSchema = z.object({
+  matches: z.array(EmailTriageMatchSchema),
+  overall_priority_score: z.number().min(0).max(100),
+  is_highlighted: z.boolean(),
+});
+
+export type EmailTriageClassification = z.infer<
+  typeof EmailTriageClassificationSchema
+>;
+
+export const BatchedEmailTriageResultItemSchema = z.object({
+  thread_id: z.string().min(1),
+  classification: EmailTriageClassificationSchema,
+});
+
+export type BatchedEmailTriageResultItem = z.infer<
+  typeof BatchedEmailTriageResultItemSchema
+>;
+
+export const BatchedEmailTriageResultSchema = z.array(
+  BatchedEmailTriageResultItemSchema,
+);
+
+export type BatchedEmailTriageResult = z.infer<
+  typeof BatchedEmailTriageResultSchema
+>;
+
 export const ThreadActionDecisionSchema = z
   .object({
-    action: z.enum(['email.reply', 'email.draft', 'calendar.create', 'escalate']),
+    action: z.enum([
+      "email.reply",
+      "email.draft",
+      "calendar.create",
+      "escalate",
+    ]),
     confidence: z.number().min(0).max(1),
     ambiguity_detected: z.boolean().default(false),
     email: z
@@ -281,14 +372,26 @@ export const ThreadActionDecisionSchema = z
       .optional(),
   })
   .superRefine((value, ctx) => {
-    if ((value.action === 'email.reply' || value.action === 'email.draft') && !value.email) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'email is required when action is email.reply or email.draft' });
+    if (
+      (value.action === "email.reply" || value.action === "email.draft") &&
+      !value.email
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "email is required when action is email.reply or email.draft",
+      });
     }
-    if (value.action === 'calendar.create' && !value.calendar) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'calendar is required when action is calendar.create' });
+    if (value.action === "calendar.create" && !value.calendar) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "calendar is required when action is calendar.create",
+      });
     }
-    if (value.action === 'escalate' && !value.escalation) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'escalation is required when action is escalate' });
+    if (value.action === "escalate" && !value.escalation) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "escalation is required when action is escalate",
+      });
     }
   });
 
@@ -310,7 +413,6 @@ export const IngestedThreadSchema = z.object({
   updated_at: z.string().optional(),
 });
 
-
 export type IngestedThread = z.infer<typeof IngestedThreadSchema>;
 
 export const CalendarEventSchema = z.object({
@@ -329,7 +431,6 @@ export const CalendarEventSchema = z.object({
 });
 
 export type CalendarEvent = z.infer<typeof CalendarEventSchema>;
-
 
 export const UserCredentialsSchema = z.object({
   user_id: z.string().uuid(),
@@ -361,11 +462,13 @@ export const MorningBriefActionableItemSchema = z.object({
   source_id: z.string(),
   title: z.string(),
   action_required: z.string(),
-  priority: z.enum(['high', 'medium', 'low']),
+  priority: z.enum(["high", "medium", "low"]),
   topic: z.string(),
 });
 
-export type MorningBriefActionableItem = z.infer<typeof MorningBriefActionableItemSchema>;
+export type MorningBriefActionableItem = z.infer<
+  typeof MorningBriefActionableItemSchema
+>;
 
 export const MorningBriefMetadataSchema = z
   .object({
@@ -375,7 +478,7 @@ export const MorningBriefMetadataSchema = z
   .passthrough();
 
 export type MorningBriefMetadata = z.infer<typeof MorningBriefMetadataSchema>;
- 
+
 export const MorningBriefSchema = z.object({
   id: z.string().uuid().optional(),
   organization_id: z.string().uuid(),
@@ -393,7 +496,7 @@ export const MorningBriefSchema = z.object({
 
 export type MorningBrief = z.infer<typeof MorningBriefSchema>;
 
-export const StatusReportPrioritySchema = z.enum(['high', 'medium', 'low']);
+export const StatusReportPrioritySchema = z.enum(["high", "medium", "low"]);
 export type StatusReportPriority = z.infer<typeof StatusReportPrioritySchema>;
 
 export const StatusReportSectionItemSchema = z.object({
@@ -403,7 +506,9 @@ export const StatusReportSectionItemSchema = z.object({
   source_id: z.string().optional(),
 });
 
-export type StatusReportSectionItem = z.infer<typeof StatusReportSectionItemSchema>;
+export type StatusReportSectionItem = z.infer<
+  typeof StatusReportSectionItemSchema
+>;
 
 export const StatusReportCriticalActionSchema = z.object({
   title: z.string().min(1),
@@ -414,7 +519,9 @@ export const StatusReportCriticalActionSchema = z.object({
   source_id: z.string().optional(),
 });
 
-export type StatusReportCriticalAction = z.infer<typeof StatusReportCriticalActionSchema>;
+export type StatusReportCriticalAction = z.infer<
+  typeof StatusReportCriticalActionSchema
+>;
 
 export const StatusReportMetadataSchema = z
   .object({
@@ -440,7 +547,10 @@ export const StatusReportSchema = z.object({
   commitments: z.array(StatusReportSectionItemSchema).default([]),
   next_actions: z.array(StatusReportSectionItemSchema).default([]),
   critical_actions: z.array(StatusReportCriticalActionSchema).default([]),
-  metadata: StatusReportMetadataSchema.default({ source_ids: [], source_links: [] }),
+  metadata: StatusReportMetadataSchema.default({
+    source_ids: [],
+    source_links: [],
+  }),
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
 });
@@ -473,7 +583,9 @@ export const ProtocolGeneratePayloadSchema = z.object({
   philosophy: z.string(),
 });
 
-export type ProtocolGeneratePayload = z.infer<typeof ProtocolGeneratePayloadSchema>;
+export type ProtocolGeneratePayload = z.infer<
+  typeof ProtocolGeneratePayloadSchema
+>;
 
 export const ProtocolMetadataSchema = z.object({
   nudging_frequency_hours: z.number(),
@@ -484,15 +596,65 @@ export const ProtocolMetadataSchema = z.object({
 
 export type ProtocolMetadata = z.infer<typeof ProtocolMetadataSchema>;
 
-export const ProjectSetupStatusSchema = z.enum(['incomplete', 'complete']);
+export const ProtocolOptimizationSuggestionSchema = z.object({
+  id: z.string().uuid().optional(),
+  organization_id: z.string().uuid(),
+  source_task_id: z.string().uuid().optional(),
+  nl_diff_summary: z.string().min(1),
+  rationale: z.string().min(1),
+  evidence_task_ids: z.array(z.string().uuid()).default([]),
+  evidence_log_ids: z.array(z.string().uuid()).default([]),
+  markdown_section: z.string().min(1),
+  old_content: z.string().min(1),
+  new_content: z.string().min(1),
+  metadata_changes: z.record(JsonValueSchema).default({}),
+  status: z
+    .enum(["pending", "review", "approved", "declined", "applied"])
+    .default("review"),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
+});
+
+export type ProtocolOptimizationSuggestion = z.infer<
+  typeof ProtocolOptimizationSuggestionSchema
+>;
+
+export const ProtocolOptimizationApprovalPayloadSchema = z.object({
+  suggestion_id: z.string().uuid(),
+  approved: z.boolean(),
+  approved_by: z.string().uuid(),
+  approved_at: z.string().datetime(),
+  source_task_id: z.string().uuid().optional(),
+  title: z.string().optional(),
+  content_markdown: z.string().optional(),
+  metadata: z.record(JsonValueSchema).optional(),
+});
+
+export type ProtocolOptimizationApprovalPayload = z.infer<
+  typeof ProtocolOptimizationApprovalPayloadSchema
+>;
+
+export const ProtocolOptimizePayloadSchema = z.object({
+  organization_id: z.string().uuid().optional(),
+  trigger: z.enum(["manual", "scheduled"]).default("manual"),
+  lookback_days: z.number().int().positive().max(90).default(14),
+  min_friction_events: z.number().int().positive().max(20).default(3),
+  source_task_id: z.string().uuid().optional(),
+});
+
+export type ProtocolOptimizePayload = z.infer<
+  typeof ProtocolOptimizePayloadSchema
+>;
+
+export const ProjectSetupStatusSchema = z.enum(["incomplete", "complete"]);
 export type ProjectSetupStatus = z.infer<typeof ProjectSetupStatusSchema>;
 
 export const RelancingReasonCodeSchema = z.enum([
-  'missing_required_fields',
-  'deadline_urgency',
-  'blocker_paused',
-  'emergency_brake',
-  'duplicate_prevented',
+  "missing_required_fields",
+  "deadline_urgency",
+  "blocker_paused",
+  "emergency_brake",
+  "duplicate_prevented",
 ]);
 
 export type RelancingReasonCode = z.infer<typeof RelancingReasonCodeSchema>;
@@ -502,7 +664,7 @@ export const ProjectSchedulingContextSchema = z.object({
   organization_id: z.string().uuid(),
   project_name: z.string(),
   deadline: z.string().nullable().optional(),
-  setup_status: ProjectSetupStatusSchema.default('incomplete'),
+  setup_status: ProjectSetupStatusSchema.default("incomplete"),
   scheduler_config: z.record(z.unknown()).default({}),
   next_nudge_at: z.string().nullable().optional(),
   last_nudge_at: z.string().nullable().optional(),
@@ -513,7 +675,9 @@ export const ProjectSchedulingContextSchema = z.object({
   updated_at: z.string().optional(),
 });
 
-export type ProjectSchedulingContext = z.infer<typeof ProjectSchedulingContextSchema>;
+export type ProjectSchedulingContext = z.infer<
+  typeof ProjectSchedulingContextSchema
+>;
 
 export const ProjectMemberAssignmentSchema = z.object({
   id: z.string().uuid().optional(),
@@ -526,7 +690,9 @@ export const ProjectMemberAssignmentSchema = z.object({
   updated_at: z.string().optional(),
 });
 
-export type ProjectMemberAssignment = z.infer<typeof ProjectMemberAssignmentSchema>;
+export type ProjectMemberAssignment = z.infer<
+  typeof ProjectMemberAssignmentSchema
+>;
 
 export const ProjectNudgeDispatchSchema = z.object({
   id: z.string().uuid().optional(),
@@ -549,12 +715,12 @@ export const RelancingNudgePayloadSchema = z.object({
   member_name: z.string().min(1),
   member_user_id: z.string().uuid().nullable().optional(),
   deadline: z.string(),
-  urgency_band: z.enum(['base', 'urgent_7d', 'urgent_3d', 'overdue']),
+  urgency_band: z.enum(["base", "urgent_7d", "urgent_3d", "overdue"]),
   cadence_hours: z.number().positive(),
   nudge_window_start: z.string(),
   nudge_window_end: z.string(),
-  reason_code: RelancingReasonCodeSchema.default('deadline_urgency'),
-  escalation_priority: z.enum(['normal', 'high']).default('normal'),
+  reason_code: RelancingReasonCodeSchema.default("deadline_urgency"),
+  escalation_priority: z.enum(["normal", "high"]).default("normal"),
 });
 
 export type RelancingNudgePayload = z.infer<typeof RelancingNudgePayloadSchema>;
@@ -567,7 +733,10 @@ export const RelancingSetupInputSchema = z.object({
 
 export type RelancingSetupInput = z.infer<typeof RelancingSetupInputSchema>;
 
-export const RelancingUpdateIntentSchema = z.enum(['status_update', 'blocker_report']);
+export const RelancingUpdateIntentSchema = z.enum([
+  "status_update",
+  "blocker_report",
+]);
 export type RelancingUpdateIntent = z.infer<typeof RelancingUpdateIntentSchema>;
 
 export const RelancingUpdateSchema = z
@@ -601,8 +770,9 @@ export const RelancingUpdateSchema = z
     if (!value.external_message_id && !value.correlation_id) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'Either external_message_id or correlation_id is required for relancing update idempotency',
-        path: ['external_message_id'],
+        message:
+          "Either external_message_id or correlation_id is required for relancing update idempotency",
+        path: ["external_message_id"],
       });
     }
   });
@@ -614,4 +784,182 @@ export const ProtocolGenerationResultSchema = z.object({
   metadata: ProtocolMetadataSchema,
 });
 
-export type ProtocolGenerationResult = z.infer<typeof ProtocolGenerationResultSchema>;
+export type ProtocolGenerationResult = z.infer<
+  typeof ProtocolGenerationResultSchema
+>;
+
+export const ProtocolOptimizationTaskResultSchema = z.object({
+  summary: z.string().min(1),
+  suggestion: ProtocolOptimizationSuggestionSchema.optional(),
+  escalation: z.boolean().optional(),
+  reason: z.string().optional(),
+  prompt: z.string().optional(),
+});
+
+export type ProtocolOptimizationTaskResult = z.infer<
+  typeof ProtocolOptimizationTaskResultSchema
+>;
+
+export const ContextReferenceSchema = z.object({
+  url: z.string().url(),
+  file_id: z.string(),
+});
+export type ContextReference = z.infer<typeof ContextReferenceSchema>;
+
+export const WorkerTypeSchema = z.enum([
+  "planner",
+  "gmail",
+  "drive",
+  "docs",
+  "sheets",
+  "slides",
+  "calendar",
+]);
+export type WorkerType = z.infer<typeof WorkerTypeSchema>;
+
+export const ExecutionRunStatusSchema = z.enum([
+  "planned",
+  "processing",
+  "completed",
+  "failed",
+  "escalated",
+  "blocked",
+]);
+export type ExecutionRunStatus = z.infer<typeof ExecutionRunStatusSchema>;
+
+export const ExecutionPlanStepStatusSchema = z.enum([
+  "pending",
+  "in_progress",
+  "completed",
+  "failed",
+  "blocked",
+  "skipped",
+]);
+export type ExecutionPlanStepStatus = z.infer<
+  typeof ExecutionPlanStepStatusSchema
+>;
+
+export const CapabilityReadinessResultSchema = z.object({
+  worker_type: WorkerTypeSchema,
+  ready: z.boolean(),
+  integration_active: z.boolean().default(false),
+  policy_allowed: z.boolean().default(false),
+  required_scopes: z.array(z.string()).default([]),
+  missing_scopes: z.array(z.string()).default([]),
+  requested_tools: z.array(z.string()).default([]),
+  resolved_tools: z.array(z.string()).default([]),
+  unavailable_tools: z.array(z.string()).default([]),
+  errors: z.array(z.string()).default([]),
+});
+export type CapabilityReadinessResult = z.infer<
+  typeof CapabilityReadinessResultSchema
+>;
+
+export const AssistantCommandIntentStepSchema = z.object({
+  key: z.string().min(1),
+  title: z.string().min(1),
+  worker_type: WorkerTypeSchema,
+  action: z.string().min(1),
+  requested_tools: z.array(z.string()).default([]),
+  input: z.record(JsonValueSchema).default({}),
+  idempotency_key: z.string().trim().min(1).optional(),
+  recoverable: z.boolean().default(false),
+});
+export type AssistantCommandIntentStep = z.infer<
+  typeof AssistantCommandIntentStepSchema
+>;
+
+export const AssistantCommandIntentSchema = z.object({
+  original_command: z.string().trim().min(1),
+  summary: z.string().trim().min(1),
+  mode: z.enum(["single_step", "multi_step"]).default("single_step"),
+  requested_steps: z.array(AssistantCommandIntentStepSchema).min(1),
+  high_risk: z.boolean().default(false),
+  confirmed: z.boolean().default(false),
+  context_references: z.array(ContextReferenceSchema).default([]),
+  conversation_id: z.string().optional(),
+  source_message_id: z.string().optional(),
+  correlation_id: z.string().optional(),
+  conversation_context: z.unknown().optional(),
+});
+export type AssistantCommandIntent = z.infer<
+  typeof AssistantCommandIntentSchema
+>;
+
+export const ExecutionLedgerEntrySchema = z.object({
+  step_key: z.string().min(1),
+  worker_type: WorkerTypeSchema,
+  action: z.string().min(1),
+  input_summary: z.string().min(1),
+  outputs_summary: z.string().min(1),
+  next_worker_note: z.string().min(1),
+  attempt_number: z.number().int().positive(),
+  timestamp: z.string(),
+});
+export type ExecutionLedgerEntry = z.infer<typeof ExecutionLedgerEntrySchema>;
+
+export const ExecutionPlanStepSchema = z.object({
+  key: z.string().min(1),
+  title: z.string().min(1),
+  worker_type: WorkerTypeSchema,
+  action: z.string().min(1),
+  status: ExecutionPlanStepStatusSchema.default("pending"),
+  requested_tools: z.array(z.string()).default([]),
+  tool_name: z.string().optional(),
+  input: z.record(JsonValueSchema).default({}),
+  output: z.record(JsonValueSchema).default({}),
+  handoff_note: z.string().nullable().optional(),
+  attempt_count: z.number().int().nonnegative().default(0),
+  idempotency_key: z.string().trim().min(1),
+  recoverable: z.boolean().default(false),
+  error_message: z.string().nullable().optional(),
+  capability_readiness: CapabilityReadinessResultSchema.optional(),
+});
+export type ExecutionPlanStep = z.infer<typeof ExecutionPlanStepSchema>;
+
+export const ExecutionPlanSchema = z.object({
+  version: z.literal("v1").default("v1"),
+  original_command: z.string().trim().min(1),
+  summary: z.string().trim().min(1),
+  steps: z.array(ExecutionPlanStepSchema).min(1),
+  ledger_entries: z.array(ExecutionLedgerEntrySchema).default([]),
+  replan_count: z.number().int().nonnegative().default(0),
+});
+export type ExecutionPlan = z.infer<typeof ExecutionPlanSchema>;
+
+export const IdempotencyEntrySchema = z.object({
+  status: z.enum(["pending", "completed", "skipped"]).default("pending"),
+  tool_name: z.string().optional(),
+  output: z.record(JsonValueSchema).default({}),
+  updated_at: z.string(),
+});
+export type IdempotencyEntry = z.infer<typeof IdempotencyEntrySchema>;
+
+export const IdempotencyStateSchema = z
+  .record(IdempotencyEntrySchema)
+  .default({});
+export type IdempotencyState = z.infer<typeof IdempotencyStateSchema>;
+
+export const ExecutionRunSchema = z.object({
+  id: z.string().uuid().optional(),
+  task_id: z.string().uuid(),
+  organization_id: z.string().uuid(),
+  status: ExecutionRunStatusSchema,
+  plan_json: ExecutionPlanSchema,
+  ledger_markdown: z.string(),
+  current_step_key: z.string().nullable().optional(),
+  current_worker_type: WorkerTypeSchema.nullable().optional(),
+  tool_policy_version: z.string().trim().min(1),
+  idempotency_state: IdempotencyStateSchema,
+  version: z.number().int().nonnegative().default(1),
+  last_error: z.string().nullable().optional(),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
+});
+export type ExecutionRun = z.infer<typeof ExecutionRunSchema>;
+
+export const WorkspaceContextItemSchema = z.object({
+  content: z.string(),
+  citation: CitationSchema,
+});
+export type WorkspaceContextItem = z.infer<typeof WorkspaceContextItemSchema>;

@@ -3,18 +3,28 @@ import { supabase } from './supabase.js';
 import { decrypt, encrypt } from '@ai-assistant/shared/utils/encryption.js';
 import { config } from '../config/index.js';
 import TurndownService from 'turndown';
+import { runWithConcurrency } from './emailBatching.js';
 
 const ENCRYPTION_SECRET = config.ENCRYPTION_SECRET;
 const DEFAULT_MAX_RESULTS = parseInt(process.env.INGESTION_MAX_RESULTS || '20', 10);
 const MAX_BODY_SIZE = 1024 * 1024; // 1MB limit
+const DEFAULT_THREAD_DETAIL_CONCURRENCY = parseInt(
+  process.env.GMAIL_THREAD_DETAIL_CONCURRENCY || '4',
+  10,
+);
 
 export class GoogleIngestionService {
   private maxResults: number;
   private turndownService: TurndownService;
+  private threadDetailConcurrency: number;
 
-  constructor(maxResults: number = DEFAULT_MAX_RESULTS) {
+  constructor(
+    maxResults: number = DEFAULT_MAX_RESULTS,
+    threadDetailConcurrency: number = DEFAULT_THREAD_DETAIL_CONCURRENCY,
+  ) {
     this.maxResults = maxResults;
     this.turndownService = new TurndownService();
+    this.threadDetailConcurrency = Math.max(1, Math.floor(threadDetailConcurrency));
   }
 
   async runAllIngestions() {
@@ -151,63 +161,95 @@ export class GoogleIngestionService {
     try {
       const res = await this.retryOperation(() => gmail.users.threads.list(params));
       const threads = res.data.threads || [];
-      
-      for (const thread of threads) {
-        try {
-          const details = await this.retryOperation(() => gmail.users.threads.get({ userId: 'me', id: thread.id! }));
-          const snippet = details.data.snippet;
-          const messages = details.data.messages || [];
-          
-          // Use the last message in thread for subject and body (most recent)
-          const lastMessage = messages[messages.length - 1];
-          const headers = lastMessage?.payload?.headers;
-          const subject = headers?.find(h => h.name === 'Subject')?.value;
-          
-          // Extract body
-          let body = '';
-          let isTruncated = false;
-          
-          if (lastMessage?.payload) {
-             const extractedHtml = this.extractBodyFromPayload(lastMessage.payload);
-             if (extractedHtml) {
-               body = this.turndownService.turndown(extractedHtml);
-             }
+
+      const ingestionResults = await runWithConcurrency(
+        threads,
+        this.threadDetailConcurrency,
+        async (thread) => {
+          if (!thread.id) {
+            throw new Error('Encountered Gmail thread without an id');
           }
 
-          // Truncate if too large
-          if (body.length > MAX_BODY_SIZE) {
-            body = body.substring(0, MAX_BODY_SIZE);
-            isTruncated = true;
-          }
+          await this.ingestSingleThread(gmail, organizationId, userId, thread.id);
+          return thread.id;
+        },
+      );
 
-          // Encrypt body if present
-          let encryptedBody = null;
-          if (body) {
-             // Encryption happens synchronously here, but in production with high volume 
-             // we might want to offload this. For now, it's fast enough for text < 1MB.
-             encryptedBody = encrypt(body, ENCRYPTION_SECRET);
-          }
-
-          await supabase.from('ingested_threads').upsert({
-            organization_id: organizationId,
-            user_id: userId,
-            external_id: thread.id!,
-            subject: subject || 'No Subject',
-            summary: snippet,
-            body: encryptedBody,
-            metadata: { 
-              thread_raw: details.data,
-              is_truncated: isTruncated
-            } as any,
-            updated_at: new Date().toISOString()
-          } as any, { onConflict: 'organization_id,external_id' });
-        } catch (err) {
-          console.error(`Failed to ingest Gmail thread ${thread.id} for org ${organizationId}:`, err);
+      for (const result of ingestionResults) {
+        if (result.status === 'rejected') {
+          const threadId =
+            typeof threads[result.index]?.id === 'string'
+              ? threads[result.index].id
+              : 'unknown-thread';
+          console.error(
+            `Failed to ingest Gmail thread ${threadId} for org ${organizationId}:`,
+            result.reason,
+          );
         }
       }
     } catch (err) {
       console.error(`Failed to list threads for org ${organizationId}:`, err);
     }
+  }
+
+  private async ingestSingleThread(
+    gmail: ReturnType<typeof google.gmail>,
+    organizationId: string,
+    userId: string | null,
+    threadId: string,
+  ): Promise<void> {
+    const details = await this.retryOperation(() =>
+      gmail.users.threads.get({ userId: 'me', id: threadId }),
+    );
+    const snippet = details.data.snippet;
+    const messages = details.data.messages || [];
+
+    // Use the last message in thread for subject and body (most recent)
+    const lastMessage = messages[messages.length - 1];
+    const headers = lastMessage?.payload?.headers;
+    const subject = headers?.find((header) => header.name === 'Subject')?.value;
+
+    // Extract body
+    let body = '';
+    let isTruncated = false;
+
+    if (lastMessage?.payload) {
+      const extractedHtml = this.extractBodyFromPayload(lastMessage.payload);
+      if (extractedHtml) {
+        body = this.turndownService.turndown(extractedHtml);
+      }
+    }
+
+    // Truncate if too large
+    if (body.length > MAX_BODY_SIZE) {
+      body = body.substring(0, MAX_BODY_SIZE);
+      isTruncated = true;
+    }
+
+    // Encrypt body if present
+    let encryptedBody = null;
+    if (body) {
+      // Encryption happens synchronously here, but in production with high volume
+      // we might want to offload this. For now, it's fast enough for text < 1MB.
+      encryptedBody = encrypt(body, ENCRYPTION_SECRET);
+    }
+
+    await supabase.from('ingested_threads').upsert(
+      {
+        organization_id: organizationId,
+        user_id: userId,
+        external_id: threadId,
+        subject: subject || 'No Subject',
+        summary: snippet,
+        body: encryptedBody,
+        metadata: {
+          thread_raw: details.data,
+          is_truncated: isTruncated,
+        } as any,
+        updated_at: new Date().toISOString(),
+      } as any,
+      { onConflict: 'organization_id,external_id' },
+    );
   }
 
   private extractBodyFromPayload(payload: any): string {

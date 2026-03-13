@@ -208,4 +208,97 @@ describe('GoogleIngestionService', () => {
         expect.any(Object)
     );
   });
+
+  it('should fetch thread details with bounded concurrency', async () => {
+    const threadIds = ['c1', 'c2', 'c3', 'c4'];
+    let activeRequests = 0;
+    let maxConcurrentRequests = 0;
+
+    mocks.threadsList.mockResolvedValueOnce({
+      data: {
+        threads: threadIds.map((id) => ({ id })),
+      },
+    });
+
+    mocks.threadsGet.mockImplementation(async ({ id }: { id: string }) => {
+      activeRequests += 1;
+      maxConcurrentRequests = Math.max(maxConcurrentRequests, activeRequests);
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      activeRequests -= 1;
+      return {
+        data: {
+          id,
+          snippet: `snippet-${id}`,
+          messages: [
+            {
+              payload: {
+                headers: [{ name: 'Subject', value: `Subject ${id}` }],
+                body: {
+                  data: Buffer.from('<p>Hello</p>').toString('base64url'),
+                },
+              },
+            },
+          ],
+        },
+      };
+    });
+
+    const mockIntegration = {
+      id: 'int-concurrency',
+      organization_id: 'org-concurrency',
+      user_id: 'user-concurrency',
+      encrypted_creds: { refresh_token: 'enc-refresh' },
+    };
+
+    mocks.eq.mockResolvedValueOnce({ data: [mockIntegration], error: null });
+
+    const concurrentService = new GoogleIngestionService(10, 2);
+    await concurrentService.runAllIngestions();
+
+    expect(maxConcurrentRequests).toBeLessThanOrEqual(2);
+    expect(mocks.threadsGet).toHaveBeenCalledTimes(threadIds.length);
+  });
+
+  it('should preserve retry behavior for retryable errors', async () => {
+    const retryableOperation = vi
+      .fn()
+      .mockRejectedValueOnce({ code: 429 })
+      .mockResolvedValueOnce('ok');
+
+    await expect(
+      // @ts-expect-error - testing private helper behavior intentionally
+      service.retryOperation(retryableOperation, 1, 1),
+    ).resolves.toBe('ok');
+
+    expect(retryableOperation).toHaveBeenCalledTimes(2);
+  });
+
+  it('should include thread id in per-thread ingestion error logs', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    mocks.threadsList.mockResolvedValueOnce({
+      data: { threads: [{ id: 'bad-thread' }] },
+    });
+    mocks.threadsGet.mockRejectedValueOnce({ code: 400, message: 'bad request' });
+
+    const mockIntegration = {
+      id: 'int-log',
+      organization_id: 'org-log',
+      user_id: 'user-log',
+      encrypted_creds: { refresh_token: 'enc-refresh' },
+    };
+
+    mocks.eq.mockResolvedValueOnce({ data: [mockIntegration], error: null });
+
+    await service.runAllIngestions();
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to ingest Gmail thread bad-thread for org org-log:'),
+      expect.anything(),
+    );
+
+    consoleErrorSpy.mockRestore();
+  });
 });
