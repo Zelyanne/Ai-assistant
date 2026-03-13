@@ -8,7 +8,7 @@ import CommandTimeline from '../components/command/CommandTimeline.vue';
 import { useCommandCenter } from '../composables/useCommandCenter';
 
 const confirm = useConfirm();
-const { timeline, isSubmitting, submitCommand, startRealtimeSync, stopRealtimeSync } = useCommandCenter();
+const { activeExecutionRun, timeline, isSubmitting, submitCommand, startRealtimeSync, stopRealtimeSync } = useCommandCenter();
 
 onMounted(() => {
   startRealtimeSync();
@@ -44,6 +44,40 @@ async function onSubmitCommand(message: string): Promise<void> {
         Use natural language to prepare and execute delegated operational actions.
       </p>
     </header>
+
+    <section
+      v-if="activeExecutionRun?.executionRun"
+      class="rounded-executive border border-slate-200 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-700 px-4 py-4 text-slate-50 shadow-sm"
+    >
+      <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div class="space-y-2">
+          <p class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">
+            Active orchestration
+          </p>
+          <h2 class="text-lg font-semibold md:text-xl">
+            {{ activeExecutionRun.executionRun.summary || 'Planner-led workspace run' }}
+          </h2>
+          <p class="text-sm text-slate-200">
+            {{ activeExecutionRun.content }}
+          </p>
+        </div>
+
+        <div class="grid gap-2 text-sm text-slate-200 md:min-w-[220px]">
+          <div>
+            <span class="text-slate-400">Status:</span>
+            {{ activeExecutionRun.executionRun.status }}
+          </div>
+          <div v-if="activeExecutionRun.executionRun.currentWorkerType">
+            <span class="text-slate-400">Worker:</span>
+            {{ activeExecutionRun.executionRun.currentWorkerType }}
+          </div>
+          <div v-if="activeExecutionRun.executionRun.currentStepKey">
+            <span class="text-slate-400">Step:</span>
+            {{ activeExecutionRun.executionRun.currentStepKey }}
+          </div>
+        </div>
+      </div>
+    </section>
 
     <CommandTimeline :items="timeline" />
     <CommandComposer

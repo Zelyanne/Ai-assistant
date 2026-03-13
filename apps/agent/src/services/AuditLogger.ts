@@ -51,6 +51,7 @@ export class AuditLogger {
     actionTaken: string,
     trace: ReasoningStep[],
     citations: Citation[],
+    options: { executionRunId?: string } = {},
   ): Promise<void> {
     const guard = new PerimeterGuard();
 
@@ -64,6 +65,21 @@ export class AuditLogger {
     ) {
       finalCitations.unshift(
         this.createCitation("task", taskId, "Originating task"),
+      );
+    }
+
+    if (
+      options.executionRunId &&
+      !finalCitations.some(
+        (c) => c.source_type === "execution_run" && c.source_id === options.executionRunId,
+      )
+    ) {
+      finalCitations.unshift(
+        this.createCitation(
+          "execution_run",
+          options.executionRunId,
+          "Planner-worker execution run",
+        ),
       );
     }
 

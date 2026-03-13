@@ -12,7 +12,7 @@ const baseTask: Task = {
 };
 
 describe('AssistantCommandProcessor', () => {
-  it('maps explicit target_domain_action to delegated action', async () => {
+  it('builds a planner intent for explicit email draft commands', async () => {
     const processor = new AssistantCommandProcessor();
 
     const result = await processor.process({
@@ -28,12 +28,59 @@ describe('AssistantCommandProcessor', () => {
       },
     });
 
-    expect(result.delegated_domain_action).toBe('email.draft');
-    expect(result.delegated_payload).toMatchObject({
-      recipient: 'alexis@example.com',
-      subject: 'Status',
-      body: 'Draft body',
+    expect(result.planner_intent).toBeDefined();
+    expect(result.planner_intent.requested_steps).toHaveLength(1);
+    expect(result.planner_intent.requested_steps[0]).toMatchObject({
+      worker_type: 'gmail',
+      action: 'draft_email',
+      requested_tools: ['draft_gmail_message'],
     });
+  });
+
+  it('supports explicit multi-step plan overrides', async () => {
+    const processor = new AssistantCommandProcessor();
+
+    const result = await processor.process({
+      ...baseTask,
+      payload: {
+        command: 'read the source file, create a doc, then draft the email',
+        target_domain_action: 'email.draft',
+        target_payload: {
+          plan_steps: [
+            {
+              key: 'drive-step',
+              title: 'Read Drive file',
+              worker_type: 'drive',
+              action: 'read_drive_context',
+              requested_tools: ['get_drive_file_content'],
+              input: { context_references: [{ url: 'https://docs.google.com/document/d/file-123/edit', file_id: 'file-123' }] },
+            },
+            {
+              key: 'doc-step',
+              title: 'Create doc',
+              worker_type: 'docs',
+              action: 'create_document',
+              input: { source_step_key: 'drive-step' },
+            },
+            {
+              key: 'gmail-step',
+              title: 'Draft email',
+              worker_type: 'gmail',
+              action: 'draft_email',
+              input: { recipient: 'alexis@example.com', subject: 'Status', source_step_key: 'doc-step' },
+            },
+          ],
+        },
+      },
+    });
+
+    expect(result.planner_intent).toBeDefined();
+    expect(result.planner_intent.mode).toBe('multi_step');
+    expect(result.planner_intent.requested_steps.map((step: { key: string }) => step.key)).toEqual([
+      'drive-step',
+      'doc-step',
+      'gmail-step',
+    ]);
   });
 
   it('requires explicit confirmation for high-risk commands', async () => {
@@ -54,22 +101,33 @@ describe('AssistantCommandProcessor', () => {
     ).rejects.toThrow('CONFIRMATION_REQUIRED');
   });
 
-  it('requires confirmation for delegated channel.send even when high_risk flag is absent', async () => {
+  it('derives approval metadata for confirmed email send plans', async () => {
     const processor = new AssistantCommandProcessor();
 
-    await expect(
-      processor.process({
-        ...baseTask,
-        payload: {
-          command: 'send message to channel',
-          channel: 'telegram',
-          message_text: 'hello',
-        },
+    const result = await processor.process({
+      ...baseTask,
+      payload: {
+        command: 'send an email to Alexis',
+        confirmed: true,
+        recipient: 'alexis@example.com',
+        subject: 'Status',
+        body: 'Ship it',
+      },
+    });
+
+    expect(result.planner_intent).toBeDefined();
+    expect(result.planner_intent.requested_steps[0]).toMatchObject({
+      worker_type: 'gmail',
+      action: 'send_email',
+      input: expect.objectContaining({
+        approved_by: baseTask.user_id,
+        source_task_id: baseTask.id,
       }),
-    ).rejects.toThrow('CONFIRMATION_REQUIRED');
+    });
+    expect(result.planner_intent.requested_steps[0].input.approved_at).toEqual(expect.any(String));
   });
 
-  it('infers thread.action when command references thread context', async () => {
+  it('keeps legacy thread.action delegation for thread-context commands', async () => {
     const processor = new AssistantCommandProcessor();
 
     const result = await processor.process({
@@ -88,27 +146,5 @@ describe('AssistantCommandProcessor', () => {
       source_id: 'thread-123',
       correlation_id: 'corr-123',
     });
-  });
-
-  it('returns conversation linkage citations when provided', async () => {
-    const processor = new AssistantCommandProcessor();
-
-    const result = await processor.process({
-      ...baseTask,
-      payload: {
-        command: 'send message to channel',
-        confirmed: true,
-        channel: 'telegram',
-        message_text: 'hello',
-        conversation_id: 'conv-1',
-        source_message_id: 'msg-1',
-        correlation_id: 'corr-1',
-      },
-    });
-
-    const citations = (result.citations ?? []) as Array<{ source_type: string; source_id: string }>;
-    expect(citations.some((citation) => citation.source_type === 'command_conversation' && citation.source_id === 'conv-1')).toBe(true);
-    expect(citations.some((citation) => citation.source_type === 'command_message' && citation.source_id === 'msg-1')).toBe(true);
-    expect(citations.some((citation) => citation.source_type === 'correlation' && citation.source_id === 'corr-1')).toBe(true);
   });
 });

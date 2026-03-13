@@ -1,14 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EmailSendProcessor } from './EmailSendProcessor.js';
 
-const { mockExecuteTool, mockMaybeSingle } = vi.hoisted(() => ({
-  mockExecuteTool: vi.fn(),
+const { mockExecuteWorkerTool, mockResolveToolName, mockMaybeSingle } = vi.hoisted(() => ({
+  mockExecuteWorkerTool: vi.fn(),
+  mockResolveToolName: vi.fn(),
   mockMaybeSingle: vi.fn(),
 }));
 
 vi.mock('../services/mcp.js', () => ({
   mcpService: {
-    executeTool: mockExecuteTool,
+    executeWorkerTool: mockExecuteWorkerTool,
+    resolveToolName: mockResolveToolName,
   },
 }));
 
@@ -19,6 +21,7 @@ vi.mock('../services/supabase.js', () => ({
         eq: vi.fn(() => ({
           eq: vi.fn(() => ({
             maybeSingle: mockMaybeSingle,
+            single: mockMaybeSingle,
           })),
         })),
       })),
@@ -35,7 +38,10 @@ describe('EmailSendProcessor', () => {
   });
 
   it('sends email when approved by integration owner', async () => {
-    mockExecuteTool.mockResolvedValueOnce({ content: [{ type: 'text', text: 'Message ID: abc-123' }] });
+    mockExecuteWorkerTool.mockResolvedValueOnce({
+      toolName: 'send_gmail_message',
+      result: { content: [{ type: 'text', text: 'Message ID: abc-123' }] },
+    });
 
     const result = await processor.process({
       id: 'task-1',
@@ -51,8 +57,9 @@ describe('EmailSendProcessor', () => {
       },
     } as any);
 
-    expect(mockExecuteTool).toHaveBeenCalledWith(
+    expect(mockExecuteWorkerTool).toHaveBeenCalledWith(
       'org-1',
+      'gmail',
       'send_gmail_message',
       expect.objectContaining({
         to: 'ceo@example.com',
@@ -62,6 +69,7 @@ describe('EmailSendProcessor', () => {
     );
     expect(result.send_status).toBe('sent');
     expect(result.message_id).toBe('abc-123');
+    expect(result.tool_name).toBe('send_gmail_message');
   });
 
   it('rejects when approved_by does not match integration owner', async () => {
@@ -80,13 +88,20 @@ describe('EmailSendProcessor', () => {
       } as any),
     ).rejects.toThrow(/APPROVER_MISMATCH/);
 
-    expect(mockExecuteTool).not.toHaveBeenCalled();
+    expect(mockExecuteWorkerTool).not.toHaveBeenCalled();
   });
 
   it('falls back to draft when send tool is unavailable', async () => {
-    mockExecuteTool
-      .mockRejectedValueOnce(new Error('Unknown tool: send_gmail_message'))
-      .mockResolvedValueOnce({ content: [{ type: 'text', text: 'Draft created' }] });
+    mockExecuteWorkerTool.mockRejectedValueOnce(new Error('Unknown tool: send_gmail_message'));
+    mockResolveToolName.mockResolvedValueOnce({
+      requestedTool: 'create_gmail_draft',
+      resolvedTool: 'draft_gmail_message',
+      availableTools: ['draft_gmail_message'],
+    });
+    mockExecuteWorkerTool.mockResolvedValueOnce({
+      toolName: 'draft_gmail_message',
+      result: { content: [{ type: 'text', text: 'Draft created' }] },
+    });
 
     const result = await processor.process({
       id: 'task-1',
@@ -101,8 +116,9 @@ describe('EmailSendProcessor', () => {
       },
     } as any);
 
-    expect(mockExecuteTool).toHaveBeenNthCalledWith(1, 'org-1', 'send_gmail_message', expect.any(Object));
-    expect(mockExecuteTool).toHaveBeenNthCalledWith(2, 'org-1', 'create_gmail_draft', expect.any(Object));
+    expect(mockExecuteWorkerTool).toHaveBeenNthCalledWith(1, 'org-1', 'gmail', 'send_gmail_message', expect.any(Object));
+    expect(mockExecuteWorkerTool).toHaveBeenNthCalledWith(2, 'org-1', 'gmail', 'create_gmail_draft', expect.any(Object));
     expect(result.send_status).toBe('draft_created');
+    expect(result.tool_name).toBe('draft_gmail_message');
   });
 });

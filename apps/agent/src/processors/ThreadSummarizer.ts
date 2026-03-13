@@ -3,6 +3,7 @@ import { Task, ThreadSummarySchema } from '@ai-assistant/shared';
 import { supabase } from "../services/supabase.js";
 import { LLMProviderFactory } from '../services/llm/factory.js';
 import { PerimeterGuard } from '../guards/PerimeterGuard.js';
+import { AuditLogger } from '../services/AuditLogger.js';
 
 /**
  * Processor for generating structured summaries of email threads.
@@ -105,22 +106,22 @@ ${summaryJson.action_items.map(a => `- ${a}`).join('\n')}
 
     if (updateError) throw updateError;
 
-    // 6. Log activity with reasoning trace and citations (AC 6)
+    // 6. Log activity with reasoning trace and citations via standardized AuditLogger
     const citationLink = `https://mail.google.com/mail/u/0/#all/${thread.external_id}`;
 
-    await supabase.from('agent_activity_log').insert({
+    await AuditLogger.flush(
       organization_id,
-      task_id: task.id,
-      agent_id: task.user_id ?? '',
-      action_taken: `Summarized thread: ${thread.subject}`,
-      reasoning_trace: this.getTrace(),
-      citations: [{
+      task.id || null,
+      task.user_id || 'agent-controller',
+      `Summarized thread: ${thread.subject}`,
+      this.getTrace(),
+      [{
         source_type: 'email',
-        source_id: thread.external_id,
+        source_id: String(thread.external_id),
         link: citationLink,
         description: `Original email thread: ${thread.subject}`
       }]
-    } as any);
+    );
 
     return {
       message: `Successfully summarized thread`,

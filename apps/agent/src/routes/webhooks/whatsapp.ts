@@ -114,6 +114,20 @@ export async function handleWhatsAppWebhook(req: Request, res: Response, deps: W
 export function createWhatsAppWebhookRouter(deps: WhatsAppWebhookDeps = { registry: channelAdapterRegistry, routerService: channelRouter }): Router {
   const router = Router();
 
+  router.get('/', (req, res) => {
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+
+    const adapter = deps.registry.get('whatsapp') as any; // Cast to access private/internal fields if needed
+    // In a real app, we'd check against WHATSAPP_WEBHOOK_SECRET
+    if (mode === 'subscribe' && token === process.env.WHATSAPP_WEBHOOK_SECRET) {
+      res.status(200).send(challenge);
+    } else {
+      res.sendStatus(403);
+    }
+  });
+
   router.post('/', async (req, res) => {
     await handleWhatsAppWebhook(req, res, deps);
   });

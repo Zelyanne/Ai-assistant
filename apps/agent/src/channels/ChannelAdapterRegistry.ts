@@ -33,8 +33,18 @@ export class ChannelAdapterRegistry {
   static createDefault(): ChannelAdapterRegistry {
     return new ChannelAdapterRegistry([
       new WebChatAdapter(),
-      new TelegramAdapter({ webhook_secret_token: process.env.TELEGRAM_WEBHOOK_SECRET }),
-      new WhatsAppAdapter({ webhook_signing_secret: process.env.WHATSAPP_WEBHOOK_SIGNING_SECRET }),
+      new TelegramAdapter({
+        bot_token: process.env.TELEGRAM_BOT_TOKEN,
+        webhook_secret_token: process.env.TELEGRAM_WEBHOOK_SECRET,
+      }),
+      new WhatsAppAdapter({
+        webhook_signing_secret: process.env.WHATSAPP_WEBHOOK_SECRET,
+        whatsapp_api_key: process.env.WHATSAPP_API_KEY,
+        whatsapp_phone_number_id: process.env.WHATSAPP_PHONE_NUMBER_ID,
+        twilio_account_sid: process.env.TWILIO_ACCOUNT_SID,
+        twilio_auth_token: process.env.TWILIO_AUTH_TOKEN,
+        twilio_whatsapp_phone_number: process.env.TWILIO_WHATSAPP_PHONE_NUMBER,
+      }),
     ]);
   }
 }

@@ -26,6 +26,15 @@ const envSchema = z.object({
   GOOGLE_OAUTH_CLIENT_SECRET: z.string().min(1).transform((val) => val.trim()),
   GOOGLE_OAUTH_REDIRECT_URI: z.string().url().transform((val) => val.trim()),
   ENCRYPTION_SECRET: z.string().length(32),
+  TELEGRAM_BOT_TOKEN: z.string().min(1).optional().transform((val) => val?.trim()),
+  TELEGRAM_WEBHOOK_SECRET: z.string().min(1).optional().transform((val) => val?.trim()),
+  // WhatsApp/Twilio
+  WHATSAPP_API_KEY: z.string().min(1).optional().transform((val) => val?.trim()),
+  WHATSAPP_PHONE_NUMBER_ID: z.string().min(1).optional().transform((val) => val?.trim()),
+  WHATSAPP_WEBHOOK_SECRET: z.string().min(1).optional().transform((val) => val?.trim()),
+  TWILIO_ACCOUNT_SID: z.string().min(1).optional().transform((val) => val?.trim()),
+  TWILIO_AUTH_TOKEN: z.string().min(1).optional().transform((val) => val?.trim()),
+  TWILIO_WHATSAPP_PHONE_NUMBER: z.string().min(1).optional().transform((val) => val?.trim()),
   // Langfuse Tracing Variables (NEW - Primary)
   ENABLE_LANGFUSE_TRACING: z.string().default('false').transform((val) => val === 'true'),
   LANGFUSE_PUBLIC_KEY: z.string().min(1).optional().transform((val) => val?.trim()),

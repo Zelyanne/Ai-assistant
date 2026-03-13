@@ -2,6 +2,13 @@ import { BaseProcessor, ProcessorResult } from './BaseProcessor.js';
 import { Task } from '@ai-assistant/shared';
 import { mcpService } from '../services/mcp.js';
 
+function encodeRawEmail(recipient: string, subject: string, body: string): string {
+  return Buffer.from(
+    `To: ${recipient}\r\nSubject: ${subject}\r\n\r\n${body}`,
+    'utf-8',
+  ).toString('base64');
+}
+
 /**
  * Processor for email drafting using MCP.
  */
@@ -13,35 +20,52 @@ export class EmailDraftProcessor extends BaseProcessor {
   async process(task: Task): Promise<ProcessorResult> {
     console.log(`[EmailDraftProcessor][${task.id}] Processing email.draft...`);
 
-    const { recipient, subject, body } = task.payload as any;
+    const payload = (task.payload ?? {}) as Record<string, unknown>;
+    const recipient = typeof payload.recipient === 'string' ? payload.recipient : null;
+    const subject = typeof payload.subject === 'string' ? payload.subject : null;
+    const body = typeof payload.body === 'string' ? payload.body : null;
 
     if (!recipient || !subject || !body) {
       throw new Error('Missing required email fields: recipient, subject, or body');
     }
 
-    // Execute MCP tool
-    const result = await mcpService.executeTool(
+    const resolution = await mcpService.resolveToolName(
       task.organization_id,
       'create_gmail_draft',
-      {
-        userId: 'me',
-        draft: {
-          message: {
-            raw: btoa(
-              `To: ${recipient}\r\n` +
-              `Subject: ${subject}\r\n\r\n` +
-              `${body}`
-            )
-          }
+    );
+
+    const actualTool = resolution.resolvedTool ?? 'create_gmail_draft';
+    const args = actualTool === 'draft_gmail_message'
+      ? {
+          to: recipient,
+          subject,
+          body,
+          body_format: typeof payload.body_format === 'string' ? payload.body_format : 'plain',
+          thread_id: typeof payload.thread_external_id === 'string' ? payload.thread_external_id : undefined,
         }
-      }
+      : {
+          userId: 'me',
+          draft: {
+            message: {
+              raw: encodeRawEmail(recipient, subject, body),
+            },
+          },
+        };
+
+    const { toolName, result } = await mcpService.executeWorkerTool(
+      task.organization_id,
+      'gmail',
+      'create_gmail_draft',
+      args,
     );
 
     return {
-      message: "Email draft created successfully via MCP",
+      summary: 'Email draft created successfully via MCP',
+      message: 'Email draft created successfully via MCP',
       task_id: task.id,
       domain_action: task.domain_action,
-      result: result
+      tool_name: toolName,
+      result,
     };
   }
 }

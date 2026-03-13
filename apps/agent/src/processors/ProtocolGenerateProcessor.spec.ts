@@ -2,6 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ProtocolGenerateProcessor } from './ProtocolGenerateProcessor.js';
 import type { Task } from '@ai-assistant/shared';
 
+vi.mock('../services/AuditLogger.js', () => ({
+  AuditLogger: {
+    flush: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
 // Mock dependencies
 vi.mock('../services/mcp.js', () => ({
   mcpService: {
@@ -44,9 +50,9 @@ describe('ProtocolGenerateProcessor', () => {
 
   it('should throw error for invalid payload', async () => {
     const task = {
-      id: 'task-123',
+      id: '550e8400-e29b-41d4-a716-446655440100',
       domain_action: 'protocol.generate',
-      organization_id: 'org-1',
+      organization_id: '550e8400-e29b-41d4-a716-446655440101',
       status: 'queued',
       payload: {} // Missing philosophy
     } as unknown as Task;
@@ -56,9 +62,9 @@ describe('ProtocolGenerateProcessor', () => {
 
   it('should generate protocol and return success result', async () => {
     const task = {
-      id: 'task-123',
+      id: '550e8400-e29b-41d4-a716-446655440102',
       domain_action: 'protocol.generate',
-      organization_id: 'org-1',
+      organization_id: '550e8400-e29b-41d4-a716-446655440103',
       status: 'queued',
       payload: { philosophy: 'Be kind.' }
     } as unknown as Task;

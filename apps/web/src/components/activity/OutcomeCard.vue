@@ -14,7 +14,7 @@ interface Props {
   summaryJson?: ThreadSummary;
   externalId?: string;
   taskId?: string;
-  status: 'done' | 'escalation' | 'paused' | 'processing' | 'queued' | 'error' | 'insight';
+  status: 'done' | 'escalation' | 'paused' | 'processing' | 'queued' | 'error' | 'insight' | 'optimization';
   agencyTier?: 'Public' | 'Controlled' | 'Restricted';
   timestamp: string;
   topics?: string[];
@@ -52,6 +52,9 @@ const cardStyle = computed(() => {
     case 'paused':
       return { borderLeft: '4px solid #E11D48', background: 'rgba(225, 29, 72, 0.02)' };
     case 'insight':
+      return { borderLeft: '4px solid #2563EB', background: 'rgba(37, 99, 235, 0.02)' };
+    case 'optimization':
+      return { borderLeft: '4px solid #334155', background: 'rgba(51, 65, 85, 0.05)' };
     default:
       return { borderLeft: '4px solid #2563EB', background: 'rgba(37, 99, 235, 0.02)' };
   }
@@ -63,6 +66,7 @@ const statusLabel = computed(() => {
     case 'escalation': return 'Escalation';
     case 'paused': return 'Paused';
     case 'insight': return 'Insight';
+    case 'optimization': return 'Optimization Suggestion';
     default: return props.status.charAt(0).toUpperCase() + props.status.slice(1);
   }
 });
@@ -74,6 +78,7 @@ const statusSeverity = computed(() => {
     case 'paused': return 'danger';
     case 'error': return 'danger';
     case 'insight': return 'info';
+    case 'optimization': return 'secondary';
     default: return 'secondary';
   }
 });

@@ -578,18 +578,14 @@ export class RelancingScheduler {
       output_summary: JSON.stringify(details),
     });
 
-    const { error } = await this.supabaseClient.from('agent_activity_log').insert({
-      organization_id: organizationId,
-      task_id: taskId,
-      agent_id: 'relancing-scheduler',
-      action_taken: 'relancing_scheduler_decision',
-      reasoning_trace: [step],
-      citations: [],
-    });
-
-    if (error) {
-      console.error(`[RelancingScheduler] Failed to write audit decision ${reasonCode}: ${error.message}`);
-    }
+    await AuditLogger.flush(
+      organizationId,
+      taskId,
+      'agent-controller',
+      'relancing_scheduler_decision',
+      [step],
+      []
+    );
   }
 }
 

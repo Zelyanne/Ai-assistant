@@ -130,24 +130,88 @@ describe('ProtocolService', () => {
     });
   });
 
-  describe('extractRules', () => {
-    it('should extract rules from protocol markdown based on task', async () => {
-      const mockTask: Partial<Task> = {
-        domain_action: 'email.draft',
-        payload: { subject: 'Hello' }
-      };
-      const mockLLMResponse = {
-        data: '1. Use professional tone.\n2. Be concise.',
-        usage: { promptTokens: 10, completionTokens: 10, totalTokens: 20, latencyMs: 100 },
-        model: 'mistral'
+  describe('suggestOptimizations', () => {
+    it('should return null if no protocol is found', async () => {
+      (supabase.from as any).mockReturnValue({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
+      });
+
+      const result = await ProtocolService.suggestOptimizations('org-1');
+      expect(result).toBeNull();
+    });
+
+    it('should return a suggestion when friction evidence exists', async () => {
+      const orgId = '123e4567-e89b-12d3-a456-426614174001';
+      // 1. Mock protocol
+      const mockProtocol = { content_markdown: '# My Protocol\n\n## Nudging Rules\nNudge every 2 days.' };
+      
+      // 2. Mock logs and tasks
+      const mockLogs = [
+        { id: '123e4567-e89b-12d3-a456-426614174101', task_id: '123e4567-e89b-12d3-a456-426614174201', action_taken: 'Escalation', created_at: new Date().toISOString() },
+        { id: '123e4567-e89b-12d3-a456-426614174102', task_id: '123e4567-e89b-12d3-a456-426614174202', action_taken: 'Escalation', created_at: new Date().toISOString() },
+        { id: '123e4567-e89b-12d3-a456-426614174103', task_id: '123e4567-e89b-12d3-a456-426614174203', action_taken: 'Escalation', created_at: new Date().toISOString() },
+      ];
+      const mockTasks = [
+        { id: '123e4567-e89b-12d3-a456-426614174201', status: 'escalation', domain_action: 'email.draft', created_at: new Date().toISOString() },
+        { id: '123e4567-e89b-12d3-a456-426614174202', status: 'escalation', domain_action: 'email.draft', created_at: new Date().toISOString() },
+        { id: '123e4567-e89b-12d3-a456-426614174203', status: 'escalation', domain_action: 'email.draft', created_at: new Date().toISOString() },
+      ];
+
+      (supabase.from as any).mockImplementation((table: string) => {
+        if (table === 'user_protocols') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({ data: mockProtocol, error: null })
+          };
+        }
+        if (table === 'agent_activity_log') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            gte: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
+            limit: vi.fn().mockResolvedValue({ data: mockLogs, error: null })
+          };
+        }
+        if (table === 'tasks') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            gte: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
+            limit: vi.fn().mockResolvedValue({ data: mockTasks, error: null })
+          };
+        }
+      });
+
+      // 3. Mock LLM suggestion
+      const mockSuggestion = {
+        should_suggest: true,
+        reason: 'Repeated escalations on email.draft',
+        suggestion: {
+          nl_diff_summary: 'Increase nudging frequency',
+          rationale: 'Users are repeatedly escalating email drafts.',
+          evidence_task_ids: ['123e4567-e89b-12d3-a456-426614174201', '123e4567-e89b-12d3-a456-426614174202', '123e4567-e89b-12d3-a456-426614174203'],
+          evidence_log_ids: ['123e4567-e89b-12d3-a456-426614174101', '123e4567-e89b-12d3-a456-426614174102', '123e4567-e89b-12d3-a456-426614174103'],
+          markdown_section: 'Nudging Rules',
+          old_content: 'Nudge every 2 days.',
+          new_content: 'Nudge every 1 day.',
+          metadata_changes: { nudging_frequency_hours: 24 }
+        }
       };
 
       const provider = LLMProviderFactory.getProvider();
-      (provider.generateText as any).mockResolvedValue(mockLLMResponse);
+      (provider.generateStructured as any).mockResolvedValue({ data: mockSuggestion });
 
-      const result = await ProtocolService.extractRules('# Protocol Content', mockTask as Task);
-      expect(result).toBe('1. Use professional tone.\n2. Be concise.');
-      expect(provider.generateText).toHaveBeenCalled();
+      const result = await ProtocolService.suggestOptimizations(orgId);
+      
+      expect(result).not.toBeNull();
+      expect(result?.nl_diff_summary).toBe('Increase nudging frequency');
+      expect(result?.evidence_task_ids).toHaveLength(3);
+      expect(provider.generateStructured).toHaveBeenCalled();
     });
   });
 });

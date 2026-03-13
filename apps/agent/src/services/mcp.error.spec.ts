@@ -115,12 +115,15 @@ describe('MCPService Connection Error Handling', () => {
     expect(supabase.from).toHaveBeenCalledWith('agent_activity_log');
     expect(agentActivityLogQuery.insert).toHaveBeenCalledWith(expect.objectContaining({
       organization_id: orgId,
-      agent_id: 'mcp-client',
+      agent_id: 'agent-controller',
       action_taken: 'mcp_transport_error',
-      reasoning_trace: expect.objectContaining({
-        message: 'SSE 400 Bad Request',
-        eventMessage: 'Invalid Scope'
-      })
+      reasoning_trace: expect.arrayContaining([
+        expect.objectContaining({
+          step_name: 'MCP Transport',
+          message: 'Error: SSE 400 Bad Request',
+          output_summary: 'Invalid Scope'
+        })
+      ])
     }));
   });
 });

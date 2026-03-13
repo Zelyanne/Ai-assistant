@@ -3,6 +3,7 @@ import { Task } from '@ai-assistant/shared';
 import { supabase } from "../services/supabase.js";
 import { PerimeterGuard } from '../guards/PerimeterGuard.js';
 import { mcpService } from '../services/mcp.js';
+import { AuditLogger } from '../services/AuditLogger.js';
 import { z } from 'zod';
 
 const UUID_REGEX = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi;
@@ -385,14 +386,14 @@ export class MorningBriefProcessor extends BaseProcessor {
             .eq('organization_id', organization_id);
         }
 
-        // 7. Log activity with reasoning trace and citations
-        await supabase.from('agent_activity_log').insert({
+        // 7. Log activity with reasoning trace and citations via standardized AuditLogger
+        await AuditLogger.flush(
           organization_id,
-          task_id: task.id,
-          agent_id: user_id,
-          action_taken: `Generated morning brief with ${briefSources.length} sources`,
-          reasoning_trace: this.getTrace(),
-          citations: briefSources.slice(0, 5).map(source => ({
+          task.id || null,
+          user_id,
+          `Generated morning brief with ${briefSources.length} sources`,
+          this.getTrace(),
+          briefSources.slice(0, 5).map(source => ({
             source_type: source.sourceType,
             source_id: source.externalId || source.id,
             link: source.link || '',
@@ -400,7 +401,7 @@ export class MorningBriefProcessor extends BaseProcessor {
               ? `Source thread: ${source.subject}`
               : `Relancing update: ${source.subject}`,
           }))
-        } as any);
+        );
 
         return {
           message: `Successfully generated morning brief with ${briefSources.length} sources`,

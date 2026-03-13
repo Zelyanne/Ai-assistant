@@ -278,6 +278,72 @@ export type Database = {
           },
         ]
       }
+      execution_runs: {
+        Row: {
+          created_at: string
+          current_step_key: string | null
+          current_worker_type: string | null
+          id: string
+          idempotency_state: Json
+          last_error: string | null
+          ledger_markdown: string
+          organization_id: string
+          plan_json: Json
+          status: string
+          task_id: string
+          tool_policy_version: string
+          updated_at: string
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          current_step_key?: string | null
+          current_worker_type?: string | null
+          id?: string
+          idempotency_state?: Json
+          last_error?: string | null
+          ledger_markdown?: string
+          organization_id: string
+          plan_json?: Json
+          status?: string
+          task_id: string
+          tool_policy_version: string
+          updated_at?: string
+          version?: number
+        }
+        Update: {
+          created_at?: string
+          current_step_key?: string | null
+          current_worker_type?: string | null
+          id?: string
+          idempotency_state?: Json
+          last_error?: string | null
+          ledger_markdown?: string
+          organization_id?: string
+          plan_json?: Json
+          status?: string
+          task_id?: string
+          tool_policy_version?: string
+          updated_at?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "execution_runs_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "execution_runs_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: true
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ingested_threads: {
         Row: {
           category: string | null

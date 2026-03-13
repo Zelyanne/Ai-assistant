@@ -130,7 +130,7 @@ describe('ChannelRouterService', () => {
     expect(result.task_id).toBe('44444444-4444-4444-8444-444444444444');
     expect(chain.insert).toHaveBeenCalledWith(
       expect.objectContaining({
-        domain_action: 'thread.action',
+        domain_action: 'assistant.command',
         status: 'queued',
         payload: expect.objectContaining({
           channel: 'telegram',

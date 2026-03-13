@@ -211,6 +211,10 @@ export class ChannelRouterService {
       return 'relancing.update';
     }
 
+    if (normalized.channel === 'telegram' || normalized.channel === 'whatsapp') {
+      return 'assistant.command';
+    }
+
     if (!normalized.user_id || !looksLikeRelancingReply(normalized.message_text)) {
       return normalized.domain_action;
     }

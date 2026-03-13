@@ -31,6 +31,7 @@ vi.mock('primevue/useconfirm', () => ({
 
 vi.mock('../composables/useCommandCenter', () => ({
   useCommandCenter: () => ({
+    activeExecutionRun: ref(null),
     timeline: ref([
       {
         id: 'welcome',

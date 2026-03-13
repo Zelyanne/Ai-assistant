@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   RelancingScheduler,
   collectMissingSetupFields,
@@ -6,6 +6,21 @@ import {
   resolveCadenceHours,
   resolveUrgencyBand,
 } from './RelancingScheduler.js';
+import { AuditLogger } from './AuditLogger.js';
+
+vi.mock('./AuditLogger.js', () => ({
+  AuditLogger: {
+    createStep: vi.fn((name, msg, opts) => ({
+      timestamp: new Date().toISOString(),
+      step_name: name,
+      message: msg,
+      ...opts,
+    })),
+    flush: vi.fn(async (orgId, taskId, agentId, action, trace, citations) => {
+      // We'll capture this in a global way if needed, or just let it pass
+    }),
+  },
+}));
 
 type MockState = {
   contexts: Array<Record<string, any>>;
@@ -118,7 +133,7 @@ function createMockSupabase(state: MockState): { from: (table: string) => any } 
                 }
 
                 state.counters.dispatch += 1;
-                const id = `dispatch-${state.counters.dispatch}`;
+                const id = `123e4567-e89b-12d3-a456-426614175${state.counters.dispatch.toString().padStart(3, '0')}`;
                 state.dispatches.push({ ...payload, id, task_id: null });
                 return { data: { id }, error: null };
               },
@@ -141,7 +156,7 @@ function createMockSupabase(state: MockState): { from: (table: string) => any } 
             select: () => ({
               single: async () => {
                 state.counters.task += 1;
-                const id = `task-${state.counters.task}`;
+                const id = `123e4567-e89b-12d3-a456-426614176${state.counters.task.toString().padStart(3, '0')}`;
                 state.tasks.push({ ...payload, id });
                 return { data: { id }, error: null };
               },
@@ -184,9 +199,14 @@ describe('RelancingScheduler', () => {
   });
 
   it('queues relancing.nudge task for due complete setup', async () => {
+    const orgId = '123e4567-e89b-12d3-a456-426614174001';
+    const contextId = '123e4567-e89b-12d3-a456-426614174002';
+    const userId = '123e4567-e89b-12d3-a456-426614174003';
+    const memberId = '123e4567-e89b-12d3-a456-426614174004';
+
     state.contexts.push({
-      id: 'context-1',
-      organization_id: 'org-1',
+      id: contextId,
+      organization_id: orgId,
       project_name: 'Q2 Launch',
       deadline: '2026-03-20T12:00:00.000Z',
       setup_status: 'complete',
@@ -197,15 +217,15 @@ describe('RelancingScheduler', () => {
       blocker_summary: null,
     });
     state.members.push({
-      id: 'member-1',
-      project_context_id: 'context-1',
-      organization_id: 'org-1',
+      id: memberId,
+      project_context_id: contextId,
+      organization_id: orgId,
       member_name: 'Jordan',
-      member_user_id: 'user-1',
+      member_user_id: userId,
       is_active: true,
     });
     state.protocols.push({
-      organization_id: 'org-1',
+      organization_id: orgId,
       metadata: { nudging_frequency_hours: 24 },
     });
 
@@ -223,13 +243,18 @@ describe('RelancingScheduler', () => {
     expect(state.tasks[0].domain_action).toBe('relancing.nudge');
     expect(state.tasks[0].status).toBe('queued');
     expect((state.tasks[0].payload as Record<string, unknown>).reason_code).toBe('deadline_urgency');
-    expect(state.dispatches[0].task_id).toBe('task-1');
+    expect(state.dispatches[0].task_id).toBe('123e4567-e89b-12d3-a456-426614176001');
   });
 
   it('prevents duplicate nudge insertion for same project/member/window', async () => {
+    const orgId = '123e4567-e89b-12d3-a456-426614174001';
+    const contextId = '123e4567-e89b-12d3-a456-426614174002';
+    const userId = '123e4567-e89b-12d3-a456-426614174003';
+    const memberId = '123e4567-e89b-12d3-a456-426614174004';
+
     state.contexts.push({
-      id: 'context-1',
-      organization_id: 'org-1',
+      id: contextId,
+      organization_id: orgId,
       project_name: 'Q2 Launch',
       deadline: '2026-03-20T12:00:00.000Z',
       setup_status: 'complete',
@@ -240,25 +265,25 @@ describe('RelancingScheduler', () => {
       blocker_summary: null,
     });
     state.members.push({
-      id: 'member-1',
-      project_context_id: 'context-1',
-      organization_id: 'org-1',
+      id: memberId,
+      project_context_id: contextId,
+      organization_id: orgId,
       member_name: 'Jordan',
-      member_user_id: 'user-1',
+      member_user_id: userId,
       is_active: true,
     });
-    state.protocols.push({ organization_id: 'org-1', metadata: { nudging_frequency_hours: 24 } });
+    state.protocols.push({ organization_id: orgId, metadata: { nudging_frequency_hours: 24 } });
 
     const window = deriveWindowBounds(now, 24);
     state.dispatches.push({
-      id: 'dispatch-existing',
-      organization_id: 'org-1',
-      project_context_id: 'context-1',
-      member_assignment_id: 'member-1',
+      id: '123e4567-e89b-12d3-a456-426614175000',
+      organization_id: orgId,
+      project_context_id: contextId,
+      member_assignment_id: memberId,
       nudge_window_start: window.start.toISOString(),
       nudge_window_end: window.end.toISOString(),
       reason_code: 'deadline_urgency',
-      task_id: 'task-existing',
+      task_id: '123e4567-e89b-12d3-a456-426614176000',
     });
 
     const scheduler = new RelancingScheduler({
@@ -272,13 +297,29 @@ describe('RelancingScheduler', () => {
     await scheduler.runCycle();
 
     expect(state.tasks).toHaveLength(0);
-    expect(state.logs.some((log) => JSON.stringify(log.reasoning_trace).includes('duplicate_prevented'))).toBe(true);
+    expect(AuditLogger.flush).toHaveBeenCalledWith(
+      expect.any(String),
+      null,
+      'agent-controller',
+      'relancing_scheduler_decision',
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: 'Decision: duplicate_prevented',
+        }),
+      ]),
+      []
+    );
   });
 
   it('creates paused task with blocker reason when blocker is active', async () => {
+    const orgId = '123e4567-e89b-12d3-a456-426614174001';
+    const contextId = '123e4567-e89b-12d3-a456-426614174002';
+    const userId = '123e4567-e89b-12d3-a456-426614174003';
+    const memberId = '123e4567-e89b-12d3-a456-426614174004';
+
     state.contexts.push({
-      id: 'context-1',
-      organization_id: 'org-1',
+      id: contextId,
+      organization_id: orgId,
       project_name: 'Q2 Launch',
       deadline: '2026-03-20T12:00:00.000Z',
       setup_status: 'complete',
@@ -289,11 +330,11 @@ describe('RelancingScheduler', () => {
       blocker_summary: 'Waiting on legal approval',
     });
     state.members.push({
-      id: 'member-1',
-      project_context_id: 'context-1',
-      organization_id: 'org-1',
+      id: memberId,
+      project_context_id: contextId,
+      organization_id: orgId,
       member_name: 'Jordan',
-      member_user_id: 'user-1',
+      member_user_id: userId,
       is_active: true,
     });
 
@@ -313,9 +354,14 @@ describe('RelancingScheduler', () => {
   });
 
   it('honors explicit blocker adjustment policy even when blocker_active is false', async () => {
+    const orgId = '123e4567-e89b-12d3-a456-426614174001';
+    const contextId = '123e4567-e89b-12d3-a456-426614174002';
+    const userId = '123e4567-e89b-12d3-a456-426614174003';
+    const memberId = '123e4567-e89b-12d3-a456-426614174004';
+
     state.contexts.push({
-      id: 'context-1',
-      organization_id: 'org-1',
+      id: contextId,
+      organization_id: orgId,
       project_name: 'Q2 Launch',
       deadline: '2026-03-20T12:00:00.000Z',
       setup_status: 'complete',
@@ -331,11 +377,11 @@ describe('RelancingScheduler', () => {
       blocker_summary: 'Waiting on vendor response',
     });
     state.members.push({
-      id: 'member-1',
-      project_context_id: 'context-1',
-      organization_id: 'org-1',
+      id: memberId,
+      project_context_id: contextId,
+      organization_id: orgId,
       member_name: 'Jordan',
-      member_user_id: 'user-1',
+      member_user_id: userId,
       is_active: true,
     });
 
@@ -355,9 +401,12 @@ describe('RelancingScheduler', () => {
   });
 
   it('resets setup_status when required setup fields are invalid', async () => {
+    const orgId = '123e4567-e89b-12d3-a456-426614174001';
+    const contextId = '123e4567-e89b-12d3-a456-426614174002';
+
     state.contexts.push({
-      id: 'context-1',
-      organization_id: 'org-1',
+      id: contextId,
+      organization_id: orgId,
       project_name: '',
       deadline: null,
       setup_status: 'complete',
@@ -379,7 +428,18 @@ describe('RelancingScheduler', () => {
     await scheduler.runCycle();
 
     expect(state.contexts[0].setup_status).toBe('incomplete');
-    expect(state.logs.some((log) => JSON.stringify(log.reasoning_trace).includes('missing_required_fields'))).toBe(true);
+    expect(AuditLogger.flush).toHaveBeenCalledWith(
+      expect.any(String),
+      null,
+      'agent-controller',
+      'relancing_scheduler_decision',
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: 'Decision: missing_required_fields',
+        }),
+      ]),
+      []
+    );
   });
 
   it('applies deterministic urgency bands and cadence multipliers', () => {

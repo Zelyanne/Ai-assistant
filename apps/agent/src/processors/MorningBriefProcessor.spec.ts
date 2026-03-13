@@ -193,12 +193,12 @@ describe('MorningBriefProcessor', () => {
     expect(store.auditEntries[0]).toEqual(
       expect.objectContaining({
         action_taken: 'Generated morning brief with 1 sources',
-        citations: [
+        citations: expect.arrayContaining([
           expect.objectContaining({
             source_type: 'relancing_update',
             source_id: 'rel-update-1',
           }),
-        ],
+        ]),
       }),
     );
   });

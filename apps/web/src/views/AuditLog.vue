@@ -75,7 +75,7 @@
         class="audit-table"
         striped-rows
         hoverable-rows
-        row-class="cursor-pointer hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors"
+        :row-class="rowClass"
         @page="onPage"
         @row-click="onRowClick"
       >
@@ -364,6 +364,9 @@ const getActionIcon = (action: string) => {
   };
   return map[action] || "pi pi-info-circle text-surface-400";
 };
+
+const rowClass = () =>
+  "cursor-pointer hover:bg-surface-50 dark:hover:bg-surface-800 transition-colors";
 
 // Lifecycle
 onMounted(() => {

@@ -29,6 +29,24 @@ const stateBadgeClass: Record<CommandState, string> = {
   paused: 'bg-slate-200 text-slate-700'
 };
 
+const executionStatusLabel: Record<string, string> = {
+  planned: 'Plan Ready',
+  processing: 'Worker Active',
+  completed: 'Run Complete',
+  failed: 'Run Failed',
+  escalated: 'Needs Review',
+  blocked: 'Blocked',
+};
+
+const executionStatusBadgeClass: Record<string, string> = {
+  planned: 'bg-sky-100 text-sky-700',
+  processing: 'bg-indigo-100 text-indigo-700',
+  completed: 'bg-emerald-100 text-emerald-700',
+  failed: 'bg-rose-100 text-rose-700',
+  escalated: 'bg-amber-100 text-amber-700',
+  blocked: 'bg-amber-100 text-amber-700',
+};
+
 const sortedItems = computed(() => {
   return [...props.items].sort((a, b) => {
     const left = new Date(a.createdAt).getTime();
@@ -41,6 +59,26 @@ function roleLabel(role: CommandTimelineEntry['role']): string {
   if (role === 'user') return 'You';
   if (role === 'assistant') return 'Assistant';
   return 'System';
+}
+
+function formatWorkerType(workerType?: string | null): string {
+  if (!workerType) return 'Planner';
+  return workerType.charAt(0).toUpperCase() + workerType.slice(1);
+}
+
+function executionProgress(item: CommandTimelineEntry): string | null {
+  const run = item.executionRun;
+  if (!run) return null;
+  if (typeof run.completedSteps !== 'number' || typeof run.totalSteps !== 'number') return null;
+  return `${run.completedSteps}/${run.totalSteps} steps complete`;
+}
+
+function executionStatusText(status: string): string {
+  return executionStatusLabel[status] ?? status;
+}
+
+function executionStatusClass(status: string): string {
+  return executionStatusBadgeClass[status] ?? 'bg-slate-100 text-slate-700';
 }
 </script>
 
@@ -90,6 +128,57 @@ function roleLabel(role: CommandTimelineEntry['role']): string {
           <p class="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
             {{ item.content }}
           </p>
+
+          <div
+            v-if="item.executionRun"
+            class="mt-3 space-y-3 border-t border-slate-100 pt-3"
+          >
+            <div class="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+              <span
+                class="rounded-full px-2 py-0.5 font-medium"
+                :class="executionStatusClass(item.executionRun.status)"
+              >
+                {{ executionStatusText(item.executionRun.status) }}
+              </span>
+              <span v-if="executionProgress(item)">{{ executionProgress(item) }}</span>
+              <span v-if="item.executionRun.replanCount">Re-plans: {{ item.executionRun.replanCount }}</span>
+            </div>
+
+            <div class="grid gap-2 text-xs text-slate-600 md:grid-cols-2">
+              <div>
+                <span class="font-semibold text-slate-700">Worker:</span>
+                {{ formatWorkerType(item.executionRun.currentWorkerType) }}
+              </div>
+              <div v-if="item.executionRun.currentStepKey">
+                <span class="font-semibold text-slate-700">Current step:</span>
+                {{ item.executionRun.currentStepKey }}
+              </div>
+            </div>
+
+            <p
+              v-if="item.executionRun.summary"
+              class="text-xs leading-relaxed text-slate-600"
+            >
+              {{ item.executionRun.summary }}
+            </p>
+
+            <p
+              v-if="item.executionRun.lastError"
+              class="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800"
+            >
+              {{ item.executionRun.lastError }}
+            </p>
+
+            <details
+              v-if="item.executionRun.ledgerMarkdown"
+              class="rounded-lg bg-slate-50 px-3 py-2"
+            >
+              <summary class="cursor-pointer text-xs font-semibold text-slate-700">
+                View handoff ledger
+              </summary>
+              <pre class="mt-2 whitespace-pre-wrap break-words font-sans text-xs leading-relaxed text-slate-600">{{ item.executionRun.ledgerMarkdown }}</pre>
+            </details>
+          </div>
         </article>
       </li>
     </ul>

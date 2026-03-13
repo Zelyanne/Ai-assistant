@@ -4,6 +4,8 @@ import { ChatMistralAI } from '@langchain/mistralai';
 import { StructuredTool } from '@langchain/core/tools';
 import { config } from '../config/index.js';
 import { tracingService } from '../services/llm/tracing.js';
+import { supabase } from '../services/supabase.js';
+import { AuditLogger } from '../services/AuditLogger.js';
 
 export interface ProcessorResult {
   [key: string]: any;
@@ -120,20 +122,15 @@ export abstract class BaseProcessor {
 
       this.addTraceStep('agent_complete', `Agent finished with output: ${String(output).substring(0, 100)}...`);
 
-      // AC 4: Log to agent_activity_log on Supabase
-      await supabase.from('agent_activity_log').insert({
-        organization_id: task.organization_id,
-        task_id: task.id,
-        agent_id: task.user_id || 'system',
-        action_taken: `agent_execution_${mode}: ${task.domain_action}`,
-        reasoning_trace: {
-          mode,
-          input: input.substring(0, 500),
-          output,
-          steps,
-          full_trace: this.getTrace()
-        }
-      } as any);
+      // AC 4: Log to agent_activity_log via standardized AuditLogger
+      await AuditLogger.flush(
+        task.organization_id,
+        task.id || null,
+        task.user_id || 'system',
+        `agent_execution_${mode}: ${task.domain_action}`,
+        this.getTrace(),
+        []
+      );
 
       return {
         output,
@@ -143,17 +140,15 @@ export abstract class BaseProcessor {
       tracingService.handleFailure(err);
       this.addTraceStep('agent_error', `Agent failed: ${err.message}`);
       
-      // Log error to Supabase
-      await supabase.from('agent_activity_log').insert({
-        organization_id: task.organization_id,
-        task_id: task.id,
-        agent_id: task.user_id || 'system',
-        action_taken: `agent_error_${mode}: ${task.domain_action}`,
-        reasoning_trace: {
-          error: err.message,
-          trace: this.getTrace()
-        }
-      } as any);
+      // Log error to Supabase via standardized AuditLogger
+      await AuditLogger.flush(
+        task.organization_id,
+        task.id || null,
+        task.user_id || 'system',
+        `agent_error_${mode}: ${task.domain_action}`,
+        this.getTrace(),
+        []
+      );
 
       throw err;
     }

@@ -12,6 +12,7 @@ export interface GoogleTokens {
   access_token: string;
   refresh_token?: string;
   expires_at?: string;
+  scopes?: string[];
 }
 
 export async function storeWorkspaceTokens(
@@ -30,6 +31,7 @@ export async function storeWorkspaceTokens(
       access_token: encryptedAccessToken,
       refresh_token: encryptedRefreshToken,
       expires_at: tokens.expires_at,
+      scopes: tokens.scopes ?? [],
     };
 
     const { error } = await supabase

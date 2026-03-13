@@ -26,6 +26,7 @@ const { supabaseFromMock, resetSupabaseMock } = vi.hoisted(() => {
   const mockChain = {
     select: vi.fn((_columns?: string) => mockChain),
     eq: vi.fn((_key: string, _value: unknown) => mockChain),
+    in: vi.fn((_key: string, _values: unknown[]) => mockChain),
     order: vi.fn((_column: string, _opts?: unknown) => mockChain),
     limit: vi.fn((_n: number) => mockChain),
     insert: vi.fn((rows: unknown) => {
@@ -90,6 +91,7 @@ const { supabaseFromMock, resetSupabaseMock } = vi.hoisted(() => {
     supabaseFromMock.mockClear();
     mockChain.select.mockClear();
     mockChain.eq.mockClear();
+    mockChain.in.mockClear();
     mockChain.order.mockClear();
     mockChain.limit.mockClear();
     mockChain.insert.mockClear();
@@ -213,6 +215,7 @@ describe('useCommandCenter', () => {
     await waitFor(() => {
       expect(subscribeToTableMock).toHaveBeenCalledWith('tasks', expect.any(Function));
       expect(subscribeToTableMock).toHaveBeenCalledWith('command_messages', expect.any(Function));
+      expect(subscribeToTableMock).toHaveBeenCalledWith('execution_runs', expect.any(Function));
     });
 
     await center.submitCommand('Draft project summary');
@@ -237,6 +240,7 @@ describe('useCommandCenter', () => {
     center.stopRealtimeSync();
     expect(unsubs.get('tasks')).toHaveBeenCalledTimes(1);
     expect(unsubs.get('command_messages')).toHaveBeenCalledTimes(1);
+    expect(unsubs.get('execution_runs')).toHaveBeenCalledTimes(1);
   });
 
   it('supports submit -> queued -> processing -> done timeline progression', async () => {
@@ -254,6 +258,7 @@ describe('useCommandCenter', () => {
     
     await waitFor(() => {
       expect(subscribeToTableMock).toHaveBeenCalledWith('tasks', expect.any(Function));
+      expect(subscribeToTableMock).toHaveBeenCalledWith('execution_runs', expect.any(Function));
     });
 
     await center.submitCommand('Draft project summary');
@@ -286,5 +291,63 @@ describe('useCommandCenter', () => {
     });
 
     center.stopRealtimeSync();
+  });
+
+  it('attaches execution run details to the queued assistant timeline entry', async () => {
+    submitTaskMock.mockResolvedValue({ id: 'task-run-1' });
+    const center = useCommandCenter();
+
+    const { useUserStore } = await import('../stores/user');
+    const userStore = useUserStore();
+    userStore.profile = {
+      id: '123e4567-e89b-12d3-a456-426614174002',
+      organization_id: '123e4567-e89b-12d3-a456-426614174001',
+    } as Profile;
+
+    center.startRealtimeSync();
+
+    await waitFor(() => {
+      expect(subscribeToTableMock).toHaveBeenCalledWith('execution_runs', expect.any(Function));
+    });
+
+    await center.submitCommand('Draft project summary');
+
+    const runCallback = subscriptions.get('execution_runs');
+    runCallback?.({
+      eventType: 'UPDATE',
+      new: {
+        id: 'run-1',
+        task_id: 'task-run-1',
+        organization_id: '123e4567-e89b-12d3-a456-426614174001',
+        status: 'processing',
+        current_step_key: 'gmail-step',
+        current_worker_type: 'gmail',
+        ledger_markdown: '# Execution Run Ledger',
+        last_error: null,
+        updated_at: new Date().toISOString(),
+        plan_json: {
+          summary: 'Draft and send the weekly update',
+          replan_count: 1,
+          steps: [
+            { worker_type: 'drive', status: 'completed' },
+            { worker_type: 'gmail', status: 'in_progress' },
+          ],
+        },
+      },
+    });
+
+    await waitFor(() => {
+      const assistantEntry = center.timeline.value.find((entry) => entry.taskId === 'task-run-1');
+      expect(assistantEntry?.executionRun).toMatchObject({
+        status: 'processing',
+        currentStepKey: 'gmail-step',
+        currentWorkerType: 'gmail',
+        replanCount: 1,
+        completedSteps: 1,
+        totalSteps: 2,
+      });
+      expect(assistantEntry?.content).toContain('Processing with gmail worker');
+      expect(center.activeExecutionRun.value?.executionRun?.id).toBe('run-1');
+    });
   });
 });

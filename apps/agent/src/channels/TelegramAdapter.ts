@@ -27,8 +27,37 @@ const TelegramUpdateSchema = z.object({
         .object({
           id: z.union([z.string(), z.number()]).optional(),
           username: z.string().optional(),
+          first_name: z.string().optional(),
+          last_name: z.string().optional(),
         })
         .optional(),
+    })
+    .optional(),
+  edited_message: z
+    .object({
+      message_id: z.number().int().optional(),
+      text: z.string().optional(),
+      chat: z
+        .object({
+          id: z.union([z.string(), z.number()]),
+        })
+        .optional(),
+    })
+    .optional(),
+  callback_query: z
+    .object({
+      id: z.string().optional(),
+      message: z
+        .object({
+          message_id: z.number().int().optional(),
+          chat: z
+            .object({
+              id: z.union([z.string(), z.number()]),
+            })
+            .optional(),
+        })
+        .optional(),
+      data: z.string().optional(),
     })
     .optional(),
   organization_id: z.string().uuid(),
@@ -41,6 +70,7 @@ const TelegramUpdateSchema = z.object({
 });
 
 interface TelegramAdapterOptions {
+  bot_token?: string;
   webhook_secret_token?: string;
 }
 
@@ -67,9 +97,11 @@ function safeEqual(left: string, right: string): boolean {
 
 export class TelegramAdapter implements ChannelAdapter {
   readonly channel = 'telegram' as const;
+  private readonly botToken?: string;
   private readonly webhookSecretToken?: string;
 
   constructor(options: TelegramAdapterOptions = {}) {
+    this.botToken = options.bot_token;
     this.webhookSecretToken = options.webhook_secret_token;
   }
 
@@ -93,14 +125,28 @@ export class TelegramAdapter implements ChannelAdapter {
   normalizeInbound(payload: unknown): NormalizedInboundEnvelope {
     const parsed = TelegramUpdateSchema.parse(payload);
 
+    // Extract chat ID from various update types
+    const chatId = parsed.message?.chat?.id
+      ?? parsed.edited_message?.chat?.id
+      ?? parsed.callback_query?.message?.chat?.id;
+
     const threadId = parsed.thread_id
-      ?? (parsed.message?.chat?.id != null ? String(parsed.message.chat.id) : undefined)
+      ?? (chatId != null ? String(chatId) : undefined)
       ?? `telegram-thread-${randomUUID()}`;
 
+    // Extract message ID from various update types
+    const messageId = parsed.message?.message_id
+      ?? parsed.edited_message?.message_id
+      ?? parsed.callback_query?.message?.message_id;
+
     const externalMessageId = parsed.external_message_id
-      ?? (parsed.message?.message_id != null ? String(parsed.message.message_id) : undefined)
+      ?? (messageId != null ? String(messageId) : undefined)
       ?? (parsed.update_id != null ? String(parsed.update_id) : undefined)
       ?? `telegram-${randomUUID()}`;
+
+    const messageText = parsed.message?.text
+      ?? parsed.edited_message?.text
+      ?? parsed.callback_query?.data;
 
     return NormalizedInboundEnvelopeSchema.parse({
       channel: this.channel,
@@ -110,12 +156,15 @@ export class TelegramAdapter implements ChannelAdapter {
       external_message_id: externalMessageId,
       domain_action: parsed.domain_action ?? 'thread.action',
       topic: parsed.topic,
-      message_text: parsed.message?.text,
+      message_text: messageText,
       channel_metadata: {
         telegram_update_id: parsed.update_id,
-        telegram_chat_id: parsed.message?.chat?.id != null ? String(parsed.message.chat.id) : undefined,
+        telegram_chat_id: chatId != null ? String(chatId) : undefined,
         telegram_from_id: parsed.message?.from?.id != null ? String(parsed.message.from.id) : undefined,
         telegram_username: parsed.message?.from?.username,
+        telegram_first_name: parsed.message?.from?.first_name,
+        telegram_last_name: parsed.message?.from?.last_name,
+        telegram_callback_data: parsed.callback_query?.data,
       },
       raw_payload: parsed,
       correlation_id: parsed.correlation_id,
@@ -123,15 +172,92 @@ export class TelegramAdapter implements ChannelAdapter {
   }
 
   async sendOutbound(message: OutboundChannelMessage): Promise<OutboundSendResult> {
-    return {
-      delivery_state: 'sent',
-      provider_message_id: `telegram-${message.external_message_id}`,
-      provider_response: {
-        acknowledged: true,
-        channel: this.channel,
-      },
-      terminal: false,
+    if (!this.botToken) {
+      return {
+        delivery_state: 'failed',
+        error_message: 'telegram_bot_token_not_configured',
+        provider_response: { acknowledged: false },
+        terminal: true,
+      };
+    }
+
+    const chatId = message.thread_id;
+    const text = message.message_text;
+
+    const executeSend = async (): Promise<OutboundSendResult> => {
+      try {
+        const response = await fetch(`https://api.telegram.org/bot${this.botToken}/sendMessage`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: text,
+          }),
+        });
+
+        const data = (await response.json()) as any;
+
+        if (!response.ok) {
+          const isTerminal =
+            response.status === 400 || // Bad Request
+            response.status === 401 || // Unauthorized
+            response.status === 403 || // Forbidden
+            response.status === 404; // Not Found
+
+          return {
+            delivery_state: 'failed',
+            error_code: String(response.status),
+            error_message: data.description || response.statusText,
+            provider_response: data,
+            terminal: isTerminal,
+          };
+        }
+
+        return {
+          delivery_state: 'sent',
+          provider_message_id: data.result?.message_id ? String(data.result.message_id) : undefined,
+          provider_response: data,
+          terminal: false,
+        };
+      } catch (error) {
+        return {
+          delivery_state: 'failed',
+          error_message: error instanceof Error ? error.message : String(error),
+          provider_response: { error: String(error) },
+          terminal: false,
+        };
+      }
     };
+
+    // Internal retry loop for transient errors
+    let lastResult: OutboundSendResult | null = null;
+    const maxInternalAttempts = 3;
+
+    for (let attempt = 1; attempt <= maxInternalAttempts; attempt++) {
+      lastResult = await executeSend();
+      
+      if (lastResult.delivery_state !== 'failed' || lastResult.terminal) {
+        return lastResult;
+      }
+
+      const retry = this.evaluateRetry({
+        attempt_count: attempt,
+        max_attempts: maxInternalAttempts,
+        error_message: lastResult.error_message,
+      });
+
+      if (!retry.should_retry || retry.terminal) {
+        break;
+      }
+
+      if (retry.next_delay_ms) {
+        await new Promise(resolve => setTimeout(resolve, retry.next_delay_ms!));
+      }
+    }
+
+    return lastResult!;
   }
 
   mapDeliveryEvent(payload: unknown): DeliveryEventEnvelope | null {

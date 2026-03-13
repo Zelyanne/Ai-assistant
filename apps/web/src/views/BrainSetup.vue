@@ -1,17 +1,22 @@
 <script setup lang="ts">
-import { ref, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, computed } from 'vue';
 import WatchTopics from '../components/WatchTopics.vue';
+import OutcomeCard from '../components/activity/OutcomeCard.vue';
 import { useAgent } from '../composables/useAgent';
+import { useProtocolOptimization } from '../composables/useProtocolOptimization';
 import { useUserStore } from '../stores/user';
 import { supabase } from '../services/supabase';
+import type { Task, ProtocolOptimizationTaskResult, ProtocolOptimizationSuggestion } from '@ai-assistant/shared';
 import Card from 'primevue/card';
 import Button from 'primevue/button';
+import Badge from 'primevue/badge';
 import Textarea from 'primevue/textarea';
 import Message from 'primevue/message';
 import ProgressSpinner from 'primevue/progressspinner';
 
 const userStore = useUserStore();
-const { loading, error: agentError, submitTask, monitorTask } = useAgent();
+const { loading: agentLoading, error: agentError, submitTask, monitorTask } = useAgent();
+const { suggestions, loading: optLoading, fetchSuggestions, approveOptimization, declineOptimization } = useProtocolOptimization();
 
 const philosophy = ref('');
 const generatedProtocol = ref<string | null>(null);
@@ -20,7 +25,18 @@ const currentTaskId = ref<string | null>(null);
 const isSaving = ref(false);
 const saveSuccess = ref(false);
 
+const loading = computed(() => agentLoading.value || optLoading.value);
+
 let unsubscribe: (() => void) | null = null;
+
+onMounted(() => {
+  fetchSuggestions();
+});
+
+function getOptimizationSuggestion(task: Task): ProtocolOptimizationSuggestion | null {
+  const result = task.result as ProtocolOptimizationTaskResult | null | undefined;
+  return result?.suggestion ?? null;
+}
 
 async function handleGenerate() {
   if (!philosophy.value.trim()) return;
@@ -186,6 +202,47 @@ onUnmounted(() => {
       >
         Protocol saved successfully! Antigravity will now follow these guidelines for all future tasks.
       </Message>
+    </section>
+
+    <section v-if="suggestions.length > 0" class="space-y-6">
+      <header class="flex items-center justify-between">
+        <h2 class="text-xl font-bold text-executive-primary tracking-tight font-sans">
+          Protocol Optimization Suggestions
+        </h2>
+        <Badge :value="suggestions.length" severity="info" />
+      </header>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <OutcomeCard
+          v-for="task in suggestions"
+          :key="task.id"
+          :title="getOptimizationSuggestion(task)?.nl_diff_summary || 'Suggested protocol optimization'"
+          :summary="getOptimizationSuggestion(task)?.rationale || 'Review this protocol improvement suggestion.'"
+          status="optimization"
+          :timestamp="new Date(task.created_at || '').toLocaleString()"
+          :task-id="task.id"
+        >
+          <template #actions>
+            <div class="flex gap-2">
+              <Button
+                label="Decline"
+                severity="secondary"
+                size="small"
+                text
+                class="font-technical"
+                @click="declineOptimization(task)"
+              />
+              <Button
+                label="Approve & Apply"
+                icon="pi pi-check"
+                severity="success"
+                size="small"
+                class="font-technical"
+                @click="approveOptimization(task)"
+              />
+            </div>
+          </template>
+        </OutcomeCard>
+      </div>
     </section>
 
     <WatchTopics />

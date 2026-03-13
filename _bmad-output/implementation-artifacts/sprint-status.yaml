@@ -48,7 +48,7 @@ development_status:
   1-5-perimeterguard-pii-redaction-service: done
   epic-1-retrospective: done
 
-  epic-2: in-progress  # NEW: Agent Controller Foundation & Task Orchestration (CRITICAL DEPENDENCY)
+  epic-2: in-progress # NEW: Agent Controller Foundation & Task Orchestration (CRITICAL DEPENDENCY)
   2-1-agent-controller-initialization-langgraph-foundation: done
   2-2-task-processor-with-domain-action-routing: done
   2-3-mcp-sdk-integration-with-google-workspace-server: done
@@ -60,8 +60,8 @@ development_status:
   2-9-multi-channel-messaging-adapter-routing-delivery-state: done
   epic-2-retrospective: optional
 
-  epic-3: in-progress  # RENAMED: Personalized Triage & The "Brain" Setup (was Epic 2)
-  3-0-ui-design-system-app-shell: done  # NEW: UI Foundation (Added via Correct-Course)
+  epic-3: in-progress # RENAMED: Personalized Triage & The "Brain" Setup (was Epic 2)
+  3-0-ui-design-system-app-shell: done # NEW: UI Foundation (Added via Correct-Course)
   3-1-natural-language-protocol-generation: done
   3-2-semantic-email-triage-keyword-classification: done
   3-3-outcome-centric-morning-brief-ui: done
@@ -69,10 +69,10 @@ development_status:
   3-5-reasoning-trace-source-citation-engine: done
   fix-dashboard-template-error: done
   fix-routing-and-mcp-timeout: done
-  supabase-google-auth-onboarding-fix: done  # FIXED: Google Auth flow, RLS policies, onboarding retry logic
+  supabase-google-auth-onboarding-fix: done # FIXED: Google Auth flow, RLS policies, onboarding retry logic
   epic-3-retrospective: optional
 
-  epic-4: in-progress  # RENAMED: Autonomous Proxy & Actionable Trust (was Epic 3)
+  epic-4: in-progress # RENAMED: Autonomous Proxy & Actionable Trust (was Epic 3)
   4-1-agency-tier-configuration-perimeter-management: done
   4-2-autonomous-proxy-execution: done
   4-3-controlled-topic-drafting-approval-flow: done
@@ -80,21 +80,21 @@ development_status:
   4-5-confidence-based-escalation-logic: done
   epic-4-retrospective: optional
 
-  epic-5: in-progress  # RENAMED: Adaptive Relancing & Team Alignment (was Epic 4)
+  epic-5: in-progress # RENAMED: Adaptive Relancing & Team Alignment (was Epic 4)
   5-1-adaptive-relancing-scheduler: done
   5-2-bidirectional-nudge-interface: done
   5-3-blocker-detection-automatic-protocol-adjustment: done
   5-4-automated-status-aggregation-reporting: done
   epic-5-retrospective: optional
 
-  epic-6: in-progress  # RENAMED: Operational Mastery & Transparency (was Epic 5)
-  6-1-natural-language-command-center: done  # Scope updated to conversational execution chat
+  epic-6: in-progress # RENAMED: Operational Mastery & Transparency (was Epic 5)
+  6-1-natural-language-command-center: done # Scope updated to conversational execution chat
   6-2-calendar-conflict-resolution-logic: done
   6-3-cross-channel-context-gathering-docs-sheets: done
-  6-4-comprehensive-reasoning-trace-audit-logs: review
-  6-5-protocol-optimization-diff-summaries: backlog
-  6-6-telegram-bidirectional-proxy-execution: backlog
-  6-7-whatsapp-bidirectional-proxy-execution: backlog
+  6-4-comprehensive-reasoning-trace-audit-logs: done
+  6-5-protocol-optimization-diff-summaries: done
+  6-6-telegram-bidirectional-proxy-execution: done
+  6-7-whatsapp-bidirectional-proxy-execution: review
   epic-6-retrospective: optional
 
 # EPIC DEPENDENCIES:

@@ -1,89 +1,75 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EmailDraftProcessor } from './EmailDraftProcessor.js';
 
-// Mock dependencies
-const { mockExecuteTool } = vi.hoisted(() => ({
-  mockExecuteTool: vi.fn()
+const { mockResolveToolName, mockExecuteWorkerTool } = vi.hoisted(() => ({
+  mockResolveToolName: vi.fn(),
+  mockExecuteWorkerTool: vi.fn(),
 }));
 
 vi.mock('../services/mcp.js', () => ({
-  MCPService: class {
-    executeTool = mockExecuteTool;
-  },
   mcpService: {
-    executeTool: mockExecuteTool
-  }
+    resolveToolName: mockResolveToolName,
+    executeWorkerTool: mockExecuteWorkerTool,
+  },
 }));
 
-
-// Mock Supabase to prevent config validation error
 vi.mock('../services/supabase.js', () => ({
-  supabase: {}
+  supabase: {},
 }));
 
 describe('EmailDraftProcessor', () => {
   let processor: EmailDraftProcessor;
 
   beforeEach(() => {
-
     vi.clearAllMocks();
-    mockExecuteTool.mockResolvedValue({ 
-      content: [{ type: 'text', text: 'Draft created' }] 
-    });
-    
     processor = new EmailDraftProcessor();
   });
 
+  it('creates an email draft with normalized Gmail tool names', async () => {
+    mockResolveToolName.mockResolvedValue({
+      requestedTool: 'create_gmail_draft',
+      resolvedTool: 'draft_gmail_message',
+      availableTools: ['draft_gmail_message'],
+    });
+    mockExecuteWorkerTool.mockResolvedValue({
+      toolName: 'draft_gmail_message',
+      result: { content: [{ type: 'text', text: 'Draft created' }] },
+    });
 
-  it('should successfully create an email draft via MCP', async () => {
-    const task = {
+    const result = await processor.process({
       id: 'task-123',
       organization_id: 'org-1',
       domain_action: 'email.draft',
       payload: {
         recipient: 'test@example.com',
         subject: 'Test Subject',
-        body: 'Test Body'
-      }
-    };
+        body: 'Test Body',
+      },
+    } as any);
 
-    const result = await processor.process(task as any);
-
-    expect(mockExecuteTool).toHaveBeenCalledWith(
+    expect(mockExecuteWorkerTool).toHaveBeenCalledWith(
       'org-1',
+      'gmail',
       'create_gmail_draft',
       expect.objectContaining({
-        userId: 'me',
-        draft: expect.objectContaining({
-          message: expect.objectContaining({
-            raw: expect.any(String)
-          })
-        })
-      })
+        to: 'test@example.com',
+        subject: 'Test Subject',
+        body: 'Test Body',
+      }),
     );
-
-    // Verify raw content is base64 encoded
-    const callArgs = mockExecuteTool.mock.calls[0][2];
-    const decodedRaw = atob(callArgs.draft.message.raw);
-    expect(decodedRaw).toContain('To: test@example.com');
-    expect(decodedRaw).toContain('Subject: Test Subject');
-    expect(decodedRaw).toContain('Test Body');
-
-    expect(result.message).toContain('successfully');
+    expect(result.tool_name).toBe('draft_gmail_message');
   });
 
-  it('should throw error when required payload fields are missing', async () => {
-    const task = {
-      id: 'task-123',
-      organization_id: 'org-1',
-      domain_action: 'email.draft',
-      payload: {
-        recipient: 'test@example.com'
-        // Missing subject and body
-      }
-    };
+  it('throws when required payload fields are missing', async () => {
+    await expect(
+      processor.process({
+        id: 'task-123',
+        organization_id: 'org-1',
+        domain_action: 'email.draft',
+        payload: { recipient: 'test@example.com' },
+      } as any),
+    ).rejects.toThrow(/Missing required email fields/);
 
-    await expect(processor.process(task as any)).rejects.toThrow(/Missing required email fields/);
-    expect(mockExecuteTool).not.toHaveBeenCalled();
+    expect(mockExecuteWorkerTool).not.toHaveBeenCalled();
   });
 });

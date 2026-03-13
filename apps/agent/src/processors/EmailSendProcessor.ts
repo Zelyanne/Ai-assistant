@@ -19,6 +19,23 @@ interface EmailSendPayload {
   source_task_id?: string;
 }
 
+function encodeRawEmail(payload: {
+  to: string;
+  cc?: string;
+  bcc?: string;
+  subject: string;
+  body: string;
+}): string {
+  return Buffer.from(
+    `To: ${payload.to}\r\n` +
+      `${payload.cc ? `Cc: ${payload.cc}\r\n` : ''}` +
+      `${payload.bcc ? `Bcc: ${payload.bcc}\r\n` : ''}` +
+      `Subject: ${payload.subject}\r\n\r\n` +
+      `${payload.body}`,
+    'utf-8',
+  ).toString('base64');
+}
+
 function extractMessageId(rawResult: unknown): string | null {
   const asText = JSON.stringify(rawResult);
   const match = asText.match(/Message ID:\s*<?([^>\s"]+)>?/i);
@@ -79,23 +96,29 @@ export class EmailSendProcessor extends BaseProcessor {
     const normalizedBodyFormat = payload.body_format === 'html' ? 'html' : 'plain';
 
     try {
-      const sendResult = await mcpService.executeTool(task.organization_id, 'send_gmail_message', {
-        to,
-        cc: payload.cc,
-        bcc: payload.bcc,
-        subject,
-        body,
-        body_format: normalizedBodyFormat,
-        thread_id: payload.thread_external_id,
-        in_reply_to: payload.in_reply_to,
-        references: payload.references,
-      });
+      const { toolName, result: sendResult } = await mcpService.executeWorkerTool(
+        task.organization_id,
+        'gmail',
+        'send_gmail_message',
+        {
+          to,
+          cc: payload.cc,
+          bcc: payload.bcc,
+          subject,
+          body,
+          body_format: normalizedBodyFormat,
+          thread_id: payload.thread_external_id,
+          in_reply_to: payload.in_reply_to,
+          references: payload.references,
+        },
+      );
 
       const messageId = extractMessageId(sendResult);
 
       return {
         summary: 'Email sent via MCP.',
         send_status: 'sent',
+        tool_name: toolName,
         message_id: messageId,
         source_task_id: payload.source_task_id,
         approved_by: approvedBy,
@@ -107,24 +130,47 @@ export class EmailSendProcessor extends BaseProcessor {
         throw error;
       }
 
-      const draftResult = await mcpService.executeTool(task.organization_id, 'create_gmail_draft', {
-        userId: 'me',
-        draft: {
-          message: {
-            raw: btoa(
-              `To: ${to}\r\n` +
-                `${payload.cc ? `Cc: ${payload.cc}\r\n` : ''}` +
-                `${payload.bcc ? `Bcc: ${payload.bcc}\r\n` : ''}` +
-                `Subject: ${subject}\r\n\r\n` +
-                `${body}`,
-            ),
-          },
-        },
-      });
+      const draftResolution = await mcpService.resolveToolName(
+        task.organization_id,
+        'create_gmail_draft',
+      );
+      const draftToolName = draftResolution.resolvedTool ?? 'create_gmail_draft';
+      const draftArgs = draftToolName === 'draft_gmail_message'
+        ? {
+            to,
+            cc: payload.cc,
+            bcc: payload.bcc,
+            subject,
+            body,
+            body_format: normalizedBodyFormat,
+            thread_id: payload.thread_external_id,
+          }
+        : {
+            userId: 'me',
+            draft: {
+              message: {
+                raw: encodeRawEmail({
+                  to,
+                  cc: payload.cc,
+                  bcc: payload.bcc,
+                  subject,
+                  body,
+                }),
+              },
+            },
+          };
+
+      const { toolName, result: draftResult } = await mcpService.executeWorkerTool(
+        task.organization_id,
+        'gmail',
+        'create_gmail_draft',
+        draftArgs,
+      );
 
       return {
         summary: 'Send tool unavailable. Gmail draft created; manual send required.',
         send_status: 'draft_created',
+        tool_name: toolName,
         source_task_id: payload.source_task_id,
         approved_by: approvedBy,
         approved_at: approvedAt,

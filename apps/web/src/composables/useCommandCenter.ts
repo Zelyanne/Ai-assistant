@@ -1,8 +1,13 @@
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import type { Task, Database } from '@ai-assistant/shared';
 
 import { useAgent } from './useAgent';
-import type { CommandRole, CommandState, CommandTimelineEntry } from '../components/command/types';
+import type {
+  CommandExecutionRunSummary,
+  CommandRole,
+  CommandState,
+  CommandTimelineEntry,
+} from '../components/command/types';
 import { useUserStore } from '../stores/user';
 import { supabase } from '../services/supabase';
 
@@ -36,6 +41,7 @@ let initialized = false;
 let idCounter = 0;
 let stopTaskSubscription: (() => void) | null = null;
 let stopMessageSubscription: (() => void) | null = null;
+let stopExecutionRunSubscription: (() => void) | null = null;
 const messageIdByEntryId = new Map<string, string>();
 
 function nextId(prefix: string): string {
@@ -154,9 +160,9 @@ function toCommandState(value: string | null): CommandState | undefined {
   return undefined;
 }
 
-function taskStatusMessage(task: Task): string {
+function taskStatusMessage(task: Task, executionRun?: CommandExecutionRunSummary): string {
   if (task.status === 'queued') return 'Queued for asynchronous execution.';
-  if (task.status === 'processing') return 'Processing command...';
+  if (task.status === 'processing') return executionRun ? executionRunMessage(executionRun) : 'Processing command...';
   if (task.status === 'done') return taskResultSummary(task.result, 'Command completed.');
   if (task.status === 'escalation') return taskResultSummary(task.result, 'Command escalated for review.');
   if (task.status === 'paused') return taskResultSummary(task.result, 'Command paused by safety controls.');
@@ -166,10 +172,17 @@ function taskStatusMessage(task: Task): string {
 function applyTaskUpdate(task: Task): void {
   const targets = timeline.value.filter((entry) => entry.taskId === task.id && entry.role === 'assistant');
   targets.forEach((entry) => {
-    const content = taskStatusMessage(task);
+    const executionRun = normalizeExecutionRun(
+      task.result && typeof task.result === 'object' && !Array.isArray(task.result)
+        ? (task.result as { execution_run?: unknown }).execution_run
+        : undefined,
+    ) ?? entry.executionRun;
+    const content = taskStatusMessage(task, executionRun);
+
     updateEntry(entry.id, {
       state: statusToTimelineState(task.status),
       content,
+      executionRun,
     });
 
     const messageDbId = messageIdByEntryId.get(entry.id);
@@ -187,8 +200,124 @@ function applyTaskUpdate(task: Task): void {
   });
 }
 
+function applyExecutionRunUpdate(row: ExecutionRunRow): void {
+  const executionRun = normalizeExecutionRun(row);
+  if (!executionRun) return;
+
+  const targets = timeline.value.filter((entry) => entry.taskId === row.task_id && entry.role === 'assistant');
+  targets.forEach((entry) => {
+    const terminalState = entry.state === 'done' || entry.state === 'error' || entry.state === 'escalation' || entry.state === 'paused';
+
+    updateEntry(entry.id, {
+      executionRun,
+      state: terminalState ? entry.state : executionRunToTimelineState(executionRun),
+      content: terminalState ? entry.content : executionRunMessage(executionRun),
+    });
+  });
+}
+
 type CommandMessageRow = Database['public']['Tables']['command_messages']['Row'];
 type CommandMessageInsert = Database['public']['Tables']['command_messages']['Insert'];
+type ExecutionRunRow = Database['public']['Tables']['execution_runs']['Row'];
+
+type ExecutionPlanStepLike = {
+  status?: unknown;
+  worker_type?: unknown;
+};
+
+function parseExecutionPlanSteps(value: unknown): ExecutionPlanStepLike[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  const steps = (value as { steps?: unknown }).steps;
+  return Array.isArray(steps)
+    ? steps.filter((step): step is ExecutionPlanStepLike => Boolean(step) && typeof step === 'object')
+    : [];
+}
+
+function normalizeExecutionRun(value: unknown): CommandExecutionRunSummary | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+
+  const record = value as Record<string, unknown>;
+  const id = typeof record.id === 'string' ? record.id : null;
+  const status = typeof record.status === 'string' ? record.status : null;
+
+  if (!id || !status) return undefined;
+
+  const steps = parseExecutionPlanSteps(record.plan_json);
+  const workerSteps = steps.filter((step) => step.worker_type !== 'planner');
+  const completedSteps = workerSteps.filter((step) => step.status === 'completed').length;
+  const totalSteps = workerSteps.length > 0 ? workerSteps.length : undefined;
+  const planSummary = record.plan_json && typeof record.plan_json === 'object' && !Array.isArray(record.plan_json)
+    ? (record.plan_json as { summary?: unknown }).summary
+    : undefined;
+  const replanCount = record.plan_json && typeof record.plan_json === 'object' && !Array.isArray(record.plan_json)
+    ? (record.plan_json as { replan_count?: unknown }).replan_count
+    : undefined;
+
+  return {
+    id,
+    status,
+    currentStepKey: typeof record.current_step_key === 'string' ? record.current_step_key : null,
+    currentWorkerType: typeof record.current_worker_type === 'string' ? record.current_worker_type : null,
+    summary: typeof planSummary === 'string' ? planSummary : null,
+    replanCount: typeof replanCount === 'number' ? replanCount : undefined,
+    completedSteps,
+    totalSteps,
+    ledgerMarkdown: typeof record.ledger_markdown === 'string' ? record.ledger_markdown : null,
+    lastError: typeof record.last_error === 'string' ? record.last_error : null,
+    updatedAt: typeof record.updated_at === 'string' ? record.updated_at : undefined,
+  };
+}
+
+function executionRunToTimelineState(executionRun: CommandExecutionRunSummary): CommandState {
+  switch (executionRun.status) {
+    case 'planned':
+      return 'queued';
+    case 'processing':
+    case 'completed':
+      return 'processing';
+    case 'blocked':
+    case 'escalated':
+      return 'escalation';
+    case 'failed':
+      return 'error';
+    default:
+      return 'processing';
+  }
+}
+
+function executionRunMessage(executionRun: CommandExecutionRunSummary): string {
+  if (executionRun.status === 'planned') {
+    return executionRun.summary?.trim().length
+      ? `Plan ready: ${executionRun.summary}`
+      : 'Plan ready. Waiting to begin worker execution.';
+  }
+
+  if (executionRun.status === 'processing') {
+    const worker = executionRun.currentWorkerType ? `${executionRun.currentWorkerType} worker` : 'planner';
+    const step = executionRun.currentStepKey ? `Step: ${executionRun.currentStepKey}.` : 'Advancing the plan.';
+    return `Processing with ${worker}. ${step}`;
+  }
+
+  if (executionRun.status === 'completed') {
+    return 'Execution run completed. Finalizing task...';
+  }
+
+  if (executionRun.status === 'blocked') {
+    return executionRun.lastError?.trim().length
+      ? `Execution blocked: ${executionRun.lastError}`
+      : 'Execution blocked before side effects.';
+  }
+
+  if (executionRun.status === 'escalated') {
+    return executionRun.lastError?.trim().length
+      ? `Execution escalated: ${executionRun.lastError}`
+      : 'Execution escalated for review.';
+  }
+
+  return executionRun.lastError?.trim().length
+    ? `Execution failed: ${executionRun.lastError}`
+    : 'Execution failed.';
+}
 
 function normalizeMessageRow(row: CommandMessageRow): CommandTimelineEntry {
   const metadata = row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
@@ -224,6 +353,7 @@ function upsertTimelineEntry(entry: CommandTimelineEntry): void {
     taskId: entry.taskId,
     correlationId: entry.correlationId,
     createdAt: entry.createdAt,
+    executionRun: entry.executionRun,
   });
 }
 
@@ -250,6 +380,30 @@ async function loadConversationMessages(conversationId: string): Promise<void> {
     const entry = normalizeMessageRow(row as CommandMessageRow);
     messageIdByEntryId.set(entry.id, (row as CommandMessageRow).id);
     upsertTimelineEntry(entry);
+  });
+}
+
+async function loadExecutionRunsForTimeline(organizationId: string): Promise<void> {
+  const taskIds = Array.from(new Set(
+    timeline.value
+      .map((entry) => entry.taskId)
+      .filter((taskId): taskId is string => typeof taskId === 'string' && taskId.length > 0),
+  ));
+
+  if (taskIds.length === 0) return;
+
+  const { data, error } = await (supabase as any)
+    .from('execution_runs')
+    .select('*')
+    .eq('organization_id', organizationId)
+    .in('task_id', taskIds);
+
+  if (error) return;
+
+  (data ?? []).forEach((row: unknown) => {
+    if (row && typeof row === 'object') {
+      applyExecutionRunUpdate(row as ExecutionRunRow);
+    }
   });
 }
 
@@ -342,6 +496,17 @@ export function useCommandCenter() {
 
   const { submitTask, subscribeToTable } = useAgent();
   const userStore = useUserStore();
+  const activeExecutionRun = computed(() => {
+    const withRuns = [...timeline.value]
+      .filter((entry) => entry.executionRun)
+      .sort((left, right) => {
+        const leftTime = new Date(left.executionRun?.updatedAt ?? left.createdAt).getTime();
+        const rightTime = new Date(right.executionRun?.updatedAt ?? right.createdAt).getTime();
+        return rightTime - leftTime;
+      });
+
+    return withRuns[0] ?? null;
+  });
 
   function startRealtimeSync(): void {
     if (!userStore.profile?.organization_id) return;
@@ -355,13 +520,25 @@ export function useCommandCenter() {
       });
     }
 
+    if (!stopExecutionRunSubscription) {
+      stopExecutionRunSubscription = subscribeToTable('execution_runs', (payload: { new?: unknown; eventType?: string }) => {
+        if (payload.eventType !== 'INSERT' && payload.eventType !== 'UPDATE') return;
+        if (!payload.new || typeof payload.new !== 'object') return;
+        applyExecutionRunUpdate(payload.new as ExecutionRunRow);
+      });
+    }
+
     if (stopMessageSubscription) return;
 
     void (async () => {
+      const organizationId = userStore.profile?.organization_id;
+      if (!organizationId) return;
+
       const conversationId = await ensureConversationId();
       if (!conversationId) return;
 
       await loadConversationMessages(conversationId);
+      await loadExecutionRunsForTimeline(organizationId);
 
       if (stopMessageSubscription) return;
       stopMessageSubscription = subscribeToTable('command_messages', (payload: { new?: unknown; eventType?: string }) => {
@@ -387,6 +564,11 @@ export function useCommandCenter() {
     if (stopMessageSubscription) {
       stopMessageSubscription();
       stopMessageSubscription = null;
+    }
+
+    if (stopExecutionRunSubscription) {
+      stopExecutionRunSubscription();
+      stopExecutionRunSubscription = null;
     }
   }
 
@@ -541,6 +723,7 @@ export function useCommandCenter() {
   }
 
   return {
+    activeExecutionRun,
     timeline,
     isSubmitting,
     startRealtimeSync,

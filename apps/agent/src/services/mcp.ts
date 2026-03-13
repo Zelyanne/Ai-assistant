@@ -2,6 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { supabase } from './supabase.js';
 import { decrypt } from '@ai-assistant/shared/utils/encryption.js';
+import { type CapabilityReadinessResult } from '@ai-assistant/shared';
 import { PerimeterGuard } from '../guards/PerimeterGuard.js';
 import { config } from '../config/index.js';
 import { spawn, ChildProcess } from 'child_process';
@@ -10,6 +11,11 @@ import { loadMcpTools } from '@langchain/mcp-adapters';
 import { StructuredTool } from '@langchain/core/tools';
 import { googleAuthService } from './googleAuth.js';
 import { storeWorkspaceTokens } from './tokenService.js';
+import { AuditLogger } from './AuditLogger.js';
+import {
+  workerToolPolicyService,
+  type CapabilityWorkerType,
+} from './WorkerToolPolicyService.js';
 
 const ENCRYPTION_SECRET = config.ENCRYPTION_SECRET;
 const MCP_SERVER_PORT = 8000;
@@ -19,6 +25,7 @@ const TOOL_CACHE_TTL = 3600000; // 1 hour
 interface CachedClient {
   client: Client;
   lastUsed: number;
+  expiresAt: number | null;
 }
 
 interface CachedTools {
@@ -26,10 +33,77 @@ interface CachedTools {
   lastFetched: number;
 }
 
+interface CachedToolNames {
+  names: string[];
+  lastFetched: number;
+}
+
+interface ResolveToolResult {
+  requestedTool: string;
+  resolvedTool: string | null;
+  availableTools: string[];
+}
+
+type IntegrationRow = {
+  encrypted_creds: {
+    access_token?: string;
+    refresh_token?: string;
+    expires_at?: string;
+    scopes?: string[] | string;
+    [key: string]: unknown;
+  };
+  user_id: string | null;
+  sync_status?: string | null;
+} | null;
+
+const TOOL_ALIAS_MAP: Record<string, string[]> = {
+  create_gmail_draft: ['draft_gmail_message'],
+  draft_gmail_message: ['create_gmail_draft'],
+  send_gmail_message: [],
+  create_calendar_event: ['manage_event'],
+  patch_calendar_event: ['manage_event'],
+  update_calendar_event: ['manage_event'],
+  query_calendar_freebusy: ['query_freebusy'],
+  manage_event: ['create_calendar_event', 'patch_calendar_event', 'update_calendar_event'],
+  query_freebusy: ['query_calendar_freebusy'],
+  create_doc: [],
+  modify_doc_text: [],
+  get_doc_content: [],
+  search_drive_files: [],
+  get_drive_file_content: [],
+  create_drive_file: [],
+  import_to_google_doc: [],
+  create_spreadsheet: [],
+  read_sheet_values: [],
+  modify_sheet_values: [],
+  create_presentation: [],
+  modify_presentation: [],
+};
+
+const TOOL_KEYWORD_MAP: Record<string, string[][]> = {
+  draft_gmail_message: [['draft', 'gmail']],
+  send_gmail_message: [['send', 'gmail']],
+  manage_event: [['manage', 'event'], ['calendar', 'event']],
+  query_freebusy: [['freebusy'], ['free', 'busy']],
+  create_doc: [['create', 'doc'], ['create', 'document']],
+  modify_doc_text: [['modify', 'doc'], ['doc', 'text']],
+  get_doc_content: [['doc', 'content']],
+  search_drive_files: [['search', 'drive']],
+  get_drive_file_content: [['drive', 'content']],
+  create_drive_file: [['create', 'drive', 'file']],
+  import_to_google_doc: [['import', 'google', 'doc']],
+  create_spreadsheet: [['create', 'spreadsheet']],
+  read_sheet_values: [['read', 'sheet']],
+  modify_sheet_values: [['modify', 'sheet']],
+  create_presentation: [['create', 'presentation'], ['create', 'slide']],
+  modify_presentation: [['modify', 'presentation'], ['slide', 'modify']],
+};
+
 export class MCPService {
   private guard: PerimeterGuard;
   private clientCache: Map<string, CachedClient>;
   private toolCache: Map<string, CachedTools>;
+  private toolNameCache: Map<string, CachedToolNames>;
   private serverProcess: ChildProcess | null = null;
   private serverReady: Promise<void>;
 
@@ -37,6 +111,7 @@ export class MCPService {
     this.guard = new PerimeterGuard();
     this.clientCache = new Map();
     this.toolCache = new Map();
+    this.toolNameCache = new Map();
     
     // Only start server if not in test environment OR if explicitly requested via env var
     // This allows tests to opt-in to testing the startup logic
@@ -179,27 +254,97 @@ export class MCPService {
     });
   }
 
-  private async getClient(orgId: string): Promise<Client> {
+  private isAuthError(error: unknown): boolean {
+    if (!error) {
+      return false;
+    }
+
+    const candidate = error as {
+      message?: unknown;
+      code?: unknown;
+      status?: unknown;
+      event?: { message?: unknown; data?: unknown };
+    };
+
+    const code = typeof candidate.code === 'number'
+      ? candidate.code
+      : typeof candidate.status === 'number'
+        ? candidate.status
+        : null;
+
+    if (code === 401 || code === 403) {
+      return true;
+    }
+
+    const text = [
+      candidate.message,
+      candidate.event?.message,
+      candidate.event?.data,
+    ]
+      .filter((value): value is string => typeof value === 'string')
+      .join(' ')
+      .toLowerCase();
+
+    return text.includes('401')
+      || text.includes('403')
+      || text.includes('unauthorized')
+      || text.includes('forbidden')
+      || text.includes('invalid_token')
+      || text.includes('authentication failed')
+      || text.includes('bearer token is invalid')
+      || text.includes('no longer recognized by the server')
+      || text.includes('expired')
+      || text.includes('authenticated');
+  }
+
+  private async resetOrgCache(orgId: string): Promise<void> {
+    const cached = this.clientCache.get(orgId);
+    if (cached) {
+      try {
+        await cached.client.close();
+      } catch (error) {
+        console.error(`Error closing cached MCP client for ${orgId}:`, error);
+      }
+    }
+
+    this.clientCache.delete(orgId);
+    this.toolCache.delete(orgId);
+    this.toolNameCache.delete(orgId);
+  }
+
+  private async getClient(
+    orgId: string,
+    options: { forceReconnect?: boolean; forceRefresh?: boolean } = {},
+  ): Promise<Client> {
     await this.serverReady;
     const now = Date.now();
     
     // Check cache
     const cached = this.clientCache.get(orgId);
-    if (cached) {
+    const cachedStillValid = cached
+      && !options.forceReconnect
+      && cached.expiresAt !== null
+      && cached.expiresAt - now >= 300000;
+
+    if (cachedStillValid) {
       cached.lastUsed = now;
       return cached.client;
     }
 
+    if (cached) {
+      await this.resetOrgCache(orgId);
+    }
+
     // 1. Get tokens for the organization
-    const { data: integration, error } = await supabase
-      .from('workspace_integrations')
-      .select('encrypted_creds, user_id')
-      .eq('organization_id', orgId)
-      .eq('provider', 'google')
-      .single();
+    const integration = await this.getIntegration(orgId);
+    const error = integration ? null : { message: `Integration not found for organization ${orgId}` };
 
     if (error || !integration) {
       throw new Error(`Integration not found for organization ${orgId}`);
+    }
+
+    if (!this.isIntegrationActive(integration)) {
+      throw new Error(this.buildInactiveIntegrationMessage(integration));
     }
 
     if (!integration.user_id) {
@@ -209,10 +354,10 @@ export class MCPService {
     const creds = integration.encrypted_creds as any;
     console.log(`[MCP] Checking tokens for ${orgId}. Expiry: ${creds.expires_at}`);
     let accessToken = decrypt(creds.access_token, ENCRYPTION_SECRET);
-    const expiresAt = creds.expires_at ? new Date(creds.expires_at).getTime() : 0;
+    let expiresAt = creds.expires_at ? new Date(creds.expires_at).getTime() : 0;
 
     // Check if token is expired or about to expire (within 5 mins) OR if expiry is missing
-    const isExpired = !expiresAt || (expiresAt - now < 300000);
+    const isExpired = options.forceRefresh || !expiresAt || (expiresAt - now < 300000);
     
     if (isExpired) {
       console.log(`[MCP] Access token for ${orgId} is ${!expiresAt ? 'missing expiry' : 'expired'}, attempting refresh...`);
@@ -227,8 +372,12 @@ export class MCPService {
             await storeWorkspaceTokens(orgId, integration.user_id!, 'google', {
               access_token: accessToken,
               refresh_token: refreshToken, // Keep the same refresh token
-              expires_at: newTokens.expiry_date ? new Date(newTokens.expiry_date).toISOString() : undefined
+              expires_at: newTokens.expiry_date ? new Date(newTokens.expiry_date).toISOString() : undefined,
+              scopes: this.getScopesFromTokenPayload(newTokens).length > 0
+                ? this.getScopesFromTokenPayload(newTokens)
+                : this.getStoredScopes(integration),
             });
+            expiresAt = typeof newTokens.expiry_date === 'number' ? newTokens.expiry_date : expiresAt;
             console.log(`Successfully refreshed access token for ${orgId}`);
           }
         } catch (refreshErr) {
@@ -275,14 +424,23 @@ export class MCPService {
       console.error('[MCP Transport Error]', JSON.stringify(errorDetails, null, 2));
       
       try {
-        await supabase.from('agent_activity_log').insert({
-          organization_id: orgId,
-          agent_id: 'mcp-client',
-          action_taken: 'mcp_transport_error',
-          reasoning_trace: errorDetails
-        });
+        await AuditLogger.flush(
+          orgId,
+          null,
+          'agent-controller',
+          'mcp_transport_error',
+          [AuditLogger.createStep('MCP Transport', `Error: ${err.message}`, {
+            input_summary: `Code: ${err.code}`,
+            output_summary: errorDetails.eventMessage
+          })],
+          []
+        );
       } catch (logErr) {
         console.error('Failed to log MCP transport error to DB:', logErr);
+      }
+
+      if (this.isAuthError(err)) {
+        await this.resetOrgCache(orgId);
       }
     };
 
@@ -296,10 +454,268 @@ export class MCPService {
 
     this.clientCache.set(orgId, {
       client,
-      lastUsed: now
+      lastUsed: now,
+      expiresAt: Number.isFinite(expiresAt) && expiresAt > 0 ? expiresAt : null,
     });
 
     return client;
+  }
+
+  private async getIntegration(orgId: string): Promise<IntegrationRow> {
+    const query = supabase
+      .from('workspace_integrations')
+      .select('encrypted_creds, user_id, sync_status')
+      .eq('organization_id', orgId)
+      .eq('provider', 'google') as unknown as {
+        maybeSingle?: () => Promise<{ data: unknown; error: { message: string } | null }>;
+        single?: () => Promise<{ data: unknown; error: { message: string } | null }>;
+      };
+
+    const { data, error } = query.maybeSingle
+      ? await query.maybeSingle()
+      : query.single
+        ? await query.single()
+        : { data: null, error: { message: 'Supabase query does not support single-row fetch.' } };
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return (data as IntegrationRow) ?? null;
+  }
+
+  private isIntegrationActive(integration: IntegrationRow): boolean {
+    if (!integration) {
+      return false;
+    }
+
+    const syncStatus = typeof integration.sync_status === 'string'
+      ? integration.sync_status.toLowerCase()
+      : 'idle';
+    const hasCredentials = Boolean(
+      integration.encrypted_creds?.access_token || integration.encrypted_creds?.refresh_token,
+    );
+
+    return hasCredentials && syncStatus !== 'error' && syncStatus !== 'disconnected' && syncStatus !== 'revoked';
+  }
+
+  private buildInactiveIntegrationMessage(integration: IntegrationRow): string {
+    if (!integration) {
+      return 'Google Workspace integration is not connected.';
+    }
+
+    if (!integration.encrypted_creds?.access_token && !integration.encrypted_creds?.refresh_token) {
+      return 'Google Workspace integration is missing stored credentials.';
+    }
+
+    const syncStatus = typeof integration.sync_status === 'string' ? integration.sync_status : 'unknown';
+    return `Google Workspace integration is not active (sync_status=${syncStatus}).`;
+  }
+
+  private getStoredScopes(integration: IntegrationRow): string[] {
+    const rawScopes = integration?.encrypted_creds?.scopes;
+    if (Array.isArray(rawScopes)) {
+      return rawScopes.filter((scope): scope is string => typeof scope === 'string');
+    }
+
+    if (typeof rawScopes === 'string') {
+      return rawScopes.split(' ').map((scope) => scope.trim()).filter(Boolean);
+    }
+
+    return [];
+  }
+
+  private getScopesFromTokenPayload(tokens: Record<string, unknown>): string[] {
+    if (typeof tokens.scope !== 'string') {
+      return [];
+    }
+
+    return tokens.scope
+      .split(' ')
+      .map((scope) => scope.trim())
+      .filter(Boolean);
+  }
+
+  private normalizeToolName(toolName: string): string {
+    return toolName.trim().toLowerCase();
+  }
+
+  private matchToolByKeywords(toolNames: string[], keywords: string[][]): string | null {
+    for (const keywordSet of keywords) {
+      for (const toolName of toolNames) {
+        const normalized = this.normalizeToolName(toolName);
+        if (keywordSet.every((keyword) => normalized.includes(keyword))) {
+          return toolName;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  async listToolNames(orgId: string, allowRetry = true): Promise<string[]> {
+    const now = Date.now();
+    const cached = this.toolNameCache.get(orgId);
+
+    if (cached && now - cached.lastFetched < TOOL_CACHE_TTL) {
+      return cached.names;
+    }
+
+    try {
+      const client = await this.getClient(orgId, {
+        forceReconnect: !allowRetry,
+        forceRefresh: !allowRetry,
+      });
+      const typedClient = client as unknown as {
+        listTools: (args?: { cursor?: string }) => Promise<{
+          tools: Array<{ name?: string }>;
+          nextCursor?: string;
+        }>;
+      };
+
+      const names: string[] = [];
+      let cursor: string | undefined;
+
+      do {
+        const response = await typedClient.listTools({ cursor });
+        names.push(
+          ...response.tools
+            .map((tool) => (typeof tool.name === 'string' ? tool.name : null))
+            .filter((toolName): toolName is string => Boolean(toolName)),
+        );
+        cursor = response.nextCursor;
+      } while (cursor);
+
+      const deduped = Array.from(new Set(names));
+      this.toolNameCache.set(orgId, { names: deduped, lastFetched: now });
+      return deduped;
+    } catch (error) {
+      if (allowRetry && this.isAuthError(error)) {
+        await this.resetOrgCache(orgId);
+        return this.listToolNames(orgId, false);
+      }
+
+      throw error;
+    }
+  }
+
+  async resolveToolName(orgId: string, requestedTool: string): Promise<ResolveToolResult> {
+    const availableTools = await this.listToolNames(orgId);
+    const normalizedRequested = this.normalizeToolName(requestedTool);
+    const exactMatch = availableTools.find(
+      (toolName) => this.normalizeToolName(toolName) === normalizedRequested,
+    );
+
+    if (exactMatch) {
+      return { requestedTool, resolvedTool: exactMatch, availableTools };
+    }
+
+    const aliases = TOOL_ALIAS_MAP[requestedTool] ?? [];
+    for (const alias of aliases) {
+      const aliasMatch = availableTools.find(
+        (toolName) => this.normalizeToolName(toolName) === this.normalizeToolName(alias),
+      );
+      if (aliasMatch) {
+        return { requestedTool, resolvedTool: aliasMatch, availableTools };
+      }
+    }
+
+    const keywordMatch = this.matchToolByKeywords(
+      availableTools,
+      TOOL_KEYWORD_MAP[requestedTool] ?? [],
+    );
+
+    return {
+      requestedTool,
+      resolvedTool: keywordMatch,
+      availableTools,
+    };
+  }
+
+  async executeWorkerTool(
+    orgId: string,
+    workerType: CapabilityWorkerType,
+    requestedTool: string,
+    args: Record<string, unknown>,
+  ): Promise<{ toolName: string; result: unknown }> {
+    if (!workerToolPolicyService.isToolAllowed(workerType, requestedTool)) {
+      throw new Error(
+        `Worker policy denied tool ${requestedTool} for ${workerType}`,
+      );
+    }
+
+    const resolution = await this.resolveToolName(orgId, requestedTool);
+    if (!resolution.resolvedTool) {
+      throw new Error(`Tool ${requestedTool} is unavailable for ${workerType}`);
+    }
+
+    const result = await this.executeTool(orgId, resolution.resolvedTool, args);
+    return { toolName: resolution.resolvedTool, result };
+  }
+
+  async checkCapabilityReadiness(
+    orgId: string,
+    workerType: CapabilityWorkerType,
+    requestedTools: string[],
+  ): Promise<CapabilityReadinessResult> {
+    const integration = await this.getIntegration(orgId);
+    const integrationActive = this.isIntegrationActive(integration);
+    const scopes = this.getStoredScopes(integration);
+    const requiredScopes = workerToolPolicyService.getRequiredScopes(workerType);
+    const missingScopes = requiredScopes.filter((scope) => !scopes.includes(scope));
+    const resolvedTools: string[] = [];
+    const unavailableTools: string[] = [];
+    const errors: string[] = [];
+
+    if (!integrationActive) {
+      errors.push(this.buildInactiveIntegrationMessage(integration));
+    }
+
+    for (const requestedTool of requestedTools) {
+      if (!workerToolPolicyService.isToolAllowed(workerType, requestedTool)) {
+        unavailableTools.push(requestedTool);
+        errors.push(`Worker policy denied tool: ${requestedTool}`);
+        continue;
+      }
+
+      if (!integrationActive) {
+        continue;
+      }
+
+      try {
+        const resolution = await this.resolveToolName(orgId, requestedTool);
+        if (resolution.resolvedTool) {
+          resolvedTools.push(resolution.resolvedTool);
+        } else {
+          unavailableTools.push(requestedTool);
+          errors.push(`Unavailable tool: ${requestedTool}`);
+        }
+      } catch (error: unknown) {
+        unavailableTools.push(requestedTool);
+        errors.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    const ready = integrationActive
+      && missingScopes.length === 0
+      && unavailableTools.length === 0;
+
+    errors.push(...missingScopes.map((scope) => `Missing scope: ${scope}`));
+
+    return {
+      worker_type: workerType,
+      ready,
+      integration_active: integrationActive,
+      policy_allowed: requestedTools.every((toolName) =>
+        workerToolPolicyService.isToolAllowed(workerType, toolName),
+      ),
+      required_scopes: requiredScopes,
+      missing_scopes: missingScopes,
+      requested_tools: requestedTools,
+      resolved_tools: resolvedTools,
+      unavailable_tools: unavailableTools,
+      errors: ready ? [] : Array.from(new Set(errors)),
+    };
   }
 
   async getLangChainTools(orgId: string): Promise<StructuredTool[]> {
@@ -322,38 +738,58 @@ export class MCPService {
 
       return tools;
     } catch (err: any) {
-      console.error(`Failed to fetch LangChain tools for org ${orgId}:`, err);
-      
-      // Clear cache on 401/Auth errors
-      const isAuthError = err.message?.includes('401') || err.message?.toLowerCase().includes('unauthorized');
-      if (isAuthError) {
-        console.log(`Clearing MCP client cache for ${orgId} due to auth error`);
-        this.clientCache.delete(orgId);
-        this.toolCache.delete(orgId);
+      if (this.isAuthError(err)) {
+        console.log(`Retrying LangChain tool fetch for ${orgId} after auth recovery`);
+        await this.resetOrgCache(orgId);
+
+        try {
+          const client = await this.getClient(orgId, { forceReconnect: true, forceRefresh: true });
+          const tools = await loadMcpTools('workspace-mcp', client);
+
+          this.toolCache.set(orgId, {
+            tools,
+            lastFetched: Date.now(),
+          });
+
+          return tools;
+        } catch (retryErr: any) {
+          console.error(`Retry failed fetching LangChain tools for org ${orgId}:`, retryErr);
+          return [];
+        }
       }
-      
+
+      console.error(`Failed to fetch LangChain tools for org ${orgId}:`, err);
+
       return [];
     }
   }
 
-  async executeTool(orgId: string, toolName: string, args: any): Promise<any> {
+  async executeTool(
+    orgId: string,
+    toolName: string,
+    args: any,
+    allowRetry = true,
+  ): Promise<any> {
     let client: Client;
     
     try {
-      client = await this.getClient(orgId);
+      client = await this.getClient(orgId, {
+        forceReconnect: !allowRetry,
+        forceRefresh: !allowRetry,
+      });
     } catch (err: any) {
       console.error(`Failed to get MCP client for ${orgId}:`, err);
-       const errorLogData: any = {
-        organization_id: orgId,
-        agent_id: 'agent-controller',
-        action_taken: `mcp_client_init_error: ${toolName}`,
-        reasoning_trace: {
-          tool: toolName,
-          arguments: args,
-          error: err.message || 'Unknown error',
-        },
-      };
-      await supabase.from('agent_activity_log').insert(errorLogData);
+      await AuditLogger.flush(
+        orgId,
+        null,
+        'agent-controller',
+        `mcp_client_init_error: ${toolName}`,
+        [AuditLogger.createStep('MCP Client Init', `Failed to initialize client for ${toolName}`, {
+          input_summary: `Tool: ${toolName}`,
+          output_summary: err.message || 'Unknown error'
+        })],
+        []
+      );
       throw err;
     }
 
@@ -365,46 +801,42 @@ export class MCPService {
 
       const redactedResult = this.redactResult(result);
 
-      const logData: any = {
-        organization_id: orgId,
-        agent_id: 'agent-controller',
-        action_taken: `mcp_tool_call: ${toolName}`,
-        reasoning_trace: {
-          tool: toolName,
-          arguments: args,
-          result: redactedResult,
-        },
-      };
-      
-      await supabase.from('agent_activity_log').insert(logData);
+      await AuditLogger.flush(
+        orgId,
+        null,
+        'agent-controller',
+        `mcp_tool_call: ${toolName}`,
+        [AuditLogger.createStep('MCP Tool Execution', `Executed tool: ${toolName}`, {
+          input_summary: JSON.stringify(args).substring(0, 500),
+          output_summary: JSON.stringify(redactedResult).substring(0, 500)
+        })],
+        []
+      );
 
       return redactedResult;
     } catch (err: any) {
       console.error(`MCP tool execution failed: ${toolName}`, err);
-      
-      const isAuthError = err.message?.toLowerCase().includes('401') || 
-                          err.message?.toLowerCase().includes('unauthorized') ||
-                          err.message?.toLowerCase().includes('authenticated');
 
-      if (isAuthError) {
-        console.log(`Auth error detected for ${orgId}, clearing cache for retry...`);
-        this.clientCache.delete(orgId);
-      } else {
-        // Also clear cache for other errors as the SSE connection might be unstable
-        this.clientCache.delete(orgId);
+      const isAuthError = this.isAuthError(err);
+
+      await this.resetOrgCache(orgId);
+
+      if (isAuthError && allowRetry) {
+        console.log(`Auth error detected for ${orgId}, retrying tool ${toolName} once with a fresh MCP client...`);
+        return this.executeTool(orgId, toolName, args, false);
       }
       
-      const errorLogData: any = {
-        organization_id: orgId,
-        agent_id: 'agent-controller',
-        action_taken: `mcp_tool_error: ${toolName}`,
-        reasoning_trace: {
-          tool: toolName,
-          arguments: args,
-          error: err.message || 'Unknown error',
-        },
-      };
-      await supabase.from('agent_activity_log').insert(errorLogData);
+      await AuditLogger.flush(
+        orgId,
+        null,
+        'agent-controller',
+        `mcp_tool_error: ${toolName}`,
+        [AuditLogger.createStep('MCP Tool Execution', `Tool execution failed: ${toolName}`, {
+          input_summary: JSON.stringify(args).substring(0, 500),
+          output_summary: err.message || 'Unknown error'
+        })],
+        []
+      );
       throw err;
     }
   }
@@ -413,12 +845,7 @@ export class MCPService {
     const now = Date.now();
     for (const [orgId, cached] of this.clientCache.entries()) {
       if (now - cached.lastUsed > maxAgeMs) {
-        try {
-          await cached.client.close();
-        } catch (e) {
-          console.error(`Error closing MCP client for ${orgId}`, e);
-        }
-        this.clientCache.delete(orgId);
+        await this.resetOrgCache(orgId);
       }
     }
   }

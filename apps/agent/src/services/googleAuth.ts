@@ -6,10 +6,29 @@ type TokenExchangeResult = {
     access_token?: string | null;
     refresh_token?: string | null;
     expiry_date?: number | null;
+    scope?: string | null;
     [key: string]: unknown;
   };
   email: string | null | undefined;
+  scopes: string[];
 };
+
+export const GOOGLE_WORKSPACE_SCOPES = {
+  gmail: ['https://www.googleapis.com/auth/gmail.modify'],
+  calendar: ['https://www.googleapis.com/auth/calendar'],
+  drive: [
+    'https://www.googleapis.com/auth/drive.readonly',
+    'https://www.googleapis.com/auth/drive.file',
+  ],
+  docs: ['https://www.googleapis.com/auth/documents'],
+  sheets: ['https://www.googleapis.com/auth/spreadsheets'],
+  slides: ['https://www.googleapis.com/auth/presentations'],
+  profile: ['https://www.googleapis.com/auth/userinfo.email'],
+} as const;
+
+export const GOOGLE_WORKSPACE_OAUTH_SCOPES = Array.from(
+  new Set(Object.values(GOOGLE_WORKSPACE_SCOPES).flat()),
+);
 
 export class GoogleAuthService {
   private oauth2Client;
@@ -27,17 +46,10 @@ export class GoogleAuthService {
    * Forces consent to ensure a refresh token is always returned.
    */
   getAuthUrl(state: string): string {
-    const scopes = [
-      'https://www.googleapis.com/auth/gmail.modify',
-      'https://www.googleapis.com/auth/calendar',
-      'https://www.googleapis.com/auth/drive.readonly',
-      'https://www.googleapis.com/auth/userinfo.email',
-    ];
-
     return this.oauth2Client.generateAuthUrl({
       access_type: 'offline',
       prompt: 'consent',
-      scope: scopes,
+      scope: GOOGLE_WORKSPACE_OAUTH_SCOPES,
       state, // organization_id passed via state
     });
   }
@@ -56,6 +68,10 @@ export class GoogleAuthService {
     return {
       tokens: tokens as Record<string, unknown>,
       email: userInfo.data.email,
+      scopes:
+        typeof tokens.scope === 'string'
+          ? tokens.scope.split(' ').map((scope) => scope.trim()).filter(Boolean)
+          : [],
     };
   }
 

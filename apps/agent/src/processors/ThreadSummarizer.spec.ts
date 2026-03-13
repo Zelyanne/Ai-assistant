@@ -122,11 +122,11 @@ describe('ThreadSummarizer', () => {
 
     // Verify citation link
     expect(mockActivityLogChain.insert).toHaveBeenCalledWith(expect.objectContaining({
-      citations: [
+      citations: expect.arrayContaining([
         expect.objectContaining({
           link: 'https://mail.google.com/mail/u/0/#all/gmail-123'
         })
-      ]
+      ])
     }));
   });
 

@@ -1,6 +1,4 @@
-# Story 6.4: Comprehensive "Reasoning Trace" & Audit Logs
-
-Status: ready-for-dev
+Status: done
 
 Story ID: 6.4
 Story Key: 6-4-comprehensive-reasoning-trace-audit-logs
@@ -60,35 +58,35 @@ so that I can trust, audit, and debug what the assistant is doing on my behalf.
 
 ## Tasks / Subtasks
 
-- [ ] 1) Fix `agent_activity_log` schema so audit writes cannot fail (AC: 1, 2)
-  - [ ] Add a Supabase migration to remove the hard dependency on `profiles` for `agent_activity_log.agent_id`.
-  - [ ] Recommended migration approach (pick one and document rationale in the PR):
-    - [ ] Option A (preferred): drop FK and change `agent_id` to `TEXT NOT NULL` so components can log as `agent-controller`, `channel-router`, etc.
+- [x] 1) Fix `agent_activity_log` schema so audit writes cannot fail (AC: 1, 2)
+  - [x] Add a Supabase migration to remove the hard dependency on `profiles` for `agent_activity_log.agent_id`.
+  - [x] Recommended migration approach (pick one and document rationale in the PR):
+    - [x] Option A (preferred): drop FK and change `agent_id` to `TEXT NOT NULL` so components can log as `agent-controller`, `channel-router`, etc.
     - [ ] Option B: keep `agent_id` as `UUID` but make it nullable; log `task.user_id` when present else null.
-  - [ ] Update `agent_activity_log.reasoning_trace` default to JSON array (`[]`) and `citations` default to JSON array (`[]`) to match `packages/shared` schemas.
-  - [ ] Regenerate or update shared DB types if this repo’s workflow expects committed types (`packages/shared/src/database.types.ts`).
+  - [x] Update `agent_activity_log.reasoning_trace` default to JSON array (`[]`) and `citations` default to JSON array (`[]`) to match `packages/shared` schemas.
+  - [x] Regenerate or update shared DB types if this repo’s workflow expects committed types (`packages/shared/src/database.types.ts`).
 
-- [ ] 2) Standardize audit logging output shape (ReasoningStep[] + Citation[]) (AC: 1, 5)
-  - [ ] Ensure `AuditLogger.flush(...)` is the single canonical persistence method for audit logs. [Source: `apps/agent/src/services/AuditLogger.ts`]
-  - [ ] Remove or refactor any direct `agent_activity_log` inserts that store non-standard shapes (e.g., object blobs) so the UI can always treat `reasoning_trace` as an array. [Source: `apps/agent/src/processors/BaseProcessor.ts`]
-  - [ ] Ensure every log set includes at least:
-    - [ ] a stable task citation (`source_type='task'`, `source_id=task.id`) when `task.id` exists
-    - [ ] provenance citations when available: channel message id, correlation id, thread/conversation/message ids. [Source: `apps/agent/src/controller/graph.ts`] [Source: `apps/agent/src/processors/AssistantCommandProcessor.ts`]
-  - [ ] Add explicit PII-redaction before persisting trace/citation strings (use `PerimeterGuard.redactPII`). [Source: `apps/agent/src/guards/PerimeterGuard.ts`]
+- [x] 2) Standardize audit logging output shape (ReasoningStep[] + Citation[]) (AC: 1, 5)
+  - [x] Ensure `AuditLogger.flush(...)` is the single canonical persistence method for audit logs. [Source: `apps/agent/src/services/AuditLogger.ts`]
+  - [x] Remove or refactor any direct `agent_activity_log` inserts that store non-standard shapes (e.g., object blobs) so the UI can always treat `reasoning_trace` as an array. [Source: `apps/agent/src/processors/BaseProcessor.ts`]
+  - [x] Ensure every log set includes at least:
+    - [x] a stable task citation (`source_type='task'`, `source_id=task.id`) when `task.id` exists
+    - [x] provenance citations when available: channel message id, correlation id, thread/conversation/message ids. [Source: `apps/agent/src/controller/graph.ts`] [Source: `apps/agent/src/processors/AssistantCommandProcessor.ts`]
+  - [x] Add explicit PII-redaction before persisting trace/citation strings (use `PerimeterGuard.redactPII`). [Source: `apps/agent/src/guards/PerimeterGuard.ts`]
 
-- [ ] 3) Build an Audit Log UI surface in the Hub (AC: 3, 4)
-  - [ ] Add a new view (recommended) `apps/web/src/views/AuditLog.vue` and route + sidebar nav entry.
-  - [ ] Implement list + filters + pagination reading from `agent_activity_log` (newest-first). Use `.range(...)` paging and `.order('created_at', { ascending: false })`. [External Source: Context7 `/supabase/supabase-js`]
-  - [ ] Implement a detail Drawer that renders `reasoning_trace` via PrimeVue `Timeline`, and citations as external links.
-  - [ ] Update `apps/web/src/composables/useReasoningTrace.ts` to use `.maybeSingle()` and treat “0 rows” as empty state. [External Source: Context7 `/supabase/postgrest-js`]
-  - [ ] Subscribe to `agent_activity_log` inserts in the audit view for live updates; ensure cleanup on unmount (`unsubscribe` + `removeChannel`). [External Source: Context7 `/supabase/supabase-js`]
+- [x] 3) Build an Audit Log UI surface in the Hub (AC: 3, 4)
+  - [x] Add a new view (recommended) `apps/web/src/views/AuditLog.vue` and route + sidebar nav entry.
+  - [x] Implement list + filters + pagination reading from `agent_activity_log` (newest-first). Use `.range(...)` paging and `.order('created_at', { ascending: false })`. [External Source: Context7 `/supabase/supabase-js`]
+  - [x] Implement a detail Drawer that renders `reasoning_trace` via PrimeVue `Timeline`, and citations as external links.
+  - [x] Update `apps/web/src/composables/useReasoningTrace.ts` to use `.maybeSingle()` and treat “0 rows” as empty state. [External Source: Context7 `/supabase/postgrest-js`]
+  - [x] Subscribe to `agent_activity_log` inserts in the audit view for live updates; ensure cleanup on unmount (`unsubscribe` + `removeChannel`). [External Source: Context7 `/supabase/supabase-js`]
 
-- [ ] 4) Tests + regressions (AC: 6)
-  - [ ] Agent: unit/integration test that audit logging succeeds even when `tasks.user_id` is null.
-  - [ ] Agent: test that `reasoning_trace` persisted shape is an array of steps and `citations` is an array.
-  - [ ] Web: component test for Audit Log list rendering and selecting an entry shows a trace timeline.
-  - [ ] Web: test that trace drawer for a task with no logs shows empty state (no error).
-  - [ ] Web: test that realtime subscriptions are cleaned up on unmount.
+- [x] 4) Tests + regressions (AC: 6)
+  - [x] Agent: unit/integration test that audit logging succeeds even when `tasks.user_id` is null.
+  - [x] Agent: test that `reasoning_trace` persisted shape is an array of steps and `citations` is an array.
+  - [x] Web: component test for Audit Log list rendering and selecting an entry shows a trace timeline.
+  - [x] Web: test that trace drawer for a task with no logs shows empty state (no error).
+  - [x] Web: test that realtime subscriptions are cleaned up on unmount.
 
 ## Dev Notes
 
@@ -125,10 +123,24 @@ openai/gpt-5.2
 ### Completion Notes List
 
 - Ultimate context engine analysis completed - comprehensive developer guide created.
+- Standardized reasoning trace across all processors and services.
+- Refactored all direct DB inserts to use `AuditLogger.flush()` for PII safety and consistency.
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/6-4-comprehensive-reasoning-trace-audit-logs.md`
+- `apps/agent/src/services/AuditLogger.ts`
+- `apps/agent/src/processors/BaseProcessor.ts`
+- `apps/agent/src/processors/ThreadSummarizer.ts`
+- `apps/agent/src/processors/MorningBriefProcessor.ts`
+- `apps/agent/src/processors/EmailTriageProcessor.ts`
+- `apps/agent/src/services/RelancingScheduler.ts`
+- `apps/agent/src/services/mcp.ts`
+- `apps/web/src/views/AuditLog.vue`
+- `apps/web/src/composables/useReasoningTrace.ts`
+- `apps/web/src/router/index.ts`
+- `apps/web/src/components/layout/AppSidebar.vue`
+- `supabase/migrations/20260309220000_audit_log_improvements.sql`
 
 ### Implementation Plan
 
@@ -141,8 +153,9 @@ openai/gpt-5.2
 4. Setup routing in `apps/web/src/router/index.ts` and sidebar navigation links in `AppSidebar.vue`.
 5. Fixed strict array defaults for reasoning traces and updated logic around `.maybeSingle()` inside composables `useReasoningTrace.ts` to allow graceful display of "no results found" UI logic.
 6. Expanded `AuditLogger.spec.ts` with tests to prove the stringly-typed agent ID mapping works, and `AuditLog.spec.ts` & `useReasoningTrace.spec.ts` to cover Vue components properly.
+7. **Post-Review Refactoring**: Standardized all system components (`BaseProcessor`, `ThreadSummarizer`, `MorningBriefProcessor`, `EmailTriageProcessor`, `RelancingScheduler`, `mcpService`) to use `AuditLogger.flush()`, ensuring all reasoning traces are valid `ReasoningStep[]` arrays and all PII is redacted.
 
 ### Completion Notes
 
 ✅ Successfully implemented Story 6.4 Comprehensive Reasoning Trace & Audit Logs.
-The UI now fully displays system activity including agent outcomes in realtime. Background executions from things like the Channel Router and Agents can now log directly to `agent_activity_log` with standard payload shapes without running into Foreign Key Constraint failures. Tests are green and the codebase has been thoroughly checked.
+The UI now fully displays system activity including agent outcomes in realtime. Background executions from things like the Channel Router and Agents can now log directly to `agent_activity_log` with standard payload shapes without running into Foreign Key Constraint failures. Tests are green and the codebase has been thoroughly checked. Standardized all system logging to use the centralized `AuditLogger`.

@@ -87,7 +87,7 @@ app.get('/api/auth/google/callback', async (req, res) => {
 
   try {
     const { organizationId, userId } = JSON.parse(Buffer.from(state as string, 'base64').toString());
-    const { tokens } = await googleAuthService.exchangeCodeForTokens(code as string);
+    const { tokens, scopes } = await googleAuthService.exchangeCodeForTokens(code as string);
 
     if (!tokens.refresh_token) {
       return res.status(400).send('No refresh token received. Please disconnect and reconnect the app in Google Security settings.');
@@ -97,6 +97,7 @@ app.get('/api/auth/google/callback', async (req, res) => {
       access_token: tokens.access_token!,
       refresh_token: tokens.refresh_token!,
       expires_at: tokens.expiry_date ? new Date(tokens.expiry_date).toISOString() : undefined,
+      scopes,
     });
 
     if (result.success) {

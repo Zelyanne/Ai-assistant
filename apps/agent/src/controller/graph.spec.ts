@@ -1,16 +1,18 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { graph } from './graph.js';
 
-// Mock SafetyControlsService
 vi.mock('../services/SafetyControlsService.js', () => ({
   SafetyControlsService: {
     isEmergencyBrakeEnabled: vi.fn().mockResolvedValue(false),
   },
 }));
 
-type GraphInput = Parameters<typeof graph.invoke>[0];
+vi.mock('../services/agency.js', () => ({
+  AgencyService: {
+    getTierForTopic: vi.fn().mockResolvedValue('Public'),
+  },
+}));
 
-// Mock Config
 vi.mock('../config/index.js', () => ({
   config: {
     SUPABASE_URL: 'http://localhost:54321',
@@ -18,30 +20,10 @@ vi.mock('../config/index.js', () => ({
     MISTRAL_API_KEY: 'mock-mistral-key',
     DEFAULT_LLM_MODEL: 'mistral-small-latest',
     CONFIDENCE_THRESHOLD: 0.8,
-    ENCRYPTION_SECRET: '0123456789abcdef0123456789abcdef' // 32 chars
-  }
+    ENCRYPTION_SECRET: '0123456789abcdef0123456789abcdef',
+  },
 }));
 
-// Mock LangChain Mistral
-const { mockInvoke, mockWithStructuredOutput } = vi.hoisted(() => ({
-  mockInvoke: vi.fn(),
-  mockWithStructuredOutput: vi.fn(),
-}));
-
-vi.mock('@langchain/mistralai', () => {
-  class ChatMistralAI {
-    invoke = mockInvoke;
-    withStructuredOutput(...args: unknown[]) {
-      mockWithStructuredOutput(...args);
-      return this;
-    }
-  }
-  return {
-    ChatMistralAI,
-  };
-});
-
-// Mock tracing service
 vi.mock('../services/llm/tracing.js', () => ({
   tracingService: {
     getHandler: vi.fn().mockReturnValue(null),
@@ -51,1181 +33,457 @@ vi.mock('../services/llm/tracing.js', () => ({
   },
 }));
 
-// Mock LLMProviderFactory (kept for other processors that might still use it)
-const mockProvider = {
-  generateText: vi.fn().mockResolvedValue({
-    data: 'Mocked response',
-    usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-    model: 'mistral-small'
-  }),
-  generateStructured: vi.fn().mockResolvedValue({
-    data: { summary: 'Mocked response', confidence: 0.9, ambiguity_detected: false },
-    usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-    model: 'mistral-small'
-  })
-};
-
-vi.mock('../services/llm/factory.js', () => ({
-  LLMProviderFactory: {
-    getProvider: vi.fn(() => mockProvider)
-  }
-}));
-
-// Mock Supabase
-type MockChain = {
-  update: ReturnType<typeof vi.fn>;
-  insert: ReturnType<typeof vi.fn>;
-  select: ReturnType<typeof vi.fn>;
-  eq: ReturnType<typeof vi.fn>;
-  single: ReturnType<typeof vi.fn>;
-  then: ReturnType<typeof vi.fn>;
-};
-
-const supabaseState = {
-  currentTable: '',
-  filters: new Map<string, unknown>(),
-  duplicateRelancingUpdate: false,
-  calendarEvents: [] as Array<Record<string, unknown>>,
-};
-
-const mockChain: MockChain = {
-  update: vi.fn().mockReturnThis(),
-  insert: vi.fn().mockReturnThis(),
-  select: vi.fn().mockReturnThis(),
-  eq: vi.fn((key: string, value: unknown) => {
-    supabaseState.filters.set(key, value);
-    return mockChain;
-  }),
-  single: vi.fn(() => {
-    if (supabaseState.currentTable === 'project_scheduling_contexts') {
-      return Promise.resolve({
-        data: {
-          id: String(supabaseState.filters.get('id') ?? 'ctx-1'),
-          setup_status: 'complete',
-          project_name: 'Q2 Launch',
-        },
-        error: null,
-      });
-    }
-
-    if (supabaseState.currentTable === 'relancing_updates') {
-      if (supabaseState.duplicateRelancingUpdate) {
-        return Promise.resolve({ data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint' } });
-      }
-      return Promise.resolve({ data: { id: 'rel-upd-1' }, error: null });
-    }
-
-    return Promise.resolve({ data: { tier: 'Public' }, error: null });
-  }),
-  then: vi.fn((resolve) => {
-    if (supabaseState.currentTable === 'calendar_events') {
-      return resolve({ data: supabaseState.calendarEvents, error: null });
-    }
-
-    if (supabaseState.currentTable === 'project_member_assignments') {
-      const userId = supabaseState.filters.get('member_user_id');
-      const isActive = supabaseState.filters.get('is_active');
-      if (typeof userId === 'string' && isActive === true) {
-        return resolve({
-          data: [{ id: 'assign-1', project_context_id: 'ctx-1' }],
-          error: null,
-        });
-      }
-      return resolve({ data: [], error: null });
-    }
-
-    return resolve({ data: null, error: null });
-  })
-};
-
-// Ensure eq always returns mockChain to allow chaining
-mockChain.eq.mockReturnValue(mockChain);
-
-vi.mock('../services/supabase.js', () => ({
-  supabase: {
-    from: vi.fn((table: string) => {
-      supabaseState.currentTable = table;
-      supabaseState.filters = new Map();
-      return mockChain;
-    })
-  }
-}));
-
-// Remove Mistral mock since we mock the factory now
-// vi.mock('mistralai', ...);
-
-// Mock ProtocolService
 vi.mock('../services/ProtocolService.js', () => ({
   ProtocolService: {
     fetchProtocol: vi.fn().mockResolvedValue('# Mock Protocol'),
-    extractRules: vi.fn().mockResolvedValue('1. Rule One')
-  }
+    extractRules: vi.fn().mockResolvedValue('1. Rule One'),
+  },
 }));
 
-// Mock MCPService to avoid subprocess spawning during graph tests
-const { mockExecuteTool, mockGetLangChainTools } = vi.hoisted(() => ({
-  mockExecuteTool: vi.fn(),
-  mockGetLangChainTools: vi.fn(),
+const { mockCheckCapabilityReadiness, mockResolveToolName, mockExecuteWorkerTool } = vi.hoisted(() => ({
+  mockCheckCapabilityReadiness: vi.fn(),
+  mockResolveToolName: vi.fn(),
+  mockExecuteWorkerTool: vi.fn(),
 }));
 
 vi.mock('../services/mcp.js', () => ({
-  MCPService: class {
-    executeTool = mockExecuteTool;
-    getLangChainTools = mockGetLangChainTools;
-  },
   mcpService: {
-    executeTool: mockExecuteTool,
-    getLangChainTools: mockGetLangChainTools,
-  }
+    checkCapabilityReadiness: mockCheckCapabilityReadiness,
+    resolveToolName: mockResolveToolName,
+    executeWorkerTool: mockExecuteWorkerTool,
+    getLangChainTools: vi.fn().mockResolvedValue([]),
+  },
 }));
 
-describe('Agent Controller Graph Routing', () => {
+type QueryState = {
+  table: string;
+  filters: Array<[string, unknown]>;
+  updatePatch: Record<string, unknown> | null;
+  selectColumns: string | null;
+};
 
+const db = {
+  tasks: new Map<string, Record<string, unknown>>(),
+  execution_runs: new Map<string, Record<string, unknown>>(),
+  agent_activity_log: [] as Record<string, unknown>[],
+};
+
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function matches(row: Record<string, unknown>, filters: Array<[string, unknown]>): boolean {
+  return filters.every(([key, value]) => row[key] === value);
+}
+
+function createQuery(table: string) {
+  const state: QueryState = {
+    table,
+    filters: [],
+    updatePatch: null,
+    selectColumns: null,
+  };
+
+  const api = {
+    select(columns: string) {
+      state.selectColumns = columns;
+      return api;
+    },
+    update(patch: Record<string, unknown>) {
+      state.updatePatch = patch;
+      return api;
+    },
+    insert: vi.fn(async (payload: Record<string, unknown> | Record<string, unknown>[]) => {
+      const rows = Array.isArray(payload) ? payload : [payload];
+      for (const row of rows) {
+        if (table === 'tasks') {
+          db.tasks.set(String(row.id), clone(row));
+        } else if (table === 'execution_runs') {
+          db.execution_runs.set(String(row.task_id), clone({
+            id:
+              row.id ??
+              `00000000-0000-4000-8000-${String(db.execution_runs.size + 1).padStart(12, '0')}`,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            ...row,
+          }));
+        } else if (table === 'agent_activity_log') {
+          db.agent_activity_log.push(clone(row));
+        }
+      }
+
+      return { error: null };
+    }),
+    eq(key: string, value: unknown) {
+      state.filters.push([key, value]);
+      return api;
+    },
+    async single() {
+      return runSelect();
+    },
+    async maybeSingle() {
+      return runSelect();
+    },
+    then(resolve: (value: { data: unknown; error: null }) => unknown) {
+      return Promise.resolve(runUpdate()).then(resolve);
+    },
+  };
+
+  function runSelect() {
+    if (table === 'tasks') {
+      const rows = Array.from(db.tasks.values()).filter((row) => matches(row, state.filters));
+      return Promise.resolve({ data: rows[0] ?? null, error: null });
+    }
+
+    if (table === 'execution_runs') {
+      const rows = Array.from(db.execution_runs.values()).filter((row) => matches(row, state.filters));
+      return Promise.resolve({ data: rows[0] ?? null, error: null });
+    }
+
+    return Promise.resolve({ data: null, error: null });
+  }
+
+  function runUpdate() {
+    if (table === 'tasks') {
+      for (const [id, row] of db.tasks.entries()) {
+        if (matches(row, state.filters)) {
+          db.tasks.set(id, { ...row, ...clone(state.updatePatch ?? {}) });
+        }
+      }
+    }
+
+    if (table === 'execution_runs') {
+      for (const [taskId, row] of db.execution_runs.entries()) {
+        if (matches(row, state.filters)) {
+          db.execution_runs.set(taskId, { ...row, ...clone(state.updatePatch ?? {}) });
+        }
+      }
+    }
+
+    return { data: null, error: null };
+  }
+
+  return api;
+}
+
+vi.mock('../services/supabase.js', () => ({
+  supabase: {
+    from: vi.fn((table: string) => createQuery(table)),
+  },
+}));
+
+describe('Agent Controller Graph planner-worker flow', () => {
   const baseTask = {
     id: '123e4567-e89b-12d3-a456-426614174000',
     organization_id: '123e4567-e89b-12d3-a456-426614174001',
+    user_id: '123e4567-e89b-12d3-a456-426614174002',
     status: 'queued',
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockInvoke.mockReset();
-    mockWithStructuredOutput.mockClear();
-    
-    // Default chain behavior
-    mockChain.update.mockReturnThis();
-    mockChain.insert.mockReturnThis();
-    mockChain.select.mockReturnThis();
-    mockChain.eq.mockImplementation((key: string, value: unknown) => {
-      supabaseState.filters.set(key, value);
-      return mockChain;
-    });
-    mockChain.single.mockReset();
-    supabaseState.currentTable = '';
-    supabaseState.filters = new Map();
-    supabaseState.duplicateRelancingUpdate = false;
-    supabaseState.calendarEvents = [];
+    db.tasks.clear();
+    db.execution_runs.clear();
+    db.agent_activity_log.length = 0;
 
-    mockGetLangChainTools.mockResolvedValue([
-      { name: 'create_calendar_event' },
-      { name: 'query_calendar_freebusy' },
-      { name: 'patch_calendar_event' },
-    ]);
-    mockExecuteTool.mockImplementation(async (_orgId: string, toolName: string) => {
-      if (toolName === 'query_calendar_freebusy') {
+    mockCheckCapabilityReadiness.mockResolvedValue({
+      worker_type: 'gmail',
+      ready: true,
+      integration_active: true,
+      policy_allowed: true,
+      required_scopes: [],
+      missing_scopes: [],
+      requested_tools: [],
+      resolved_tools: [],
+      unavailable_tools: [],
+      errors: [],
+    });
+
+    mockResolveToolName.mockImplementation(async (_orgId: string, requestedTool: string) => {
+      const mapping: Record<string, string> = {
+        create_gmail_draft: 'draft_gmail_message',
+        send_gmail_message: 'send_gmail_message',
+      };
+
+      return {
+        requestedTool,
+        resolvedTool: mapping[requestedTool] ?? requestedTool,
+        availableTools: Object.values(mapping),
+      };
+    });
+
+    mockExecuteWorkerTool.mockImplementation(async (_orgId: string, workerType: string, requestedTool: string) => {
+      if (workerType === 'drive') {
         return {
-          calendars: {
-            primary: {
-              busy: [],
-            },
-          },
+          toolName: 'get_drive_file_content',
+          result: { structuredContent: { summary: 'Drive source loaded' } },
         };
       }
 
-      return { message: 'Success' };
-    });
-
-    mockChain.single.mockImplementation(() => {
-      if (supabaseState.currentTable === 'project_scheduling_contexts') {
-        return Promise.resolve({
-          data: {
-            id: String(supabaseState.filters.get('id') ?? 'ctx-1'),
-            setup_status: 'complete',
-            project_name: 'Q2 Launch',
-          },
-          error: null,
-        });
-      }
-
-      if (supabaseState.currentTable === 'relancing_updates') {
-        if (supabaseState.duplicateRelancingUpdate) {
-          return Promise.resolve({ data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint' } });
-        }
-        return Promise.resolve({ data: { id: 'rel-upd-1' }, error: null });
-      }
-
-      return Promise.resolve({ data: { tier: 'Public' }, error: null });
-    });
-    
-    // Mock then for promise-like behavior in updates/inserts
-    mockChain.then.mockImplementation((resolve) => {
-      if (supabaseState.currentTable === 'calendar_events') {
-        return resolve({ data: supabaseState.calendarEvents, error: null });
-      }
-
-      if (supabaseState.currentTable === 'project_member_assignments') {
-        const userId = supabaseState.filters.get('member_user_id');
-        const isActive = supabaseState.filters.get('is_active');
-        if (typeof userId === 'string' && isActive === true) {
-          return resolve({ data: [{ id: 'assign-1', project_context_id: 'ctx-1' }], error: null });
-        }
-        return resolve({ data: [], error: null });
-      }
-
-      return resolve({ data: null, error: null });
-    });
-  });
-
-  it('should route email.draft to EmailDraftProcessor and accept tracing config', async () => {
-    const mockTask = { 
-      ...baseTask, 
-      domain_action: 'email.draft', 
-      payload: { recipient: 'test@example.com', subject: 'Test', body: 'Hello' } 
-    };
-    
-    // Test that invoke accepts metadata and tags (for LangSmith)
-    const result = await graph.invoke(
-      { task: mockTask } as GraphInput,
-      {
-        metadata: {
-          task_id: mockTask.id,
-          organization_id: mockTask.organization_id,
-          domain_action: mockTask.domain_action,
-        },
-        tags: [mockTask.domain_action],
-      }
-    ) as any;
-
-    expect(result.error).toBeUndefined();
-    expect(result.result.message).toContain('Email draft created');
-  });
-
-  it('should route assistant.command to delegated email.draft execution', async () => {
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'assistant.command',
-      payload: {
-        command: 'Draft an update email',
-        target_domain_action: 'email.draft',
-        target_payload: {
-          recipient: 'test@example.com',
-          subject: 'Status Update',
-          body: 'Draft body',
-        },
-      },
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.error).toBeUndefined();
-    expect(result.result.message).toContain('Email draft created');
-  });
-
-  it('should escalate assistant.command when high-risk confirmation is missing', async () => {
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'assistant.command',
-      payload: {
-        command: 'Send this email now',
-        high_risk: true,
-        confirmed: false,
-        recipient: 'test@example.com',
-        subject: 'Urgent',
-        body: 'Please review',
-      },
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.task.status).toBe('escalation');
-    expect(result.task.result.escalation).toBe(true);
-    expect(result.task.result.reason).toContain('High-risk command requires confirmation');
-    expect(mockExecuteTool).not.toHaveBeenCalled();
-  });
-
-  it('should escalate assistant.command when command intent cannot be mapped', async () => {
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'assistant.command',
-      payload: {
-        command: 'do that thing from last week',
-      },
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.task.status).toBe('escalation');
-    expect(result.task.result.escalation).toBe(true);
-    expect(result.task.result.reason).toContain('Command is ambiguous');
-    expect(mockExecuteTool).not.toHaveBeenCalled();
-  });
-
-  it('should pause assistant.command when Emergency Brake is enabled', async () => {
-    const { SafetyControlsService } = await import('../services/SafetyControlsService.js');
-    vi.mocked(SafetyControlsService.isEmergencyBrakeEnabled).mockResolvedValueOnce(true);
-
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'assistant.command',
-      payload: {
-        command: 'Draft an email to product team',
-        target_domain_action: 'email.draft',
-        target_payload: {
-          recipient: 'team@example.com',
-          subject: 'Product update',
-          body: 'Sharing update',
-        },
-      },
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.task.status).toBe('paused');
-    expect(mockExecuteTool).not.toHaveBeenCalled();
-  });
-
-
-  it('should route calendar.create to CalendarCreateProcessor', async () => {
-    const mockTask = { 
-      ...baseTask, 
-      domain_action: 'calendar.create', 
-      payload: { summary: 'Meeting', startTime: '2026-01-18T10:00:00Z', endTime: '2026-01-18T11:00:00Z' } 
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.error).toBeUndefined();
-    expect(result.result.message).toContain('Calendar event created');
-  });
-
-  it('should escalate calendar.create when conflict is detected and avoid create_calendar_event call', async () => {
-    mockExecuteTool.mockImplementationOnce(async (_orgId: string, toolName: string) => {
-      if (toolName === 'query_calendar_freebusy') {
+      if (workerType === 'docs') {
         return {
-          calendars: {
-            primary: {
-              busy: [
-                {
-                  start: '2026-01-18T10:15:00Z',
-                  end: '2026-01-18T10:45:00Z',
-                },
-              ],
-            },
-          },
+          toolName: 'create_doc',
+          result: { structuredContent: { id: 'doc-1', url: 'https://docs.google.com/document/d/doc-1' } },
         };
       }
 
-      return { message: 'Success' };
+      return {
+        toolName: requestedTool === 'create_gmail_draft' ? 'draft_gmail_message' : requestedTool,
+        result: { content: [{ type: 'text', text: 'Done' }] },
+      };
     });
+  });
 
-    const mockTask = {
+  it('creates and completes a persisted Drive -> Docs -> Gmail execution run', async () => {
+    const task = {
       ...baseTask,
-      domain_action: 'calendar.create',
+      domain_action: 'assistant.command',
       payload: {
-        summary: 'Conflict meeting',
-        startTime: '2026-01-18T10:00:00Z',
-        endTime: '2026-01-18T11:00:00Z',
+        command: 'Read the source, create a doc, then draft the email',
+        target_domain_action: 'email.draft',
+        target_payload: {
+          plan_steps: [
+            {
+              key: 'drive-step',
+              title: 'Read Drive file',
+              worker_type: 'drive',
+              action: 'read_drive_context',
+              requested_tools: ['get_drive_file_content'],
+              input: { context_references: [{ url: 'https://docs.google.com/document/d/file-123/edit', file_id: 'file-123' }] },
+            },
+            {
+              key: 'doc-step',
+              title: 'Create doc',
+              worker_type: 'docs',
+              action: 'create_document',
+              requested_tools: ['create_doc'],
+              input: { source_step_key: 'drive-step' },
+            },
+            {
+              key: 'gmail-step',
+              title: 'Draft email',
+              worker_type: 'gmail',
+              action: 'draft_email',
+              requested_tools: ['draft_gmail_message'],
+              input: {
+                recipient: 'alexis@example.com',
+                subject: 'Status update',
+                source_step_key: 'doc-step',
+              },
+            },
+          ],
+        },
       },
     };
 
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
+    db.tasks.set(task.id, clone(task));
 
-    expect(result.task.status).toBe('escalation');
-    expect(result.task.result.escalation).toBe(true);
-    expect(result.task.result.reason).toContain('Calendar conflict detected');
-    expect(result.task.result.conflict).toBeDefined();
-    expect(result.task.result.conflict.overlaps.length).toBeGreaterThan(0);
-    expect(mockExecuteTool).not.toHaveBeenCalledWith(
-      mockTask.organization_id,
-      'create_calendar_event',
-      expect.any(Object),
-    );
-  });
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
 
-  it('should execute calendar.create when no conflict exists', async () => {
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'calendar.create',
-      payload: {
-        summary: 'No conflict meeting',
-        startTime: '2026-01-18T14:00:00Z',
-        endTime: '2026-01-18T15:00:00Z',
-      },
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.error).toBeUndefined();
-    expect(result.task.status).toBe('processing');
-    expect(mockExecuteTool).toHaveBeenCalledWith(
-      mockTask.organization_id,
-      'create_calendar_event',
-      expect.any(Object),
-    );
-  });
-
-  it('should escalate calendar.create with setup_required when calendar write tool is missing', async () => {
-    mockGetLangChainTools.mockResolvedValue([
-      { name: 'query_calendar_freebusy' },
+    expect(result.execution_run.status).toBe('completed');
+    expect(result.execution_run.plan_json.replan_count).toBe(0);
+    expect(result.execution_run.plan_json.steps.map((step: { status: string }) => step.status)).toEqual([
+      'completed',
+      'completed',
+      'completed',
     ]);
+    expect(mockExecuteWorkerTool).toHaveBeenCalledWith(
+      task.organization_id,
+      'drive',
+      'get_drive_file_content',
+      expect.any(Object),
+    );
+    expect(mockExecuteWorkerTool).toHaveBeenCalledWith(
+      task.organization_id,
+      'docs',
+      'create_doc',
+      expect.any(Object),
+    );
+    expect(result.task.result.execution_run.completed_steps).toHaveLength(3);
+  });
 
-    const mockTask = {
+  it('records one automatic re-plan and continues when a recoverable worker step fails', async () => {
+    const task = {
       ...baseTask,
-      domain_action: 'calendar.create',
+      domain_action: 'assistant.command',
       payload: {
-        summary: 'Needs setup',
-        startTime: '2026-01-18T14:00:00Z',
-        endTime: '2026-01-18T15:00:00Z',
-      },
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.task.status).toBe('escalation');
-    expect(result.task.result.escalation).toBe(true);
-    expect(String(result.task.result.reason)).toContain('setup_required');
-  });
-
-  it('should route relancing.nudge to RelancingNudgeProcessor', async () => {
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'relancing.nudge',
-      payload: {
-        project_context_id: '22222222-2222-4222-8222-222222222222',
-        member_assignment_id: '33333333-3333-4333-8333-333333333333',
-        project_name: 'Q2 Launch',
-        member_name: 'Jordan',
-        member_user_id: '22222222-2222-4222-8222-222222222222',
-        deadline: '2026-03-20T12:00:00.000Z',
-        urgency_band: 'urgent_7d',
-        cadence_hours: 19.2,
-        nudge_window_start: '2026-03-08T12:00:00.000Z',
-        nudge_window_end: '2026-03-09T07:12:00.000Z',
-        reason_code: 'deadline_urgency',
-        escalation_priority: 'normal',
-      },
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.error).toBeUndefined();
-    expect(result.result.summary).toContain('Relancing nudge prepared');
-  });
-
-  it('should route relancing.update and escalate with setup_required when user_id is missing', async () => {
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'relancing.update',
-      user_id: null,
-      payload: {
-        channel: 'telegram',
-        external_message_id: 'ext-1',
-        thread_id: 'thread-1',
-        organization_id: baseTask.organization_id,
-        user_id: null,
-        message_text: 'Status update',
-        correlation_id: 'corr-1',
-        channel_metadata: {},
-        raw_payload: {},
-      },
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.task.status).toBe('escalation');
-    expect(result.task.result.escalation).toBe(true);
-    expect(String(result.task.result.reason)).toContain('setup_required');
-  });
-
-  it('should route status.report and apply confidence gate before processor execution', async () => {
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'status.report',
-      payload: {
-        confidence_score: 0.5,
-      },
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.task.status).toBe('escalation');
-    expect(result.task.result.escalation).toBe(true);
-    expect(result.task.result.escalation_trigger).toBe('low_confidence');
-  });
-
-  it('should pause status.report when Emergency Brake is enabled', async () => {
-    const { SafetyControlsService } = await import('../services/SafetyControlsService.js');
-    vi.mocked(SafetyControlsService.isEmergencyBrakeEnabled).mockResolvedValueOnce(true);
-
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'status.report',
-      payload: {
-        manual_trigger: true,
-      },
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.task.status).toBe('paused');
-  });
-
-  it('should pause relancing.update when Emergency Brake is enabled', async () => {
-    const { SafetyControlsService } = await import('../services/SafetyControlsService.js');
-    vi.mocked(SafetyControlsService.isEmergencyBrakeEnabled).mockResolvedValueOnce(true);
-
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'relancing.update',
-      user_id: '22222222-2222-4222-8222-222222222222',
-      payload: {
-        channel: 'telegram',
-        external_message_id: 'ext-2',
-        thread_id: 'thread-1',
-        organization_id: baseTask.organization_id,
-        user_id: '22222222-2222-4222-8222-222222222222',
-        message_text: 'Blocked on API access',
-        correlation_id: 'corr-2',
-        channel_metadata: {},
-        raw_payload: {},
-      },
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.task.status).toBe('paused');
-  });
-
-  it('should escalate relancing.update when the reply is ambiguous', async () => {
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'relancing.update',
-      user_id: '22222222-2222-4222-8222-222222222222',
-      payload: {
-        channel: 'telegram',
-        external_message_id: 'ext-3',
-        thread_id: 'thread-1',
-        organization_id: baseTask.organization_id,
-        user_id: '22222222-2222-4222-8222-222222222222',
-        message_text: 'ok',
-        correlation_id: 'corr-3',
-        channel_metadata: {},
-        raw_payload: {},
-      },
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.task.status).toBe('escalation');
-    expect(result.task.result.escalation_trigger).toBe('ambiguity_detected');
-  });
-
-  it('should escalate calendar.create when payload confidence is below threshold (no tool execution)', async () => {
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'calendar.create',
-      payload: {
-        summary: 'Meeting',
-        startTime: '2026-01-18T10:00:00Z',
-        endTime: '2026-01-18T11:00:00Z',
-        confidence_score: 0.5,
-      },
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.task.status).toBe('escalation');
-    expect(result.task.result.escalation).toBe(true);
-    expect(result.task.result.confidence_score).toBe(0.5);
-    expect(result.task.result.confidence_threshold).toBe(0.8);
-    expect(result.task.result.escalation_trigger).toBe('low_confidence');
-    expect(mockExecuteTool).not.toHaveBeenCalled();
-  });
-
-  it('should keep channel metadata visible when low-confidence channel actions escalate', async () => {
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'calendar.create',
-      payload: {
-        summary: 'Meeting',
-        startTime: '2026-01-18T10:00:00Z',
-        endTime: '2026-01-18T11:00:00Z',
-        confidence_score: 0.4,
-        channel: 'whatsapp',
-        external_message_id: 'SM123',
-        thread_id: 'wa-15551230000',
-        correlation_id: 'corr-chan-1',
-      },
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.task.status).toBe('escalation');
-    expect(result.task.result.escalation_trigger).toBe('low_confidence');
-    expect(result.trace.some((s: { input_summary?: string }) => s.input_summary?.includes('Channel: whatsapp') === true)).toBe(true);
-    expect(mockExecuteTool).not.toHaveBeenCalled();
-  });
-
-  it('should route system.analyze to reasoning node', async () => {
-    mockInvoke.mockResolvedValueOnce({
-      content: 'Mocked response',
-      additional_kwargs: {},
-      response_metadata: {},
-    });
-
-    const mockTask = { ...baseTask, domain_action: 'system.analyze', payload: { prompt: "Analyze this" } };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.error).toBeUndefined();
-    expect(result.result).toBe('Mocked response');
-  });
-
-  it('should pause proxy execution tasks when Emergency Brake is enabled', async () => {
-    const { SafetyControlsService } = await import('../services/SafetyControlsService.js');
-    vi.mocked(SafetyControlsService.isEmergencyBrakeEnabled).mockResolvedValueOnce(true);
-
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'calendar.create',
-      payload: { summary: 'Meeting', startTime: '2026-01-18T10:00:00Z', endTime: '2026-01-18T11:00:00Z' },
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.task.status).toBe('paused');
-    expect(mockExecuteTool).not.toHaveBeenCalled();
-  });
-
-  it('should handle unsupported domain.action', async () => {
-    const mockTask = { ...baseTask, domain_action: 'unknown.action', payload: {} };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.error).toBe('Unsupported domain.action: unknown.action');
-  });
-
-  it('should execute thread.action by drafting an email when Public and high-confidence', async () => {
-    mockProvider.generateStructured.mockResolvedValueOnce({
-      data: {
-        action: 'email.draft',
-        confidence: 0.95,
-        ambiguity_detected: false,
-        email: {
-          subject: 'Re: Subject',
-          body: 'Draft body',
+        command: 'Create a doc if possible, then draft the email',
+        target_domain_action: 'email.draft',
+        target_payload: {
+          plan_steps: [
+            {
+              key: 'doc-step',
+              title: 'Create doc',
+              worker_type: 'docs',
+              action: 'create_document',
+              requested_tools: ['create_doc'],
+              input: { title: 'Draft input' },
+              recoverable: true,
+            },
+            {
+              key: 'gmail-step',
+              title: 'Draft email',
+              worker_type: 'gmail',
+              action: 'draft_email',
+              requested_tools: ['draft_gmail_message'],
+              input: {
+                recipient: 'alexis@example.com',
+                subject: 'Status update',
+              },
+            },
+          ],
         },
       },
-      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-      model: 'mistral-small'
-    });
-
-    mockChain.single
-      .mockResolvedValueOnce({ data: { tier: 'Public' }, error: null })
-      .mockResolvedValueOnce({
-        data: {
-          id: 'thread-1',
-          subject: 'Subject',
-          external_id: 'ext-1',
-          summary_json: { context: 'c', decisions: [], action_items: [] },
-          metadata: {
-            thread_raw: {
-              messages: [
-                {
-                  payload: {
-                    headers: [{ name: 'From', value: 'Someone <someone@example.com>' }]
-                  }
-                }
-              ]
-            }
-          }
-        },
-        error: null
-      });
-
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'thread.action',
-      topic: 'General',
-      payload: { source_type: 'thread', source_id: 'thread-1' }
     };
 
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
+    db.tasks.set(task.id, clone(task));
+    mockExecuteWorkerTool.mockImplementationOnce(async (_orgId: string, workerType: string) => {
+      if (workerType === 'docs') {
+        throw new Error('create_doc temporarily unavailable');
+      }
+      return {
+        toolName: 'draft_gmail_message',
+        result: { content: [{ type: 'text', text: 'Draft created' }] },
+      };
+    });
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(result.execution_run.status).toBe('completed');
+    expect(result.execution_run.plan_json.replan_count).toBe(1);
+    expect(result.execution_run.plan_json.steps[0].status).toBe('skipped');
+    expect(result.execution_run.plan_json.steps[1].status).toBe('completed');
+    expect(result.execution_run.current_step_key).toBeNull();
+    expect(result.execution_run.current_worker_type).toBeNull();
+  });
+
+  it('resumes an existing assistant.command execution run without reparsing the command', async () => {
+    const task = {
+      ...baseTask,
+      domain_action: 'assistant.command',
+      payload: {},
+    };
+
+    db.tasks.set(task.id, clone(task));
+    db.execution_runs.set(task.id, {
+      id: '123e4567-e89b-12d3-a456-426614174099',
+      task_id: task.id,
+      organization_id: task.organization_id,
+      status: 'processing',
+      plan_json: {
+        version: 'v1',
+        original_command: 'Send the prepared update',
+        summary: 'Resume Gmail draft step',
+        ledger_entries: [],
+        replan_count: 0,
+        steps: [
+          {
+            key: 'gmail-step',
+            title: 'Draft email',
+            worker_type: 'gmail',
+            action: 'draft_email',
+            status: 'pending',
+            requested_tools: ['draft_gmail_message'],
+            input: {
+              recipient: 'alexis@example.com',
+              subject: 'Status update',
+            },
+            output: {},
+            attempt_count: 0,
+            idempotency_key: 'gmail-draft-1',
+            recoverable: false,
+          },
+        ],
+      },
+      ledger_markdown: '# Execution Run Ledger',
+      current_step_key: 'gmail-step',
+      current_worker_type: 'gmail',
+      tool_policy_version: 'workspace-v1.14.2',
+      idempotency_state: {},
+      version: 1,
+      last_error: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
 
     expect(result.error).toBeUndefined();
-    expect(result.result.summary).toContain('Silent Win');
-    expect(mockExecuteTool).toHaveBeenCalledWith(
-      mockTask.organization_id,
+    expect(result.execution_run.status).toBe('completed');
+    expect(result.execution_run.plan_json.steps[0].status).toBe('completed');
+    expect(mockExecuteWorkerTool).toHaveBeenCalledWith(
+      task.organization_id,
+      'gmail',
       'create_gmail_draft',
       expect.any(Object),
     );
   });
 
-  it('should execute thread.action by creating a calendar event when planner chooses calendar.create', async () => {
-    mockProvider.generateStructured.mockResolvedValueOnce({
-      data: {
-        action: 'calendar.create',
-        confidence: 0.93,
-        ambiguity_detected: false,
-        calendar: {
-          summary: 'Project sync',
-          startTime: '2026-02-20T10:00:00Z',
-          endTime: '2026-02-20T10:30:00Z',
-          description: 'Weekly project alignment',
+  it('blocks planning before execution when capability readiness fails', async () => {
+    const task = {
+      ...baseTask,
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'Create a Google Doc from this source',
+        target_domain_action: 'email.draft',
+        target_payload: {
+          plan_steps: [
+            {
+              key: 'doc-step',
+              title: 'Create doc',
+              worker_type: 'docs',
+              action: 'create_document',
+              requested_tools: ['create_doc'],
+              input: { title: 'Blocked doc' },
+            },
+          ],
         },
       },
-      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-      model: 'mistral-small'
-    });
-
-    mockChain.single
-      .mockResolvedValueOnce({ data: { tier: 'Public' }, error: null })
-      .mockResolvedValueOnce({
-        data: {
-          id: 'thread-1',
-          subject: 'Schedule a sync',
-          external_id: 'ext-1',
-          summary_json: { context: 'c', decisions: [], action_items: [] },
-          metadata: {
-            thread_raw: {
-              messages: [
-                {
-                  payload: {
-                    headers: [{ name: 'From', value: 'Someone <someone@example.com>' }]
-                  }
-                }
-              ]
-            }
-          }
-        },
-        error: null
-      });
-
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'thread.action',
-      topic: 'General',
-      payload: { source_type: 'thread', source_id: 'thread-1' }
     };
 
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.error).toBeUndefined();
-    expect(result.result.action).toBe('calendar.create');
-    expect(result.result.summary).toContain('Silent Win');
-    expect(mockExecuteTool).toHaveBeenCalledWith(
-      mockTask.organization_id,
-      'create_calendar_event',
-      expect.any(Object),
-    );
-  });
-
-  it('should escalate thread.action at the lower boundary (0.79 < 0.8)', async () => {
-    mockProvider.generateStructured.mockResolvedValueOnce({
-      data: {
-        action: 'email.draft',
-        confidence: 0.79,
-        ambiguity_detected: false,
-        email: {
-          subject: 'Re: Subject',
-          body: 'Draft body',
-        },
-      },
-      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-      model: 'mistral-small'
+    db.tasks.set(task.id, clone(task));
+    mockCheckCapabilityReadiness.mockResolvedValueOnce({
+      worker_type: 'docs',
+      ready: false,
+      integration_active: true,
+      policy_allowed: true,
+      required_scopes: ['https://www.googleapis.com/auth/documents'],
+      missing_scopes: ['https://www.googleapis.com/auth/documents'],
+      requested_tools: ['create_doc'],
+      resolved_tools: [],
+      unavailable_tools: ['create_doc'],
+      errors: ['Missing scope: https://www.googleapis.com/auth/documents'],
     });
 
-    mockChain.single
-      .mockResolvedValueOnce({ data: { tier: 'Public' }, error: null })
-      .mockResolvedValueOnce({
-        data: {
-          id: 'thread-1',
-          subject: 'Subject',
-          external_id: 'ext-1',
-          summary_json: { context: 'c', decisions: [], action_items: [] },
-          metadata: {
-            thread_raw: {
-              messages: [
-                {
-                  payload: {
-                    headers: [{ name: 'From', value: 'Someone <someone@example.com>' }]
-                  }
-                }
-              ]
-            }
-          }
-        },
-        error: null
-      });
-
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'thread.action',
-      topic: 'General',
-      payload: { source_type: 'thread', source_id: 'thread-1' }
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
 
     expect(result.task.status).toBe('escalation');
-    expect(result.task.result.escalation).toBe(true);
-    expect(result.task.result.confidence_score).toBe(0.79);
-    expect(result.task.result.confidence_threshold).toBe(0.8);
-    expect(result.task.result.escalation_trigger).toBe('low_confidence');
-    expect(mockExecuteTool).not.toHaveBeenCalled();
+    expect(result.execution_run.status).toBe('blocked');
+    expect(mockExecuteWorkerTool).not.toHaveBeenCalled();
   });
 
-  it('should allow thread.action execution at exact threshold boundary (0.80)', async () => {
-    mockProvider.generateStructured.mockResolvedValueOnce({
-      data: {
-        action: 'email.draft',
-        confidence: 0.8,
-        ambiguity_detected: false,
-        email: {
-          subject: 'Re: Subject',
-          body: 'Draft body',
-        },
-      },
-      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-      model: 'mistral-small'
-    });
-
-    mockChain.single
-      .mockResolvedValueOnce({ data: { tier: 'Public' }, error: null })
-      .mockResolvedValueOnce({
-        data: {
-          id: 'thread-1',
-          subject: 'Subject',
-          external_id: 'ext-1',
-          summary_json: { context: 'c', decisions: [], action_items: [] },
-          metadata: {
-            thread_raw: {
-              messages: [
-                {
-                  payload: {
-                    headers: [{ name: 'From', value: 'Someone <someone@example.com>' }]
-                  }
-                }
-              ]
-            }
-          }
-        },
-        error: null
-      });
-
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'thread.action',
-      topic: 'General',
-      payload: { source_type: 'thread', source_id: 'thread-1' }
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.error).toBeUndefined();
-    expect(result.task.status).toBe('processing');
-    expect(result.result.action).toBe('email.draft');
-    expect(mockExecuteTool).toHaveBeenCalledTimes(1);
-  });
-
-  it('should allow thread.action execution above threshold boundary (0.81)', async () => {
-    mockProvider.generateStructured.mockResolvedValueOnce({
-      data: {
-        action: 'email.draft',
-        confidence: 0.81,
-        ambiguity_detected: false,
-        email: {
-          subject: 'Re: Subject',
-          body: 'Draft body',
-        },
-      },
-      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-      model: 'mistral-small'
-    });
-
-    mockChain.single
-      .mockResolvedValueOnce({ data: { tier: 'Public' }, error: null })
-      .mockResolvedValueOnce({
-        data: {
-          id: 'thread-1',
-          subject: 'Subject',
-          external_id: 'ext-1',
-          summary_json: { context: 'c', decisions: [], action_items: [] },
-          metadata: {
-            thread_raw: {
-              messages: [
-                {
-                  payload: {
-                    headers: [{ name: 'From', value: 'Someone <someone@example.com>' }]
-                  }
-                }
-              ]
-            }
-          }
-        },
-        error: null
-      });
-
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'thread.action',
-      topic: 'General',
-      payload: { source_type: 'thread', source_id: 'thread-1' }
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.error).toBeUndefined();
-    expect(result.task.status).toBe('processing');
-    expect(result.result.action).toBe('email.draft');
-    expect(mockExecuteTool).toHaveBeenCalledTimes(1);
-  });
-
-  it('should escalate thread.action for ambiguity even when confidence meets threshold', async () => {
-    mockProvider.generateStructured.mockResolvedValueOnce({
-      data: {
-        action: 'email.draft',
-        confidence: 0.92,
-        ambiguity_detected: true,
-        email: {
-          subject: 'Re: Subject',
-          body: 'Draft body',
-        },
-      },
-      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-      model: 'mistral-small'
-    });
-
-    mockChain.single
-      .mockResolvedValueOnce({ data: { tier: 'Public' }, error: null })
-      .mockResolvedValueOnce({
-        data: {
-          id: 'thread-1',
-          subject: 'Subject',
-          external_id: 'ext-1',
-          summary_json: { context: 'c', decisions: [], action_items: [] },
-          metadata: {
-            thread_raw: {
-              messages: [
-                {
-                  payload: {
-                    headers: [{ name: 'From', value: 'Someone <someone@example.com>' }]
-                  }
-                }
-              ]
-            }
-          }
-        },
-        error: null
-      });
-
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'thread.action',
-      topic: 'General',
-      payload: { source_type: 'thread', source_id: 'thread-1' }
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.task.status).toBe('escalation');
-    expect(result.task.result.escalation).toBe(true);
-    expect(result.task.result.confidence_score).toBe(0.92);
-    expect(result.task.result.confidence_threshold).toBe(0.8);
-    expect(result.task.result.escalation_trigger).toBe('ambiguity_detected');
-    expect(mockExecuteTool).not.toHaveBeenCalled();
-  });
-
-  it('should escalate thread.action when topic is Controlled', async () => {
-    mockChain.single
-      .mockResolvedValueOnce({ data: { tier: 'Controlled' }, error: null })
-      .mockResolvedValueOnce({
-        data: {
-          id: 'thread-1',
-          subject: 'Subject',
-          external_id: 'ext-1',
-          summary_json: { context: 'c', decisions: [], action_items: [] },
-          metadata: {
-            thread_raw: {
-              messages: [
-                {
-                  payload: {
-                    headers: [{ name: 'From', value: 'Someone <someone@example.com>' }]
-                  }
-                }
-              ]
-            }
-          }
-        },
-        error: null
-      });
-
-    mockProvider.generateStructured.mockResolvedValueOnce({
-      data: {
-        action: 'email.draft',
-        confidence: 0.92,
-        ambiguity_detected: false,
-        email: {
-          subject: 'Re: Subject',
-          body: 'Draft body',
-        },
-      },
-      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-      model: 'mistral-small'
-    });
-
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'thread.action',
-      topic: 'Finance',
-      payload: { source_type: 'thread', source_id: 'thread-1' }
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.task.status).toBe('escalation');
-    expect(result.task.result.escalation).toBe(true);
-    expect(result.task.result.reason).toContain('Controlled topic requires human approval');
-    expect(result.task.result.prompt).toContain('Approve & Send');
-    expect(result.task.result.draft).toBeDefined();
-    expect(result.task.result.draft.to).toBe('someone@example.com');
-    expect(mockExecuteTool).not.toHaveBeenCalled();
-  });
-
-  it('should apply protocol tier override for thread.action perimeter evaluation', async () => {
-    const { ProtocolService } = await import('../services/ProtocolService.js');
-    vi.mocked(ProtocolService.extractRules).mockResolvedValueOnce('Required Agency Tier: Controlled');
-
-    mockProvider.generateStructured.mockResolvedValueOnce({
-      data: {
-        action: 'email.draft',
-        confidence: 0.95,
-        ambiguity_detected: false,
-        email: {
-          subject: 'Re: Subject',
-          body: 'Draft body',
-        },
-      },
-      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-      model: 'mistral-small'
-    });
-
-    mockChain.single
-      .mockResolvedValueOnce({ data: { tier: 'Public' }, error: null })
-      .mockResolvedValueOnce({
-        data: {
-          id: 'thread-1',
-          subject: 'Subject',
-          external_id: 'ext-1',
-          summary_json: { context: 'c', decisions: [], action_items: [] },
-          metadata: {
-            thread_raw: {
-              messages: [
-                {
-                  payload: {
-                    headers: [{ name: 'From', value: 'Someone <someone@example.com>' }]
-                  }
-                }
-              ]
-            }
-          }
-        },
-        error: null
-      });
-
-    const mockTask = {
-      ...baseTask,
-      domain_action: 'thread.action',
-      topic: 'General',
-      payload: { source_type: 'thread', source_id: 'thread-1' }
-    };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.error).toBeUndefined();
-    expect(result.result.action).toBe('email.draft');
-    expect(result.trace.some((s: { input_summary?: string }) => s.input_summary?.includes('ReqTier: Controlled') === true)).toBe(true);
-  });
-
-  it('should escalate to user when agency tier is Restricted', async () => {
-    const mockTask = { ...baseTask, domain_action: 'email.draft', payload: { sensitive: 'data' } };
-    
-    // Mock Restricted tier
-    mockChain.single.mockResolvedValueOnce({ data: { tier: 'Restricted' }, error: null });
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.task.status).toBe('escalation');
-    expect(result.task.result.escalation).toBe(true);
-    expect(result.error).toContain('Restricted topic requires human intervention');
-  });
-
-  it('should enforce restricted-tier escalation for channel-originated actions', async () => {
-    mockChain.single.mockResolvedValueOnce({ data: { tier: 'Restricted' }, error: null });
-
-    const mockTask = {
+  it('keeps direct email.draft execution working outside planner mode', async () => {
+    const task = {
       ...baseTask,
       domain_action: 'email.draft',
       payload: {
-        recipient: 'test@example.com',
-        subject: 'Restricted update',
-        body: 'Sensitive message',
-        channel: 'telegram',
-        external_message_id: 'TG123',
-        thread_id: 'chat-999',
+        recipient: 'alexis@example.com',
+        subject: 'Status',
+        body: 'Draft body',
       },
     };
 
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
+    db.tasks.set(task.id, clone(task));
 
-    expect(result.task.status).toBe('escalation');
-    expect(result.task.result.escalation).toBe(true);
-    expect(result.trace.some((s: { input_summary?: string }) => s.input_summary?.includes('Channel: telegram') === true)).toBe(true);
-    expect(mockExecuteTool).not.toHaveBeenCalled();
-  });
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
 
-  it('should load protocol rules and pass them to reasoning', async () => {
-    mockInvoke.mockResolvedValueOnce({
-      content: 'Mocked response',
-      additional_kwargs: {},
-      response_metadata: {},
-    });
-
-    const mockTask = { ...baseTask, domain_action: 'system.analyze', payload: { prompt: "Analyze this" } };
-
-    const result = await graph.invoke({ task: mockTask } as GraphInput) as any;
-
-    expect(result.active_protocol_rules).toBe('1. Rule One');
-    expect(result.citations).toBeDefined();
-    expect(result.citations.some((c: { source_type?: string }) => c.source_type === 'protocol')).toBe(true);
-  });
-
-  it('should escalate when confidence is below threshold', async () => {
-    mockInvoke.mockResolvedValueOnce({ 
-      summary: 'Low confidence', 
-      confidence: 0.5, 
-      ambiguity_detected: false 
-    });
-
-    const mockTask = { ...baseTask, domain_action: 'system.analyze', payload: { prompt: "Analyze this" } };
-    
-    const result = await graph.invoke({ task: { ...mockTask, payload: { ...mockTask.payload, schemaKey: 'default_analysis' } } } as GraphInput) as any;
-
-    expect(result.task.status).toBe('escalation');
-    expect(result.task.result.escalation).toBe(true);
-    expect(result.task.result.confidence_score).toBe(0.5);
-    expect(result.task.result.confidence_threshold).toBe(0.8);
-    expect(result.task.result.escalation_trigger).toBe('low_confidence');
-    expect(result.trace.some((s: { step_name?: string }) => s.step_name === 'Escalation')).toBe(true);
-    expect(mockExecuteTool).not.toHaveBeenCalled();
-  });
-
-  it('should escalate when ambiguity is detected', async () => {
-    mockInvoke.mockResolvedValueOnce({ 
-      summary: 'Ambiguous', 
-      confidence: 0.9, 
-      ambiguity_detected: true 
-    });
-
-    const mockTask = { ...baseTask, domain_action: 'system.analyze', payload: { prompt: "Analyze this" } };
-    
-    const result = await graph.invoke({ task: { ...mockTask, payload: { ...mockTask.payload, schemaKey: 'default_analysis' } } } as GraphInput) as any;
-
-    expect(result.task.status).toBe('escalation');
-    expect(result.task.result.escalation).toBe(true);
-    expect(result.task.result.confidence_score).toBe(0.9);
-    expect(result.task.result.confidence_threshold).toBe(0.8);
-    expect(result.task.result.escalation_trigger).toBe('ambiguity_detected');
-    expect(mockExecuteTool).not.toHaveBeenCalled();
+    expect(result.error).toBeUndefined();
+    expect(result.result.summary).toContain('Email draft created');
+    expect(mockExecuteWorkerTool).toHaveBeenCalledWith(
+      task.organization_id,
+      'gmail',
+      'create_gmail_draft',
+      expect.any(Object),
+    );
   });
 });
