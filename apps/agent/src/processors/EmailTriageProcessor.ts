@@ -1,8 +1,10 @@
 import {
   BatchedEmailTriageResultSchema,
+  type BatchedEmailTriageResult,
   type EmailTriageClassification,
   type Task,
 } from '@ai-assistant/shared';
+import { z } from 'zod';
 import { BaseProcessor, type ProcessorResult } from './BaseProcessor.js';
 import { supabase } from '../services/supabase.js';
 import { PerimeterGuard } from '../guards/PerimeterGuard.js';
@@ -19,10 +21,24 @@ import {
 const DEFAULT_BATCH_INPUT_TOKENS = 13_000;
 const MIN_BATCH_INPUT_TOKENS = 12_000;
 const MAX_BATCH_INPUT_TOKENS = 14_000;
-const DEFAULT_BATCH_CONCURRENCY = 3;
-const MIN_BATCH_CONCURRENCY = 2;
-const MAX_BATCH_CONCURRENCY = 4;
+const DEFAULT_BATCH_CONCURRENCY = 1;
+const MIN_BATCH_CONCURRENCY = 1;
+const MAX_BATCH_CONCURRENCY = 1;
 const DEFAULT_OUTPUT_TOKEN_RESERVE = 1_800;
+const MAX_TRIAGE_RETRY_ATTEMPTS = 3;
+const MAX_LOGGED_THREAD_IDS = 10;
+
+interface RetryContext {
+  requestedThreadIds: string[];
+  retryAttempt: number;
+  isScopedRetry: boolean;
+}
+
+interface RetryQueueResult {
+  enqueued: boolean;
+  nextRetryAttempt: number | null;
+  reason: 'not_needed' | 'queued' | 'retry_limit_reached' | 'queue_failed';
+}
 
 interface UnclassifiedThread {
   id: string;
@@ -50,6 +66,10 @@ interface BatchSummary {
   unresolvedThreadIds: string[];
 }
 
+const BatchedEmailTriageEnvelopeSchema = z.object({
+  results: BatchedEmailTriageResultSchema,
+});
+
 export class EmailTriageProcessor extends BaseProcessor {
   async process(task: Task): Promise<ProcessorResult> {
     console.log(
@@ -57,12 +77,31 @@ export class EmailTriageProcessor extends BaseProcessor {
     );
 
     const { organization_id, user_id } = task;
+    const retryContext = this.resolveRetryContext(task.payload);
 
-    const { data: threads, error: threadError } = await supabase
+    if (retryContext.isScopedRetry && retryContext.requestedThreadIds.length === 0) {
+      return {
+        message: 'No valid retry thread IDs provided; skipped scoped email.triage retry',
+        processed_count: 0,
+        task_id: task.id,
+        skipped_thread_ids: [],
+      };
+    }
+
+    let threadQuery = supabase
       .from('ingested_threads')
       .select('id, subject, metadata, summary, summary_json')
       .eq('organization_id', organization_id)
-      .eq('classification', '{}') as {
+      .eq('classification', '{}');
+
+    if (retryContext.requestedThreadIds.length > 0) {
+      threadQuery = threadQuery.in('id', retryContext.requestedThreadIds);
+      console.log(
+        `[EmailTriageProcessor] Scoped retry task to ${retryContext.requestedThreadIds.length} thread(s).`,
+      );
+    }
+
+    const { data: threads, error: threadError } = await threadQuery as {
       data: UnclassifiedThread[] | null;
       error: unknown;
     };
@@ -72,6 +111,15 @@ export class EmailTriageProcessor extends BaseProcessor {
     }
 
     if (!threads || threads.length === 0) {
+      if (retryContext.isScopedRetry) {
+        return {
+          message: `No unclassified threads found for requested retry thread(s): ${retryContext.requestedThreadIds.join(', ')}`,
+          processed_count: 0,
+          task_id: task.id,
+          skipped_thread_ids: retryContext.requestedThreadIds,
+        };
+      }
+
       return { message: 'No unclassified threads found', processed_count: 0 };
     }
 
@@ -102,12 +150,13 @@ export class EmailTriageProcessor extends BaseProcessor {
 
     const guard = new PerimeterGuard();
     const batchInputs: TokenAwareBatchInput<TriageBatchPayload>[] = [];
+    const missingSnippetThreadIds: string[] = [];
 
     for (const thread of threads) {
       const snippet = this.extractSnippet(thread);
 
       if (!snippet) {
-        await this.logSnippetExtractionFailure(task, thread);
+        missingSnippetThreadIds.push(thread.id);
       }
 
       const filteredSubject = guard.redactPII(thread.subject ?? '');
@@ -123,6 +172,10 @@ export class EmailTriageProcessor extends BaseProcessor {
           filteredSnippet,
         },
       });
+    }
+
+    if (missingSnippetThreadIds.length > 0) {
+      await this.logSnippetExtractionSummary(task, missingSnippetThreadIds);
     }
 
     if (batchInputs.length === 0) {
@@ -162,8 +215,7 @@ export class EmailTriageProcessor extends BaseProcessor {
 
       const failedBatch = batches[settledBatch.index];
       console.error(
-        `[EmailTriageProcessor] Batch ${failedBatch?.batchIndex ?? settledBatch.index + 1} failed (${this.classifyFailureHint(settledBatch.reason)}):`,
-        settledBatch.reason,
+        `[EmailTriageProcessor] Batch ${failedBatch?.batchIndex ?? settledBatch.index + 1} failed (${this.classifyFailureHint(settledBatch.reason)}): ${this.formatErrorForLog(settledBatch.reason)}`,
       );
 
       if (failedBatch) {
@@ -174,18 +226,21 @@ export class EmailTriageProcessor extends BaseProcessor {
     }
 
     const unresolvedThreadIdList = [...unresolvedThreadIds];
-    if (unresolvedThreadIdList.length > 0) {
-      await this.queueTriageRetry(
-        task.organization_id,
-        task.user_id ?? null,
-        unresolvedThreadIdList,
-      );
-    }
+    const retryResult: RetryQueueResult = unresolvedThreadIdList.length > 0
+      ? await this.queueTriageRetry(task, unresolvedThreadIdList, retryContext.retryAttempt)
+      : {
+          enqueued: false,
+          nextRetryAttempt: null,
+          reason: 'not_needed',
+        };
 
     return {
-      message: unresolvedThreadIdList.length > 0
-        ? `Triaged ${processedCount} threads across ${batches.length} batch(es); ${unresolvedThreadIdList.length} thread(s) were re-queued for retry`
-        : `Successfully triaged ${processedCount} threads across ${batches.length} batch(es)`,
+      message: this.buildProcessResultMessage(
+        processedCount,
+        batches.length,
+        unresolvedThreadIdList.length,
+        retryResult,
+      ),
       processed_count: processedCount,
       task_id: task.id,
       skipped_thread_ids: unresolvedThreadIdList,
@@ -204,14 +259,10 @@ export class EmailTriageProcessor extends BaseProcessor {
     );
 
     const prompt = this.buildBatchPrompt(batch, topics);
-    const llmResponse = await this.retryExternalOperation(async () =>
-      llmProvider.generateStructured(prompt, BatchedEmailTriageResultSchema, {
-        maxTokens: this.resolveOutputTokenReserve(),
-      }),
-    );
+    const results = await this.generateBatchClassifications(prompt, llmProvider);
 
     const resultsByThreadId = new Map(
-      llmResponse.data.map((item) => [item.thread_id, item.classification]),
+      results.map((item) => [item.thread_id, item.classification]),
     );
 
     let processedCount = 0;
@@ -293,13 +344,9 @@ export class EmailTriageProcessor extends BaseProcessor {
 
     try {
       const prompt = this.buildBatchPrompt(singleItemBatch, topics);
-      const response = await this.retryExternalOperation(async () =>
-        llmProvider.generateStructured(prompt, BatchedEmailTriageResultSchema, {
-          maxTokens: this.resolveOutputTokenReserve(),
-        }),
-      );
+      const results = await this.generateBatchClassifications(prompt, llmProvider);
 
-      const result = response.data.find((entry) => entry.thread_id === item.id);
+      const result = results.find((entry) => entry.thread_id === item.id);
       if (!result) {
         console.warn(
           `[EmailTriageProcessor] Single-thread retry still missing classification for thread ${item.id}.`,
@@ -310,44 +357,146 @@ export class EmailTriageProcessor extends BaseProcessor {
       return result.classification;
     } catch (error) {
       console.error(
-        `[EmailTriageProcessor] Single-thread retry failed for thread ${item.id}:`,
-        error,
+        `[EmailTriageProcessor] Single-thread retry failed for thread ${item.id}: ${this.formatErrorForLog(error)}`,
       );
       return null;
     }
   }
 
+  private async generateBatchClassifications(
+    prompt: string,
+    llmProvider: ILLMProvider,
+  ): Promise<BatchedEmailTriageResult> {
+    const response = await this.retryExternalOperation(async () =>
+      llmProvider.generateStructured(prompt, BatchedEmailTriageEnvelopeSchema, {
+        maxTokens: this.resolveOutputTokenReserve(),
+        temperature: 0,
+      }),
+    );
+
+    return response.data.results;
+  }
+
   private async queueTriageRetry(
-    organizationId: string,
-    userId: string | null,
+    task: Task,
     unresolvedThreadIds: string[],
-  ): Promise<void> {
+    currentRetryAttempt: number,
+  ): Promise<RetryQueueResult> {
     if (unresolvedThreadIds.length === 0) {
-      return;
+      return {
+        enqueued: false,
+        nextRetryAttempt: null,
+        reason: 'not_needed',
+      };
     }
 
+    if (currentRetryAttempt >= MAX_TRIAGE_RETRY_ATTEMPTS) {
+      const retryLimitSample = unresolvedThreadIds
+        .slice(0, MAX_LOGGED_THREAD_IDS)
+        .join(', ');
+
+      console.error(
+        `[EmailTriageProcessor] Retry limit reached (${MAX_TRIAGE_RETRY_ATTEMPTS}). Skipping re-queue for ${unresolvedThreadIds.length} unresolved thread(s). Sample thread IDs: ${retryLimitSample}`,
+      );
+      await this.logRetryQueueIssue(
+        task,
+        'triage_retry_exhausted',
+        `Retry limit reached after attempt ${currentRetryAttempt}.`,
+        unresolvedThreadIds,
+      );
+      return {
+        enqueued: false,
+        nextRetryAttempt: null,
+        reason: 'retry_limit_reached',
+      };
+    }
+
+    const nextRetryAttempt = currentRetryAttempt + 1;
+
     const { error } = await supabase.from('tasks').insert({
-      organization_id: organizationId,
-      user_id: userId,
+      organization_id: task.organization_id,
+      user_id: task.user_id ?? null,
       domain_action: 'email.triage',
       status: 'queued',
       payload: {
         thread_ids: unresolvedThreadIds,
         retry_reason: 'missing_batch_classification',
+        retry_attempt: nextRetryAttempt,
       },
     });
 
+    const sampleThreadIds = unresolvedThreadIds.slice(0, MAX_LOGGED_THREAD_IDS);
+    const omittedCount = unresolvedThreadIds.length - sampleThreadIds.length;
+    const sampledThreadIdText = sampleThreadIds.join(', ');
+    const sampledSuffix = omittedCount > 0 ? ` (+${omittedCount} more)` : '';
+
     if (error) {
       console.error(
-        `[EmailTriageProcessor] Failed to queue follow-up triage task for unresolved threads (${unresolvedThreadIds.join(', ')}):`,
+        `[EmailTriageProcessor] Failed to queue follow-up triage task for ${unresolvedThreadIds.length} unresolved thread(s) at retry ${nextRetryAttempt}: ${sampledThreadIdText}${sampledSuffix}`,
         error,
       );
-      return;
+      await this.logRetryQueueIssue(
+        task,
+        'triage_retry_queue_failed',
+        `Failed to enqueue retry attempt ${nextRetryAttempt}: ${this.formatErrorForLog(error)}`,
+        unresolvedThreadIds,
+        error,
+      );
+      return {
+        enqueued: false,
+        nextRetryAttempt,
+        reason: 'queue_failed',
+      };
     }
 
     console.warn(
-      `[EmailTriageProcessor] Queued follow-up email.triage for unresolved threads: ${unresolvedThreadIds.join(', ')}`,
+      `[EmailTriageProcessor] Queued follow-up email.triage for ${unresolvedThreadIds.length} unresolved thread(s) at retry ${nextRetryAttempt}. Sample thread IDs: ${sampledThreadIdText}${sampledSuffix}`,
     );
+
+    return {
+      enqueued: true,
+      nextRetryAttempt,
+      reason: 'queued',
+    };
+  }
+
+  private async logRetryQueueIssue(
+    task: Task,
+    eventName: string,
+    detail: string,
+    threadIds: string[],
+    error?: unknown,
+  ): Promise<void> {
+    const sampleThreadIds = threadIds.slice(0, MAX_LOGGED_THREAD_IDS);
+    const omittedCount = threadIds.length - sampleThreadIds.length;
+    const sampledThreadIdText = sampleThreadIds.join(', ');
+    const sampledSuffix = omittedCount > 0 ? ` (+${omittedCount} more)` : '';
+
+    try {
+      await AuditLogger.flush(
+        task.organization_id,
+        task.id || null,
+        task.user_id || 'agent-controller',
+        eventName,
+        [
+          AuditLogger.createStep(
+            'Email Triage Retry',
+            detail,
+            {
+              input_summary: `Sample thread IDs: ${sampledThreadIdText}${sampledSuffix}`,
+              output_summary: error ? this.formatErrorForLog(error) : detail,
+            },
+          ),
+        ],
+        sampleThreadIds.map((threadId) => ({
+          source_type: 'email',
+          source_id: threadId,
+          description: 'Email triage retry issue',
+        })),
+      );
+    } catch (auditError) {
+      console.error('Failed to log triage retry issue:', auditError);
+    }
   }
 
   private async persistClassification(
@@ -442,12 +591,17 @@ export class EmailTriageProcessor extends BaseProcessor {
     }
   }
 
-  private async logSnippetExtractionFailure(
+  private async logSnippetExtractionSummary(
     task: Task,
-    thread: UnclassifiedThread,
+    threadIds: string[],
   ): Promise<void> {
+    const sampleThreadIds = threadIds.slice(0, MAX_LOGGED_THREAD_IDS);
+    const omittedCount = threadIds.length - sampleThreadIds.length;
+    const sampledThreadIdText = sampleThreadIds.join(', ');
+    const sampledSuffix = omittedCount > 0 ? ` (+${omittedCount} more)` : '';
+
     console.warn(
-      `[EmailTriageProcessor] No snippet found for thread ${thread.id}. Falling back to empty snippet.`,
+      `[EmailTriageProcessor] Missing plaintext snippet for ${threadIds.length} thread(s). Using empty snippet fallback. Sample thread IDs: ${sampledThreadIdText}${sampledSuffix}`,
     );
 
     try {
@@ -455,24 +609,69 @@ export class EmailTriageProcessor extends BaseProcessor {
         task.organization_id,
         task.id || null,
         'agent-controller',
-        'snippet_extraction_failed',
+        'snippet_extraction_summary',
         [
           AuditLogger.createStep(
             'Snippet Extraction',
-            'Failed to find content in metadata.snippet or summary field',
+            `No snippet found in metadata.snippet, summary, or summary_json for ${threadIds.length} thread(s).`,
+            {
+              input_summary: `Sample thread IDs: ${sampledThreadIdText}${sampledSuffix}`,
+              output_summary: 'Used empty snippet fallback for batched triage prompt generation.',
+            },
           ),
         ],
-        [
-          {
-            source_type: 'email',
-            source_id: thread.id,
-            description: `Thread: ${thread.subject ?? 'Unknown Subject'}`,
-          },
-        ],
+        sampleThreadIds.map((threadId) => ({
+          source_type: 'email',
+          source_id: threadId,
+          description: 'Missing plaintext snippet during batched triage',
+        })),
       );
     } catch (error) {
       console.error('Failed to log snippet extraction failure:', error);
     }
+  }
+
+  private resolveRetryContext(payload: unknown): RetryContext {
+    if (!payload || typeof payload !== 'object') {
+      return { requestedThreadIds: [], retryAttempt: 0, isScopedRetry: false };
+    }
+
+    const record = payload as Record<string, unknown>;
+    const isScopedRetry = Object.prototype.hasOwnProperty.call(record, 'thread_ids');
+    const requestedThreadIds = Array.isArray(record.thread_ids)
+      ? Array.from(
+          new Set(
+            record.thread_ids.flatMap((value) => {
+              if (typeof value !== 'string') {
+                return [];
+              }
+
+              const normalizedValue = value.trim();
+              return normalizedValue.length > 0 ? [normalizedValue] : [];
+            }),
+          ),
+        )
+      : [];
+
+    const retryAttemptCandidate = record.retry_attempt;
+    const parsedRetryAttempt =
+      typeof retryAttemptCandidate === 'number'
+        ? retryAttemptCandidate
+        : typeof retryAttemptCandidate === 'string'
+          ? Number.parseInt(retryAttemptCandidate, 10)
+          : 0;
+
+    const retryAttempt = Number.isNaN(parsedRetryAttempt)
+      || parsedRetryAttempt < 0
+      || parsedRetryAttempt > MAX_TRIAGE_RETRY_ATTEMPTS
+      ? 0
+      : Math.floor(parsedRetryAttempt);
+
+    return {
+      requestedThreadIds,
+      retryAttempt,
+      isScopedRetry,
+    };
   }
 
   private buildBatchPrompt(
@@ -512,23 +711,26 @@ CRITICAL INSTRUCTIONS:
 - Automated notifications/newsletters/spam should generally get low scores.
 - Direct requests, deadlines, and critical updates should get scores >= 50.
 
-RETURN ONLY A JSON ARRAY. Every item must follow this exact structure:
-[
-  {
-    "thread_id": "thread-id",
-    "classification": {
-      "matches": [
-        {
-          "topic": "Topic Name",
-          "reason": "Reason",
-          "priority_score": 0
-        }
-      ],
-      "overall_priority_score": 0,
-      "is_highlighted": false
+RETURN ONLY A JSON OBJECT. Do not wrap the response in markdown fences.
+The JSON object must follow this exact structure:
+{
+  "results": [
+    {
+      "thread_id": "thread-id",
+      "classification": {
+        "matches": [
+          {
+            "topic": "Topic Name",
+            "reason": "Reason",
+            "priority_score": 0
+          }
+        ],
+        "overall_priority_score": 0,
+        "is_highlighted": false
+      }
     }
-  }
-]
+  ]
+}
 `.trim();
   }
 
@@ -658,6 +860,52 @@ RETURN ONLY A JSON ARRAY. Every item must follow this exact structure:
     return 'non_retryable_failure';
   }
 
+  private formatErrorForLog(error: unknown): string {
+    if (!error || typeof error !== 'object') {
+      return String(error);
+    }
+
+    const maybeError = error as Error & {
+      message?: unknown;
+      code?: unknown;
+      status?: unknown;
+      statusCode?: unknown;
+      response?: {
+        status?: unknown;
+        statusText?: unknown;
+      };
+    };
+
+    const parts: string[] = [];
+
+    if (typeof maybeError.message === 'string' && maybeError.message.length > 0) {
+      parts.push(maybeError.message);
+    }
+
+    const status =
+      maybeError.status
+      ?? maybeError.statusCode
+      ?? maybeError.response?.status;
+
+    if (typeof status === 'number' || typeof status === 'string') {
+      parts.push(`status=${status}`);
+    }
+
+    if (typeof maybeError.code === 'number' || typeof maybeError.code === 'string') {
+      parts.push(`code=${maybeError.code}`);
+    }
+
+    if (typeof maybeError.response?.statusText === 'string' && maybeError.response.statusText.length > 0) {
+      parts.push(`statusText=${maybeError.response.statusText}`);
+    }
+
+    if (parts.length > 0) {
+      return parts.join(' | ');
+    }
+
+    return '[non-serializable error object]';
+  }
+
   private resolveBatchInputTokenBudget(): number {
     const configured = Number.parseInt(
       process.env.TRIAGE_BATCH_INPUT_TOKENS || `${DEFAULT_BATCH_INPUT_TOKENS}`,
@@ -701,5 +949,26 @@ RETURN ONLY A JSON ARRAY. Every item must follow this exact structure:
     }
 
     return Math.max(500, configured);
+  }
+  private buildProcessResultMessage(
+    processedCount: number,
+    batchCount: number,
+    unresolvedCount: number,
+    retryResult: RetryQueueResult,
+  ): string {
+    if (unresolvedCount === 0) {
+      return `Successfully triaged ${processedCount} threads across ${batchCount} batch(es)`;
+    }
+
+    switch (retryResult.reason) {
+      case 'queued':
+        return `Triaged ${processedCount} threads across ${batchCount} batch(es); ${unresolvedCount} thread(s) were re-queued for retry ${retryResult.nextRetryAttempt}`;
+      case 'retry_limit_reached':
+        return `Triaged ${processedCount} threads across ${batchCount} batch(es); ${unresolvedCount} thread(s) reached the retry limit and remain unresolved`;
+      case 'queue_failed':
+        return `Triaged ${processedCount} threads across ${batchCount} batch(es); ${unresolvedCount} thread(s) could not be re-queued because follow-up task creation failed`;
+      default:
+        return `Triaged ${processedCount} threads across ${batchCount} batch(es); ${unresolvedCount} thread(s) remain unresolved`;
+    }
   }
 }

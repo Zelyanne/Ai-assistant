@@ -96,6 +96,62 @@ function buildEscalatedTask(state: AgentState, reason: string, prompt: string): 
   };
 }
 
+function buildPausedTask(state: AgentState, reason: string, prompt: string): AgentState['task'] {
+  return {
+    ...state.task,
+    status: 'paused',
+    result: {
+      ...buildEscalationPayload({
+        reason,
+        prompt,
+        confidenceScore: 0,
+        trigger: 'approval_guardrail',
+      }),
+      outcome: 'setup_required',
+    },
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function isTrustedUserInitiatedPlannerTask(task: AgentState['task']): boolean {
+  if (task.domain_action !== 'assistant.command') {
+    return false;
+  }
+
+  const payload = asRecord(task.payload);
+  const channel = asString(payload.channel);
+  const source = asString(payload.source);
+
+  if (channel === 'web') {
+    return task.topic === 'Command Center' || source === 'dashboard-command-center';
+  }
+
+  if (payload.user_initiated !== true) {
+    return false;
+  }
+
+  if (channel === 'telegram') {
+    return source === 'telegram-webhook';
+  }
+
+  if (channel === 'whatsapp') {
+    return source === 'whatsapp-webhook';
+  }
+
+  return false;
+}
+
 function getPlannerIntent(state: AgentState): AssistantCommandIntent | null {
   const intent = state.planner_intent;
   return intent ?? null;
@@ -137,6 +193,7 @@ export async function plannerNode(state: AgentState): Promise<Partial<AgentState
 
       step.capability_readiness = readiness;
       if (!readiness.ready) {
+        const prompt = 'Reconnect Google Workspace or enable the required scopes/tools, then retry.';
         const blockedRun = await executionRunService.createRun({
           taskId: state.task.id,
           organizationId: state.task.organization_id,
@@ -151,11 +208,9 @@ export async function plannerNode(state: AgentState): Promise<Partial<AgentState
 
         return {
           execution_run: blocked,
-          task: buildEscalatedTask(
-            state,
-            readiness.errors.join(' '),
-            'Reconnect Google Workspace or enable the required scopes/tools, then retry.',
-          ),
+          task: isTrustedUserInitiatedPlannerTask(state.task)
+            ? buildPausedTask(state, readiness.errors.join(' '), prompt)
+            : buildEscalatedTask(state, readiness.errors.join(' '), prompt),
           trace: [AuditLogger.createStep('Planner', `Blocked: ${readiness.errors.join(' | ')}`)],
         };
       }
@@ -182,12 +237,11 @@ export async function plannerNode(state: AgentState): Promise<Partial<AgentState
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     if (message.startsWith('EXECUTION_RUNS_UNAVAILABLE')) {
+      const prompt = 'Planner orchestration requires the execution run migration. Apply supabase/migrations/20260312113000_create_execution_runs.sql to the target Supabase project, then retry.';
       return {
-        task: buildEscalatedTask(
-          state,
-          message,
-          'Planner orchestration requires the execution run migration. Apply supabase/migrations/20260312113000_create_execution_runs.sql to the target Supabase project, then retry.',
-        ),
+        task: isTrustedUserInitiatedPlannerTask(state.task)
+          ? buildPausedTask(state, message, prompt)
+          : buildEscalatedTask(state, message, prompt),
         trace: [AuditLogger.createStep('Planner', message)],
       };
     }

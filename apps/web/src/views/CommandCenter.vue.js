@@ -1,11 +1,9 @@
 import { onMounted, onUnmounted } from 'vue';
-import ConfirmDialog from 'primevue/confirmdialog';
-import { useConfirm } from 'primevue/useconfirm';
+import Button from 'primevue/button';
 import CommandComposer from '../components/command/CommandComposer.vue';
 import CommandTimeline from '../components/command/CommandTimeline.vue';
 import { useCommandCenter } from '../composables/useCommandCenter';
-const confirm = useConfirm();
-const { activeExecutionRun, timeline, isSubmitting, submitCommand, startRealtimeSync, stopRealtimeSync } = useCommandCenter();
+const { activeExecutionRun, timeline, isSubmitting, startNewDiscussion, submitCommand, startRealtimeSync, stopRealtimeSync } = useCommandCenter();
 onMounted(() => {
     startRealtimeSync();
 });
@@ -13,18 +11,10 @@ onUnmounted(() => {
     stopRealtimeSync();
 });
 async function onSubmitCommand(message) {
-    const initialResult = await submitCommand(message);
-    if (!initialResult.requiresConfirmation)
-        return;
-    confirm.require({
-        message: 'This command appears high-risk. Confirm before queuing execution?',
-        header: 'Confirm High-Risk Action',
-        icon: 'pi pi-exclamation-triangle',
-        acceptClass: 'p-button-danger',
-        accept: () => {
-            void submitCommand(message, { force: true });
-        },
-    });
+    await submitCommand(message);
+}
+async function onStartNewDiscussion() {
+    await startNewDiscussion();
 }
 debugger; /* PartiallyEnd: #3632/scriptSetup.vue */
 const __VLS_ctx = {};
@@ -34,6 +24,9 @@ __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.d
     ...{ class: "mx-auto flex w-full max-w-5xl flex-col gap-4 px-2 py-2 md:gap-6 md:px-0" },
 });
 __VLS_asFunctionalElement(__VLS_intrinsicElements.header, __VLS_intrinsicElements.header)({
+    ...{ class: "flex flex-col gap-3 md:flex-row md:items-start md:justify-between" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
     ...{ class: "space-y-2" },
 });
 __VLS_asFunctionalElement(__VLS_intrinsicElements.h1, __VLS_intrinsicElements.h1)({
@@ -42,6 +35,32 @@ __VLS_asFunctionalElement(__VLS_intrinsicElements.h1, __VLS_intrinsicElements.h1
 __VLS_asFunctionalElement(__VLS_intrinsicElements.p, __VLS_intrinsicElements.p)({
     ...{ class: "text-sm text-slate-500 md:text-base" },
 });
+const __VLS_0 = {}.Button;
+/** @type {[typeof __VLS_components.Button, ]} */ ;
+// @ts-ignore
+const __VLS_1 = __VLS_asFunctionalComponent(__VLS_0, new __VLS_0({
+    ...{ 'onClick': {} },
+    label: "Start New Discussion",
+    icon: "pi pi-plus",
+    severity: "secondary",
+    outlined: true,
+    disabled: (__VLS_ctx.isSubmitting),
+}));
+const __VLS_2 = __VLS_1({
+    ...{ 'onClick': {} },
+    label: "Start New Discussion",
+    icon: "pi pi-plus",
+    severity: "secondary",
+    outlined: true,
+    disabled: (__VLS_ctx.isSubmitting),
+}, ...__VLS_functionalComponentArgsRest(__VLS_1));
+let __VLS_4;
+let __VLS_5;
+let __VLS_6;
+const __VLS_7 = {
+    onClick: (__VLS_ctx.onStartNewDiscussion)
+};
+var __VLS_3;
 if (__VLS_ctx.activeExecutionRun?.executionRun) {
     __VLS_asFunctionalElement(__VLS_intrinsicElements.section, __VLS_intrinsicElements.section)({
         ...{ class: "rounded-executive border border-slate-200 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-700 px-4 py-4 text-slate-50 shadow-sm" },
@@ -88,34 +107,29 @@ if (__VLS_ctx.activeExecutionRun?.executionRun) {
 }
 /** @type {[typeof CommandTimeline, ]} */ ;
 // @ts-ignore
-const __VLS_0 = __VLS_asFunctionalComponent(CommandTimeline, new CommandTimeline({
+const __VLS_8 = __VLS_asFunctionalComponent(CommandTimeline, new CommandTimeline({
     items: (__VLS_ctx.timeline),
 }));
-const __VLS_1 = __VLS_0({
+const __VLS_9 = __VLS_8({
     items: (__VLS_ctx.timeline),
-}, ...__VLS_functionalComponentArgsRest(__VLS_0));
+}, ...__VLS_functionalComponentArgsRest(__VLS_8));
 /** @type {[typeof CommandComposer, ]} */ ;
 // @ts-ignore
-const __VLS_3 = __VLS_asFunctionalComponent(CommandComposer, new CommandComposer({
+const __VLS_11 = __VLS_asFunctionalComponent(CommandComposer, new CommandComposer({
     ...{ 'onSubmit': {} },
     disabled: (__VLS_ctx.isSubmitting),
 }));
-const __VLS_4 = __VLS_3({
+const __VLS_12 = __VLS_11({
     ...{ 'onSubmit': {} },
     disabled: (__VLS_ctx.isSubmitting),
-}, ...__VLS_functionalComponentArgsRest(__VLS_3));
-let __VLS_6;
-let __VLS_7;
-let __VLS_8;
-const __VLS_9 = {
+}, ...__VLS_functionalComponentArgsRest(__VLS_11));
+let __VLS_14;
+let __VLS_15;
+let __VLS_16;
+const __VLS_17 = {
     onSubmit: (__VLS_ctx.onSubmitCommand)
 };
-var __VLS_5;
-const __VLS_10 = {}.ConfirmDialog;
-/** @type {[typeof __VLS_components.ConfirmDialog, ]} */ ;
-// @ts-ignore
-const __VLS_11 = __VLS_asFunctionalComponent(__VLS_10, new __VLS_10({}));
-const __VLS_12 = __VLS_11({}, ...__VLS_functionalComponentArgsRest(__VLS_11));
+var __VLS_13;
 /** @type {__VLS_StyleScopedClasses['mx-auto']} */ ;
 /** @type {__VLS_StyleScopedClasses['flex']} */ ;
 /** @type {__VLS_StyleScopedClasses['w-full']} */ ;
@@ -126,6 +140,12 @@ const __VLS_12 = __VLS_11({}, ...__VLS_functionalComponentArgsRest(__VLS_11));
 /** @type {__VLS_StyleScopedClasses['py-2']} */ ;
 /** @type {__VLS_StyleScopedClasses['md:gap-6']} */ ;
 /** @type {__VLS_StyleScopedClasses['md:px-0']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex-col']} */ ;
+/** @type {__VLS_StyleScopedClasses['gap-3']} */ ;
+/** @type {__VLS_StyleScopedClasses['md:flex-row']} */ ;
+/** @type {__VLS_StyleScopedClasses['md:items-start']} */ ;
+/** @type {__VLS_StyleScopedClasses['md:justify-between']} */ ;
 /** @type {__VLS_StyleScopedClasses['space-y-2']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-2xl']} */ ;
 /** @type {__VLS_StyleScopedClasses['font-bold']} */ ;
@@ -174,13 +194,14 @@ var __VLS_dollars;
 const __VLS_self = (await import('vue')).defineComponent({
     setup() {
         return {
-            ConfirmDialog: ConfirmDialog,
+            Button: Button,
             CommandComposer: CommandComposer,
             CommandTimeline: CommandTimeline,
             activeExecutionRun: activeExecutionRun,
             timeline: timeline,
             isSubmitting: isSubmitting,
             onSubmitCommand: onSubmitCommand,
+            onStartNewDiscussion: onStartNewDiscussion,
         };
     },
 });

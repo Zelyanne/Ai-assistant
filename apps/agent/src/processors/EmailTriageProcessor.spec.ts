@@ -92,10 +92,12 @@ function buildSupabaseMock(state: SupabaseMockState): void {
       mode: 'select' | 'update';
       values: Record<string, unknown> | null;
       threadId: string | null;
+      threadFilterIds: string[] | null;
     } = {
       mode: 'select',
       values: null,
       threadId: null,
+      threadFilterIds: null,
     };
 
     const chain = {
@@ -114,6 +116,19 @@ function buildSupabaseMock(state: SupabaseMockState): void {
 
         return chain;
       }),
+      in: vi.fn().mockImplementation((column: string, value: unknown) => {
+        if (
+          table === 'ingested_threads'
+          && column === 'id'
+          && Array.isArray(value)
+        ) {
+          queryState.threadFilterIds = value.filter(
+            (item): item is string => typeof item === 'string',
+          );
+        }
+
+        return chain;
+      }),
       or: vi.fn().mockReturnThis(),
       is: vi.fn().mockReturnThis(),
       update: vi.fn().mockImplementation((values: Record<string, unknown>) => {
@@ -127,7 +142,11 @@ function buildSupabaseMock(state: SupabaseMockState): void {
       }),
       then: (resolve: (value: { data: unknown; error: unknown }) => unknown) => {
         if (table === 'ingested_threads') {
-          return resolve({ data: state.threads, error: null });
+          const filteredThreads = queryState.threadFilterIds
+            ? state.threads.filter((thread) => queryState.threadFilterIds?.includes(thread.id))
+            : state.threads;
+
+          return resolve({ data: filteredThreads, error: null });
         }
 
         if (table === 'watch_topics') {
@@ -184,30 +203,32 @@ describe('EmailTriageProcessor', () => {
     state.topics = [{ topic: 'Customer Escalation', priority: 'High' }];
 
     mocks.generateStructured.mockResolvedValueOnce({
-      data: [
-        {
-          thread_id: 'thread-1',
-          classification: {
-            matches: [
-              {
-                topic: 'Customer Escalation',
-                reason: 'Urgent external blocker',
-                priority_score: 90,
-              },
-            ],
-            overall_priority_score: 90,
-            is_highlighted: true,
+      data: {
+        results: [
+          {
+            thread_id: 'thread-1',
+            classification: {
+              matches: [
+                {
+                  topic: 'Customer Escalation',
+                  reason: 'Urgent external blocker',
+                  priority_score: 90,
+                },
+              ],
+              overall_priority_score: 90,
+              is_highlighted: true,
+            },
           },
-        },
-        {
-          thread_id: 'thread-2',
-          classification: {
-            matches: [],
-            overall_priority_score: 15,
-            is_highlighted: false,
+          {
+            thread_id: 'thread-2',
+            classification: {
+              matches: [],
+              overall_priority_score: 15,
+              is_highlighted: false,
+            },
           },
-        },
-      ],
+        ],
+      },
       usage: {
         promptTokens: 800,
         completionTokens: 240,
@@ -233,6 +254,13 @@ describe('EmailTriageProcessor', () => {
     const prompt = String(mocks.generateStructured.mock.calls[0][0]);
     expect(prompt).toContain('THREAD_ID: thread-1');
     expect(prompt).toContain('THREAD_ID: thread-2');
+    expect(prompt).toContain('RETURN ONLY A JSON OBJECT');
+
+    const schema = mocks.generateStructured.mock.calls[0][1] as {
+      safeParse: (value: unknown) => { success: boolean };
+    };
+    expect(schema.safeParse({ results: [] }).success).toBe(true);
+    expect(schema.safeParse([]).success).toBe(false);
 
     expect(state.updateCalls).toHaveLength(2);
     expect(state.updateCalls.map((call) => call.threadId)).toEqual(
@@ -247,6 +275,191 @@ describe('EmailTriageProcessor', () => {
       domain_action: 'email.summarize',
       payload: { thread_id: 'thread-1' },
     });
+  });
+
+  it('scopes retry tasks to payload.thread_ids instead of reprocessing all unclassified threads', async () => {
+    state.threads = [
+      {
+        id: 'thread-1',
+        subject: 'Should not be retried',
+        metadata: { snippet: 'ignore me' },
+        summary: null,
+        summary_json: null,
+      },
+      {
+        id: 'thread-2',
+        subject: 'Retry me',
+        metadata: { snippet: 'please retry this thread' },
+        summary: null,
+        summary_json: null,
+      },
+    ];
+    state.topics = [{ topic: 'General', priority: 'Low' }];
+
+    mocks.generateStructured.mockResolvedValueOnce({
+      data: {
+        results: [
+          {
+            thread_id: 'thread-2',
+            classification: {
+              matches: [],
+              overall_priority_score: 15,
+              is_highlighted: false,
+            },
+          },
+        ],
+      },
+      usage: {
+        promptTokens: 200,
+        completionTokens: 80,
+        totalTokens: 280,
+        latencyMs: 50,
+      },
+      model: 'mistral-small-latest',
+    });
+
+    const task = {
+      id: 'task-scoped-retry',
+      organization_id: 'org-1',
+      user_id: 'user-1',
+      domain_action: 'email.triage',
+      payload: {
+        thread_ids: ['thread-2'],
+        retry_attempt: 1,
+      },
+    };
+
+    const result = await processor.process(task as any);
+
+    expect(result.processed_count).toBe(1);
+    expect(state.updateCalls).toHaveLength(1);
+    expect(state.updateCalls[0].threadId).toBe('thread-2');
+
+    const prompt = String(mocks.generateStructured.mock.calls[0][0]);
+    expect(prompt).toContain('THREAD_ID: thread-2');
+    expect(prompt).not.toContain('THREAD_ID: thread-1');
+  });
+
+  it('skips scoped retries when payload.thread_ids contains no valid IDs', async () => {
+    state.threads = [
+      {
+        id: 'thread-1',
+        subject: 'Should not be processed',
+        metadata: { snippet: 'ignore me' },
+        summary: null,
+        summary_json: null,
+      },
+    ];
+
+    const task = {
+      id: 'task-invalid-retry-payload',
+      organization_id: 'org-1',
+      user_id: 'user-1',
+      domain_action: 'email.triage',
+      payload: {
+        thread_ids: ['   ', 42],
+        retry_attempt: 1,
+      },
+    };
+
+    const result = await processor.process(task as any);
+
+    expect(result.processed_count).toBe(0);
+    expect(result.message).toContain('No valid retry thread IDs provided');
+    expect(mocks.generateStructured).not.toHaveBeenCalled();
+  });
+
+  it('trims and deduplicates retry thread_ids before querying', async () => {
+    state.threads = [
+      {
+        id: 'thread-1',
+        subject: 'Should not be retried',
+        metadata: { snippet: 'ignore me' },
+        summary: null,
+        summary_json: null,
+      },
+      {
+        id: 'thread-2',
+        subject: 'Retry me',
+        metadata: { snippet: 'please retry this thread' },
+        summary: null,
+        summary_json: null,
+      },
+    ];
+    state.topics = [{ topic: 'General', priority: 'Low' }];
+
+    mocks.generateStructured.mockResolvedValueOnce({
+      data: {
+        results: [
+          {
+            thread_id: 'thread-2',
+            classification: {
+              matches: [],
+              overall_priority_score: 15,
+              is_highlighted: false,
+            },
+          },
+        ],
+      },
+      usage: {
+        promptTokens: 200,
+        completionTokens: 80,
+        totalTokens: 280,
+        latencyMs: 50,
+      },
+      model: 'mistral-small-latest',
+    });
+
+    const task = {
+      id: 'task-trimmed-retry',
+      organization_id: 'org-1',
+      user_id: 'user-1',
+      domain_action: 'email.triage',
+      payload: {
+        thread_ids: [' thread-2 ', 'thread-2', '   '],
+        retry_attempt: 1,
+      },
+    };
+
+    const result = await processor.process(task as any);
+
+    expect(result.processed_count).toBe(1);
+    expect(state.updateCalls).toHaveLength(1);
+    expect(state.updateCalls[0].threadId).toBe('thread-2');
+
+    const prompt = String(mocks.generateStructured.mock.calls[0][0]);
+    expect(prompt).toContain('THREAD_ID: thread-2');
+    expect(prompt).not.toContain('THREAD_ID: thread-1');
+  });
+
+  it('reports when requested retry thread IDs no longer match unclassified threads', async () => {
+    state.threads = [
+      {
+        id: 'thread-1',
+        subject: 'Already handled',
+        metadata: { snippet: 'done' },
+        summary: null,
+        summary_json: null,
+      },
+    ];
+
+    const task = {
+      id: 'task-stale-retry',
+      organization_id: 'org-1',
+      user_id: 'user-1',
+      domain_action: 'email.triage',
+      payload: {
+        thread_ids: ['missing-thread'],
+        retry_attempt: 1,
+      },
+    };
+
+    const result = await processor.process(task as any);
+
+    expect(result.processed_count).toBe(0);
+    expect(result.message).toContain('No unclassified threads found for requested retry thread(s): missing-thread');
+    expect(result.skipped_thread_ids).toEqual(['missing-thread']);
+    expect(mocks.generateStructured).not.toHaveBeenCalled();
   });
 
   it('uses summary and legacy summary_json snippet fallbacks when metadata.snippet is missing', async () => {
@@ -270,24 +483,26 @@ describe('EmailTriageProcessor', () => {
     state.topics = [{ topic: 'General', priority: 'Low' }];
 
     mocks.generateStructured.mockResolvedValueOnce({
-      data: [
-        {
-          thread_id: 'thread-summary',
-          classification: {
-            matches: [],
-            overall_priority_score: 20,
-            is_highlighted: false,
+      data: {
+        results: [
+          {
+            thread_id: 'thread-summary',
+            classification: {
+              matches: [],
+              overall_priority_score: 20,
+              is_highlighted: false,
+            },
           },
-        },
-        {
-          thread_id: 'thread-legacy-summary-json',
-          classification: {
-            matches: [],
-            overall_priority_score: 12,
-            is_highlighted: false,
+          {
+            thread_id: 'thread-legacy-summary-json',
+            classification: {
+              matches: [],
+              overall_priority_score: 12,
+              is_highlighted: false,
+            },
           },
-        },
-      ],
+        ],
+      },
       usage: {
         promptTokens: 300,
         completionTokens: 100,
@@ -311,6 +526,87 @@ describe('EmailTriageProcessor', () => {
     expect(prompt).toContain('SNIPPET: Plain summary fallback');
     expect(prompt).toContain('SNIPPET: Legacy summary_json snippet fallback');
     expect(prompt).not.toContain('encrypted-body-ciphertext');
+  });
+
+  it('logs missing snippet fallback once with an aggregated summary instead of per-thread spam', async () => {
+    state.threads = [
+      {
+        id: 'missing-1',
+        subject: 'Missing snippet 1',
+        metadata: {},
+        summary: null,
+        summary_json: null,
+      },
+      {
+        id: 'missing-2',
+        subject: 'Missing snippet 2',
+        metadata: {},
+        summary: null,
+        summary_json: null,
+      },
+      {
+        id: 'missing-3',
+        subject: 'Missing snippet 3',
+        metadata: {},
+        summary: null,
+        summary_json: null,
+      },
+    ];
+
+    state.topics = [{ topic: 'General', priority: 'Low' }];
+
+    mocks.generateStructured.mockResolvedValueOnce({
+      data: {
+        results: [
+          {
+            thread_id: 'missing-1',
+            classification: {
+              matches: [],
+              overall_priority_score: 10,
+              is_highlighted: false,
+            },
+          },
+          {
+            thread_id: 'missing-2',
+            classification: {
+              matches: [],
+              overall_priority_score: 10,
+              is_highlighted: false,
+            },
+          },
+          {
+            thread_id: 'missing-3',
+            classification: {
+              matches: [],
+              overall_priority_score: 10,
+              is_highlighted: false,
+            },
+          },
+        ],
+      },
+      usage: {
+        promptTokens: 350,
+        completionTokens: 100,
+        totalTokens: 450,
+        latencyMs: 40,
+      },
+      model: 'mistral-small-latest',
+    });
+
+    const task = {
+      id: 'task-snippet-summary',
+      organization_id: 'org-1',
+      user_id: 'user-1',
+      domain_action: 'email.triage',
+      payload: {},
+    };
+
+    await processor.process(task as any);
+
+    const summaryFlushCalls = mocks.flush.mock.calls.filter(
+      (call) => call[3] === 'snippet_extraction_summary',
+    );
+    expect(summaryFlushCalls).toHaveLength(1);
   });
 
   it('continues processing unaffected batches when one batch fails', async () => {
@@ -339,22 +635,24 @@ describe('EmailTriageProcessor', () => {
       }
 
       return {
-        data: [
-          {
-            thread_id: 'thread-ok',
-            classification: {
-              matches: [
-                {
-                  topic: 'Operations',
-                  reason: 'Operational request',
-                  priority_score: 70,
-                },
-              ],
-              overall_priority_score: 70,
-              is_highlighted: true,
+        data: {
+          results: [
+            {
+              thread_id: 'thread-ok',
+              classification: {
+                matches: [
+                  {
+                    topic: 'Operations',
+                    reason: 'Operational request',
+                    priority_score: 70,
+                  },
+                ],
+                overall_priority_score: 70,
+                is_highlighted: true,
+              },
             },
-          },
-        ],
+          ],
+        },
         usage: {
           promptTokens: 1600,
           completionTokens: 180,
@@ -389,6 +687,7 @@ describe('EmailTriageProcessor', () => {
     expect(retryTaskInsert?.values.payload).toEqual({
       thread_ids: ['thread-fail'],
       retry_reason: 'missing_batch_classification',
+      retry_attempt: 1,
     });
   });
 
@@ -407,7 +706,7 @@ describe('EmailTriageProcessor', () => {
 
     mocks.generateStructured
       .mockResolvedValueOnce({
-        data: [],
+        data: { results: [] },
         usage: {
           promptTokens: 180,
           completionTokens: 40,
@@ -417,16 +716,18 @@ describe('EmailTriageProcessor', () => {
         model: 'mistral-small-latest',
       })
       .mockResolvedValueOnce({
-        data: [
-          {
-            thread_id: 'thread-recoverable',
-            classification: {
-              matches: [],
-              overall_priority_score: 10,
-              is_highlighted: false,
+        data: {
+          results: [
+            {
+              thread_id: 'thread-recoverable',
+              classification: {
+                matches: [],
+                overall_priority_score: 10,
+                is_highlighted: false,
+              },
             },
-          },
-        ],
+          ],
+        },
         usage: {
           promptTokens: 110,
           completionTokens: 35,
@@ -454,6 +755,49 @@ describe('EmailTriageProcessor', () => {
       (call) => call.table === 'tasks' && call.values.domain_action === 'email.triage',
     );
     expect(retryTaskInsert).toBeUndefined();
+  });
+
+  it('does not enqueue another retry task once retry_attempt reaches the configured limit', async () => {
+    state.threads = [
+      {
+        id: 'thread-exhausted',
+        subject: 'Retry exhausted',
+        metadata: { snippet: 'still failing' },
+        summary: null,
+        summary_json: null,
+      },
+    ];
+    state.topics = [{ topic: 'General', priority: 'Low' }];
+
+    mocks.generateStructured.mockRejectedValueOnce(new Error('forced upstream failure'));
+
+    const task = {
+      id: 'task-retry-limit',
+      organization_id: 'org-1',
+      user_id: 'user-1',
+      domain_action: 'email.triage',
+      payload: {
+        thread_ids: ['thread-exhausted'],
+        retry_attempt: 3,
+      },
+    };
+
+    const result = await processor.process(task as any);
+
+    expect(result.processed_count).toBe(0);
+    expect(result.message).toContain('reached the retry limit');
+    expect(result.message).not.toContain('re-queued');
+    expect(result.skipped_thread_ids).toEqual(['thread-exhausted']);
+
+    const retryTaskInsert = state.insertCalls.find(
+      (call) => call.table === 'tasks' && call.values.domain_action === 'email.triage',
+    );
+    expect(retryTaskInsert).toBeUndefined();
+
+    const retryAuditCall = mocks.flush.mock.calls.find(
+      (call) => call[3] === 'triage_retry_exhausted',
+    );
+    expect(retryAuditCall).toBeDefined();
   });
 
   it('returns zero when no unclassified threads are found', async () => {
@@ -488,16 +832,18 @@ describe('EmailTriageProcessor', () => {
     state.topics = [{ topic: 'General', priority: 'Low' }];
 
     mocks.generateStructured.mockResolvedValueOnce({
-      data: [
-        {
-          thread_id: 'thread-provider',
-          classification: {
-            matches: [],
-            overall_priority_score: 10,
-            is_highlighted: false,
+      data: {
+        results: [
+          {
+            thread_id: 'thread-provider',
+            classification: {
+              matches: [],
+              overall_priority_score: 10,
+              is_highlighted: false,
+            },
           },
-        },
-      ],
+        ],
+      },
       usage: {
         promptTokens: 200,
         completionTokens: 60,

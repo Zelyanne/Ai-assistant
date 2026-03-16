@@ -75,7 +75,8 @@ export declare function useCommandCenter(): {
     }[]>;
     isSubmitting: import("vue").Ref<boolean, boolean>;
     startRealtimeSync: () => void;
+    startNewDiscussion: () => Promise<void>;
     stopRealtimeSync: () => void;
-    submitCommand: (message: string, options?: SubmitCommandOptions) => Promise<SubmitCommandResult>;
+    submitCommand: (message: string, _options?: SubmitCommandOptions) => Promise<SubmitCommandResult>;
 };
 export {};

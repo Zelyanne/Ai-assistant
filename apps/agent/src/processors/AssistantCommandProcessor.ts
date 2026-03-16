@@ -33,6 +33,8 @@ type AssistantCommandPayload = {
   command_text?: unknown;
   high_risk?: unknown;
   confirmed?: unknown;
+  source?: unknown;
+  user_initiated?: unknown;
   target_domain_action?: unknown;
   target_payload?: unknown;
   action_payload?: unknown;
@@ -107,6 +109,29 @@ function isConfirmed(payload: AssistantCommandPayload): boolean {
   return payload.confirmed === true;
 }
 
+function isTrustedUserInitiatedCommand(task: Task, payload: AssistantCommandPayload): boolean {
+  const channel = asString(payload.channel);
+  const source = asString(payload.source);
+
+  if (channel === 'web') {
+    return task.topic === 'Command Center' && source === 'dashboard-command-center';
+  }
+
+  if (payload.user_initiated !== true) {
+    return false;
+  }
+
+  if (channel === 'telegram') {
+    return source === 'telegram-webhook';
+  }
+
+  if (channel === 'whatsapp') {
+    return source === 'whatsapp-webhook';
+  }
+
+  return false;
+}
+
 function isHighRisk(payload: AssistantCommandPayload): boolean {
   return payload.high_risk === true;
 }
@@ -117,6 +142,28 @@ function requiresConfirmation(action: SupportedDelegationAction): boolean {
 
 function normalizeRecipient(payload: AssistantCommandPayload): string | null {
   return asString(payload.recipient) ?? asString(payload.to);
+}
+
+function extractEmailAddressFromText(text: string): string | null {
+  const match = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return match?.[0] ?? null;
+}
+
+function extractEmailBodyFromText(text: string): string | null {
+  const patterns = [
+    /(?:ou\s+tu\s+lui\s+dis|lui\s+dis|say(?:ing)?|to\s+say|write|body:?|message:?|r[ée]dige|[ée]cris)\s+["'“”]?(.+?)["'“”]?\s*$/i,
+    /(?:that\s+says|qui\s+dit)\s+["'“”]?(.+?)["'“”]?\s*$/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const value = match?.[1]?.trim();
+    if (value) {
+      return value;
+    }
+  }
+
+  return null;
 }
 
 function buildSendApprovalFields(
@@ -390,8 +437,8 @@ function inferWorkspacePlan(
   const steps: AssistantCommandIntentStep[] = [];
 
   const wantsEmail = /\b(email|mail)\b/.test(commandLower);
-  const wantsDraft = /\b(draft|compose|write)\b/.test(commandLower);
-  const wantsSend = /\bsend\b/.test(commandLower) && wantsEmail;
+  const wantsDraft = /\b(draft|compose|write|r[ée]dige|[ée]cris)\b/.test(commandLower);
+  const wantsSend = /\b(send|envoie|envoyer)\b/.test(commandLower) && wantsEmail;
   const wantsCalendar = /\b(calendar|schedule|meeting|invite)\b/.test(commandLower);
   const wantsDoc = /\b(doc|document|google doc)\b/.test(commandLower);
   const wantsSheet = /\b(sheet|spreadsheet)\b/.test(commandLower);
@@ -486,9 +533,9 @@ function inferWorkspacePlan(
   }
 
   if (wantsEmail && (wantsDraft || wantsSend || sourceStepKey)) {
-    const recipient = normalizeRecipient(payload);
+    const recipient = normalizeRecipient(payload) ?? extractEmailAddressFromText(commandText);
     const subject = asString(payload.subject) ?? 'Planner update';
-    const body = asString(payload.body);
+    const body = asString(payload.body) ?? extractEmailBodyFromText(commandText);
 
     if (!recipient) {
       throw new Error('COMMAND_AMBIGUOUS: Email command missing recipient payload field.');
@@ -536,7 +583,7 @@ export class AssistantCommandProcessor extends BaseProcessor {
       throw new Error('COMMAND_INVALID: Missing command text.');
     }
 
-    const confirmed = isConfirmed(payload);
+    const confirmed = isConfirmed(payload) || isTrustedUserInitiatedCommand(task, payload);
     if (isHighRisk(payload) && !confirmed) {
       throw new Error('CONFIRMATION_REQUIRED: High-risk command requires explicit confirmation.');
     }

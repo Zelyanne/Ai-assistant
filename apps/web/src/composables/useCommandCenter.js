@@ -44,6 +44,26 @@ function timelineStorageKey(organizationId, userId) {
 function conversationStorageKey(organizationId, userId) {
     return `${CONVERSATION_STORAGE_KEY_BASE}:${organizationId}:${userId}`;
 }
+async function createConversationId(organizationId, userId) {
+    const inserted = await supabase
+        .from('command_conversations')
+        .insert({
+        organization_id: organizationId,
+        created_by: userId,
+        channel: 'web',
+        title: 'Command Center',
+        metadata: { source: 'dashboard-command-center' },
+    })
+        .select('id')
+        .single();
+    if (!inserted.data?.id)
+        return null;
+    activeConversationId.value = inserted.data.id;
+    if (typeof window !== 'undefined') {
+        window.localStorage.setItem(conversationStorageKey(organizationId, userId), inserted.data.id);
+    }
+    return inserted.data.id;
+}
 function persistTimeline() {
     if (typeof window === 'undefined')
         return;
@@ -369,24 +389,7 @@ async function ensureConversationId() {
         }
         return existing.data.id;
     }
-    const inserted = await supabase
-        .from('command_conversations')
-        .insert({
-        organization_id: organizationId,
-        created_by: userId,
-        channel: 'web',
-        title: 'Command Center',
-        metadata: { source: 'dashboard-command-center' },
-    })
-        .select('id')
-        .single();
-    if (!inserted.data?.id)
-        return null;
-    activeConversationId.value = inserted.data.id;
-    if (typeof window !== 'undefined') {
-        window.localStorage.setItem(conversationStorageKey(organizationId, userId), inserted.data.id);
-    }
-    return inserted.data.id;
+    return createConversationId(organizationId, userId);
 }
 async function persistMessages(rows) {
     const insertRows = rows.filter((row) => Boolean(row.content && row.content.trim().length > 0));
@@ -491,7 +494,23 @@ export function useCommandCenter() {
             stopExecutionRunSubscription = null;
         }
     }
-    async function submitCommand(message, options = {}) {
+    async function startNewDiscussion() {
+        const organizationId = userStore.profile?.organization_id;
+        const userId = userStore.profile?.id;
+        stopRealtimeSync();
+        activeConversationId.value = null;
+        messageIdByEntryId.clear();
+        timeline.value = defaultTimeline();
+        persistTimeline();
+        if (typeof window !== 'undefined' && organizationId && userId) {
+            window.localStorage.removeItem(conversationStorageKey(organizationId, userId));
+        }
+        if (organizationId && userId) {
+            await createConversationId(organizationId, userId);
+        }
+        startRealtimeSync();
+    }
+    async function submitCommand(message, _options = {}) {
         const command = message.trim();
         if (!command) {
             return {
@@ -501,13 +520,6 @@ export function useCommandCenter() {
             };
         }
         const highRisk = isHighRiskCommand(command);
-        if (highRisk && !options.force) {
-            return {
-                requiresConfirmation: true,
-                queued: false,
-                highRisk,
-            };
-        }
         const organizationId = userStore.profile?.organization_id ?? null;
         const userId = userStore.profile?.id ?? null;
         const priorContext = timeline.value.slice(-20).map((entry) => ({
@@ -569,9 +581,10 @@ export function useCommandCenter() {
         const task = await submitTask('assistant.command', {
             command,
             command_text: command,
+            channel: 'web',
             source: 'dashboard-command-center',
+            user_initiated: true,
             high_risk: highRisk,
-            confirmed: options.force === true,
             conversation_id: conversationId,
             correlation_id: correlationId,
             source_message_id: sourceMessageId,
@@ -623,6 +636,7 @@ export function useCommandCenter() {
         timeline,
         isSubmitting,
         startRealtimeSync,
+        startNewDiscussion,
         stopRealtimeSync,
         submitCommand,
     };

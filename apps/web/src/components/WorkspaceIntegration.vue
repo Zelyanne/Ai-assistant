@@ -87,8 +87,11 @@ const handleConnect = async () => {
       <template #content>
         <div class="py-4">
           <p class="m-0 text-gray-600 leading-relaxed">
-            Securely connect your Google Workspace to allow the AI assistant to access your calendar and email. 
-            This data is used to populate your personalized morning briefs.
+            Securely connect Google Workspace so the assistant can work across Gmail, Calendar, Drive, Docs, Sheets, and Slides when you delegate operational tasks.
+          </p>
+
+          <p class="mt-3 text-sm text-slate-500 leading-relaxed">
+            These scopes support reading the context needed to act, creating new workspace artifacts, and writing drafts or updates back into Google on your behalf.
           </p>
           
           <div
@@ -98,18 +101,26 @@ const handleConnect = async () => {
             Last synced: {{ new Date(lastSync).toLocaleString() }}
           </div>
 
-          <div class="mt-4 flex flex-col gap-2">
-            <div class="flex items-center gap-2 text-sm text-gray-500">
+          <div class="mt-4 flex flex-col gap-3">
+            <div class="flex items-start gap-2 text-sm text-gray-500">
               <i class="pi pi-check-circle text-green-500" />
-              <span>Full Gmail access (Read/Write)</span>
+              <span>Gmail to read message context, create drafts, and send approved updates.</span>
             </div>
-            <div class="flex items-center gap-2 text-sm text-gray-500">
+            <div class="flex items-start gap-2 text-sm text-gray-500">
               <i class="pi pi-check-circle text-green-500" />
-              <span>Calendar management</span>
+              <span>Calendar to review availability and create or update scheduled events.</span>
             </div>
-            <div class="flex items-center gap-2 text-sm text-gray-500">
+            <div class="flex items-start gap-2 text-sm text-gray-500">
+              <i class="pi pi-check-circle text-green-500" />
+              <span>Drive to read source files and attach newly created workspace content.</span>
+            </div>
+            <div class="flex items-start gap-2 text-sm text-gray-500">
+              <i class="pi pi-check-circle text-green-500" />
+              <span>Docs, Sheets, and Slides to generate working artifacts from delegated tasks.</span>
+            </div>
+            <div class="flex items-start gap-2 text-sm text-gray-500">
               <i class="pi pi-shield text-blue-500" />
-              <span>Secure AES-256 encryption</span>
+              <span>Secure token storage with scoped access aligned to the current backend worker capabilities.</span>
             </div>
           </div>
 

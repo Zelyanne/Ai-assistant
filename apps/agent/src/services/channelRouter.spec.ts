@@ -134,6 +134,8 @@ describe('ChannelRouterService', () => {
         status: 'queued',
         payload: expect.objectContaining({
           channel: 'telegram',
+          source: 'telegram-webhook',
+          user_initiated: true,
           external_message_id: 'ext-1',
           thread_id: 'thread-1',
         }),

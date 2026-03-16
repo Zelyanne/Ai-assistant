@@ -131,7 +131,8 @@ export class MCPService {
     
     this.serverProcess = spawn('uvx', [
       'workspace-mcp',
-      '--transport', 'streamable-http'
+      '--transport', 'streamable-http',
+      '--tool-tier', 'extended',
     ], {
       env: {
         ...process.env,

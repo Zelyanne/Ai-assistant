@@ -101,6 +101,78 @@ describe('AssistantCommandProcessor', () => {
     ).rejects.toThrow('CONFIRMATION_REQUIRED');
   });
 
+  it('treats Command Center web commands as trusted confirmation sources', async () => {
+    const processor = new AssistantCommandProcessor();
+
+    const result = await processor.process({
+      ...baseTask,
+      topic: 'Command Center',
+      payload: {
+        command: 'send an email now',
+        high_risk: true,
+        source: 'dashboard-command-center',
+        channel: 'web',
+        recipient: 'alexis@example.com',
+        subject: 'Status',
+        body: 'Ship it',
+      },
+    });
+
+    expect(result.planner_intent).toBeDefined();
+    expect(result.planner_intent.requested_steps[0]).toMatchObject({
+      worker_type: 'gmail',
+      action: 'send_email',
+    });
+  });
+
+  it('treats trusted WhatsApp commands as confirmed user actions', async () => {
+    const processor = new AssistantCommandProcessor();
+
+    const result = await processor.process({
+      ...baseTask,
+      payload: {
+        command: 'message the client on whatsapp',
+        source: 'whatsapp-webhook',
+        channel: 'whatsapp',
+        user_initiated: true,
+        message_text: 'Hello from the assistant',
+      },
+    });
+
+    expect(result.delegated_domain_action).toBe('channel.send');
+    expect(result.delegated_payload).toMatchObject({
+      channel: 'whatsapp',
+      message_text: 'Hello from the assistant',
+    });
+  });
+
+  it('parses a French send-email command from Command Center without escalating', async () => {
+    const processor = new AssistantCommandProcessor();
+
+    const result = await processor.process({
+      ...baseTask,
+      topic: 'Command Center',
+      payload: {
+        command: 'S il te plait envoie un mail a othily.g@gmail.com ou tu lui dis bonjour pti gars',
+        source: 'dashboard-command-center',
+        channel: 'web',
+        user_initiated: true,
+      },
+    });
+
+    expect(result.planner_intent).toBeDefined();
+    expect(result.planner_intent.requested_steps[0]).toMatchObject({
+      worker_type: 'gmail',
+      action: 'send_email',
+      input: expect.objectContaining({
+        recipient: 'othily.g@gmail.com',
+        to: 'othily.g@gmail.com',
+        subject: 'Planner update',
+        body: 'bonjour pti gars',
+      }),
+    });
+  });
+
   it('derives approval metadata for confirmed email send plans', async () => {
     const processor = new AssistantCommandProcessor();
 

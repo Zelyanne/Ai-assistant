@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import type { Profile } from '@ai-assistant/shared';
 
-import { useCommandCenter } from './useCommandCenter';
+let useCommandCenter: typeof import('./useCommandCenter').useCommandCenter;
 
 async function waitFor(callback: () => void, timeout = 1000): Promise<void> {
   const start = Date.now();
@@ -124,7 +124,8 @@ describe('useCommandCenter', () => {
   const subscriptions = new Map<string, (payload: { eventType?: string; new?: unknown }) => void>();
   const unsubs = new Map<string, ReturnType<typeof vi.fn>>();
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    vi.resetModules();
     setActivePinia(createPinia());
     window.localStorage.clear();
     submitTaskMock.mockReset();
@@ -132,6 +133,8 @@ describe('useCommandCenter', () => {
     resetSupabaseMock();
     subscriptions.clear();
     unsubs.clear();
+
+    ({ useCommandCenter } = await import('./useCommandCenter'));
 
     subscribeToTableMock.mockImplementation((table: string, cb: (payload: { eventType?: string; new?: unknown }) => void) => {
       subscriptions.set(table, cb);
@@ -160,27 +163,19 @@ describe('useCommandCenter', () => {
     );
   });
 
-  it('requires confirmation for high-risk command before enqueue', async () => {
-    const center = useCommandCenter();
-
-    const result = await center.submitCommand('Send email update to leadership');
-
-    expect(result.requiresConfirmation).toBe(true);
-    expect(result.queued).toBe(false);
-    expect(submitTaskMock).not.toHaveBeenCalled();
-  });
-
-  it('queues high-risk command after confirmation force option', async () => {
+  it('queues high-risk command immediately without confirmation', async () => {
     submitTaskMock.mockResolvedValue({ id: 'task-high-risk-1' });
     const center = useCommandCenter();
 
-    const result = await center.submitCommand('Send email update to leadership', { force: true });
+    const result = await center.submitCommand('Send email update to leadership');
 
     expect(result.requiresConfirmation).toBe(false);
     expect(result.queued).toBe(true);
     expect(submitTaskMock).toHaveBeenCalledWith(
       'assistant.command',
       expect.objectContaining({
+        channel: 'web',
+        user_initiated: true,
         high_risk: true,
       }),
       'Command Center'
@@ -197,6 +192,33 @@ describe('useCommandCenter', () => {
     expect(result.queued).toBe(false);
     expect(lastEntry.state).toBe('error');
     expect(lastEntry.content).toContain('enqueue failed');
+  });
+
+  it('starts a new discussion by resetting the timeline and creating a fresh conversation', async () => {
+    const center = useCommandCenter();
+
+    const { useUserStore } = await import('../stores/user');
+    const userStore = useUserStore();
+    userStore.profile = {
+      id: '123e4567-e89b-12d3-a456-426614174002',
+      organization_id: '123e4567-e89b-12d3-a456-426614174001',
+    } as Profile;
+
+    center.startRealtimeSync();
+    await waitFor(() => {
+      expect(subscribeToTableMock).toHaveBeenCalledWith('tasks', expect.any(Function));
+    });
+
+    await center.submitCommand('Draft project summary');
+    expect(center.timeline.value.length).toBeGreaterThan(1);
+
+    await center.startNewDiscussion();
+
+    expect(center.timeline.value).toHaveLength(1);
+    expect(center.timeline.value[0]?.content).toContain('Welcome to Command Center');
+
+    await center.submitCommand('Draft follow-up summary');
+    expect(center.timeline.value.some((entry) => entry.content === 'Draft follow-up summary')).toBe(true);
   });
 
   it('applies realtime task updates and cleans up subscriptions', async () => {

@@ -136,6 +136,8 @@ interface ChannelContext {
   correlationId?: string;
 }
 
+type UserInitiatedChannel = "web" | "telegram" | "whatsapp";
+
 function extractChannelContext(payload: unknown): ChannelContext {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return {};
@@ -155,6 +157,46 @@ function extractChannelContext(payload: unknown): ChannelContext {
         ? input.correlation_id
         : undefined,
   };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function getUserInitiatedCommandChannel(task: Task): UserInitiatedChannel | null {
+  const payload = asRecord(task.payload);
+  const channel = payload.channel;
+  const source = payload.source;
+  const isCommandCenterTask = task.topic === "Command Center";
+
+  if (task.domain_action !== "assistant.command") {
+    return null;
+  }
+
+  if (
+    (channel === "web" || (typeof channel !== "string" && isCommandCenterTask)) &&
+    (source === "dashboard-command-center" || isCommandCenterTask)
+  ) {
+    return "web";
+  }
+
+  if (payload.user_initiated !== true) {
+    return null;
+  }
+
+  if (channel === "telegram") {
+    return source === "telegram-webhook" ? "telegram" : null;
+  }
+
+  if (channel === "whatsapp") {
+    return source === "whatsapp-webhook" ? "whatsapp" : null;
+  }
+
+  return null;
 }
 
 function isHighRiskPayload(payload: unknown): boolean {
@@ -285,6 +327,7 @@ async function checkPerimeter(state: AgentState): Promise<Partial<AgentState>> {
 
   const task = state.task;
   const topic = task.topic || "General";
+  const userInitiatedChannel = getUserInitiatedCommandChannel(task);
 
   console.log(`[Graph][${task.id}] Checking perimeter for topic: ${topic}...`);
 
@@ -352,7 +395,7 @@ async function checkPerimeter(state: AgentState): Promise<Partial<AgentState>> {
       ? "restricted_topic"
       : "approval_guardrail";
     const shouldEscalate =
-      !isExemptAction && (result.isEscalated || isRestrictedTopic);
+      !userInitiatedChannel && !isExemptAction && (result.isEscalated || isRestrictedTopic);
 
     const channelContext = extractChannelContext(task.payload);
     const channelSummary = channelContext.channel
@@ -363,6 +406,8 @@ async function checkPerimeter(state: AgentState): Promise<Partial<AgentState>> {
       "Perimeter Check",
       shouldEscalate
         ? `Escalated: ${escalationReason}`
+        : userInitiatedChannel
+          ? `Perimeter escalation bypassed for user-initiated ${userInitiatedChannel} command`
         : isExemptAction
           ? `Perimeter check bypassed for ${task.domain_action}`
           : "Perimeter check passed",
@@ -748,9 +793,12 @@ async function processAssistantCommand(
         : null;
 
     if (!delegatedDomainAction) {
+      const userInitiatedChannel = getUserInitiatedCommandChannel(state.task);
       const step = AuditLogger.createStep(
         "Assistant Command",
-        "Escalated: command delegation failed",
+        userInitiatedChannel
+          ? `Paused: command delegation failed for user-initiated ${userInitiatedChannel} command`
+          : "Escalated: command delegation failed",
         {
           confidence_score: 0,
           confidence_threshold: CONFIDENCE_THRESHOLD,
@@ -769,7 +817,7 @@ async function processAssistantCommand(
       return {
         task: {
           ...state.task,
-          status: "escalation",
+          status: userInitiatedChannel ? "paused" : "escalation",
           result: escalationResult,
         },
         error: "Command delegation failed",
@@ -783,7 +831,6 @@ async function processAssistantCommand(
       !Array.isArray(resultWithMeta.delegated_payload)
         ? (resultWithMeta.delegated_payload as Record<string, unknown>)
         : {};
-
     const delegatedTask: Task = {
       ...state.task,
       domain_action: delegatedDomainAction,
@@ -807,6 +854,7 @@ async function processAssistantCommand(
       citations: resultWithMeta.citations ?? [],
     };
   } catch (err: unknown) {
+    const userInitiatedChannel = getUserInitiatedCommandChannel(state.task);
     const safeMessage = redactErrorMessage(err);
     const reason = safeMessage.startsWith("CONFIRMATION_REQUIRED")
       ? "High-risk command requires confirmation"
@@ -818,7 +866,9 @@ async function processAssistantCommand(
 
     const step = AuditLogger.createStep(
       "Assistant Command",
-      `Escalated: ${reason}`,
+      userInitiatedChannel
+        ? `Paused: ${reason}`
+        : `Escalated: ${reason}`,
       {
         confidence_score: 0,
         confidence_threshold: CONFIDENCE_THRESHOLD,
@@ -841,7 +891,7 @@ async function processAssistantCommand(
     return {
       task: {
         ...state.task,
-        status: "escalation",
+        status: userInitiatedChannel ? "paused" : "escalation",
         result: escalationResult,
       },
       error: reason,

@@ -462,6 +462,47 @@ describe('Agent Controller Graph planner-worker flow', () => {
     expect(mockExecuteWorkerTool).not.toHaveBeenCalled();
   });
 
+  it('pauses Command Center tasks instead of escalating when capability readiness fails', async () => {
+    const task = {
+      ...baseTask,
+      topic: 'Command Center',
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'Send an email update',
+        source: 'dashboard-command-center',
+        channel: 'web',
+        user_initiated: true,
+        target_domain_action: 'email.send',
+        target_payload: {
+          recipient: 'alexis@example.com',
+          subject: 'Status update',
+          body: 'Hello team',
+        },
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+    mockCheckCapabilityReadiness.mockResolvedValueOnce({
+      worker_type: 'gmail',
+      ready: false,
+      integration_active: true,
+      policy_allowed: true,
+      required_scopes: ['https://www.googleapis.com/auth/gmail.modify'],
+      missing_scopes: ['https://www.googleapis.com/auth/gmail.modify'],
+      requested_tools: ['send_gmail_message'],
+      resolved_tools: ['send_gmail_message'],
+      unavailable_tools: [],
+      errors: ['Missing scope: https://www.googleapis.com/auth/gmail.modify'],
+    });
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(result.task.status).toBe('paused');
+    expect(result.execution_run.status).toBe('blocked');
+    expect(result.task.result.outcome).toBe('setup_required');
+    expect(mockExecuteWorkerTool).not.toHaveBeenCalled();
+  });
+
   it('keeps direct email.draft execution working outside planner mode', async () => {
     const task = {
       ...baseTask,
@@ -485,5 +526,116 @@ describe('Agent Controller Graph planner-worker flow', () => {
       'create_gmail_draft',
       expect.any(Object),
     );
+  });
+
+  it('bypasses perimeter escalation for user-initiated social assistant commands', async () => {
+    const task = {
+      ...baseTask,
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'Send the prepared update',
+        channel: 'telegram',
+        source: 'telegram-webhook',
+        user_initiated: true,
+        confirmed: true,
+        high_risk: true,
+        target_domain_action: 'email.draft',
+        target_payload: {
+          plan_steps: [
+            {
+              key: 'gmail-step',
+              title: 'Draft email',
+              worker_type: 'gmail',
+              action: 'draft_email',
+              requested_tools: ['draft_gmail_message'],
+              input: {
+                recipient: 'alexis@example.com',
+                subject: 'Status update',
+              },
+            },
+          ],
+        },
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(result.task.status).not.toBe('escalation');
+    expect(result.execution_run.status).toBe('completed');
+  });
+
+  it('bypasses perimeter escalation for Command Center tasks even without explicit marker', async () => {
+    const task = {
+      ...baseTask,
+      topic: 'Command Center',
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'Send the prepared update',
+        channel: 'web',
+        target_domain_action: 'email.draft',
+        target_payload: {
+          plan_steps: [
+            {
+              key: 'gmail-step',
+              title: 'Draft email',
+              worker_type: 'gmail',
+              action: 'draft_email',
+              requested_tools: ['draft_gmail_message'],
+              input: {
+                recipient: 'alexis@example.com',
+                subject: 'Status update',
+              },
+            },
+          ],
+        },
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(result.task.status).not.toBe('escalation');
+    expect(result.execution_run.status).toBe('completed');
+  });
+
+  it('pauses ambiguous Command Center commands instead of escalating', async () => {
+    const task = {
+      ...baseTask,
+      topic: 'Command Center',
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'help me with this',
+        source: 'dashboard-command-center',
+        channel: 'web',
+        user_initiated: true,
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(result.task.status).toBe('paused');
+    expect(result.task.result.reason).toBe('Command is ambiguous');
+  });
+
+  it('keeps automated thread actions eligible for perimeter escalation', async () => {
+    const task = {
+      ...baseTask,
+      domain_action: 'thread.action',
+      payload: {
+        thread_id: 'thread-1',
+        channel: 'web',
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(result.task.status).toBe('escalation');
   });
 });

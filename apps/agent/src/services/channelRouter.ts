@@ -239,6 +239,8 @@ export class ChannelRouterService {
     const normalized = NormalizedInboundEnvelopeSchema.parse(adapter.normalizeInbound(payload));
     const resolvedDomainAction = await this.resolveInboundDomainAction(normalized);
     const correlationId = normalized.correlation_id ?? randomUUID();
+    const isUserInitiatedCommand = resolvedDomainAction === 'assistant.command'
+      && (normalized.channel === 'telegram' || normalized.channel === 'whatsapp');
 
     const { data: existingTask, error: existingError } = await this.supabaseClient
       .from('tasks')
@@ -295,6 +297,8 @@ export class ChannelRouterService {
       topic: normalized.topic ?? null,
       payload: {
         channel: normalized.channel,
+        source: `${normalized.channel}-webhook`,
+        user_initiated: isUserInitiatedCommand,
         external_message_id: normalized.external_message_id,
         thread_id: normalized.thread_id,
         organization_id: normalized.organization_id,

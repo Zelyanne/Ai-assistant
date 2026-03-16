@@ -125,6 +125,9 @@ __VLS_3.slots.default;
     __VLS_asFunctionalElement(__VLS_intrinsicElements.p, __VLS_intrinsicElements.p)({
         ...{ class: "m-0 text-gray-600 leading-relaxed" },
     });
+    __VLS_asFunctionalElement(__VLS_intrinsicElements.p, __VLS_intrinsicElements.p)({
+        ...{ class: "mt-3 text-sm text-slate-500 leading-relaxed" },
+    });
     if (__VLS_ctx.lastSync) {
         __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
             ...{ class: "mt-2 text-xs text-slate-400 italic" },
@@ -132,24 +135,38 @@ __VLS_3.slots.default;
         (new Date(__VLS_ctx.lastSync).toLocaleString());
     }
     __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
-        ...{ class: "mt-4 flex flex-col gap-2" },
+        ...{ class: "mt-4 flex flex-col gap-3" },
     });
     __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
-        ...{ class: "flex items-center gap-2 text-sm text-gray-500" },
+        ...{ class: "flex items-start gap-2 text-sm text-gray-500" },
     });
     __VLS_asFunctionalElement(__VLS_intrinsicElements.i)({
         ...{ class: "pi pi-check-circle text-green-500" },
     });
     __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({});
     __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
-        ...{ class: "flex items-center gap-2 text-sm text-gray-500" },
+        ...{ class: "flex items-start gap-2 text-sm text-gray-500" },
     });
     __VLS_asFunctionalElement(__VLS_intrinsicElements.i)({
         ...{ class: "pi pi-check-circle text-green-500" },
     });
     __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({});
     __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
-        ...{ class: "flex items-center gap-2 text-sm text-gray-500" },
+        ...{ class: "flex items-start gap-2 text-sm text-gray-500" },
+    });
+    __VLS_asFunctionalElement(__VLS_intrinsicElements.i)({
+        ...{ class: "pi pi-check-circle text-green-500" },
+    });
+    __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({});
+    __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+        ...{ class: "flex items-start gap-2 text-sm text-gray-500" },
+    });
+    __VLS_asFunctionalElement(__VLS_intrinsicElements.i)({
+        ...{ class: "pi pi-check-circle text-green-500" },
+    });
+    __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({});
+    __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+        ...{ class: "flex items-start gap-2 text-sm text-gray-500" },
     });
     __VLS_asFunctionalElement(__VLS_intrinsicElements.i)({
         ...{ class: "pi pi-shield text-blue-500" },
@@ -230,6 +247,10 @@ var __VLS_3;
 /** @type {__VLS_StyleScopedClasses['m-0']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-gray-600']} */ ;
 /** @type {__VLS_StyleScopedClasses['leading-relaxed']} */ ;
+/** @type {__VLS_StyleScopedClasses['mt-3']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-slate-500']} */ ;
+/** @type {__VLS_StyleScopedClasses['leading-relaxed']} */ ;
 /** @type {__VLS_StyleScopedClasses['mt-2']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-slate-400']} */ ;
@@ -237,17 +258,9 @@ var __VLS_3;
 /** @type {__VLS_StyleScopedClasses['mt-4']} */ ;
 /** @type {__VLS_StyleScopedClasses['flex']} */ ;
 /** @type {__VLS_StyleScopedClasses['flex-col']} */ ;
-/** @type {__VLS_StyleScopedClasses['gap-2']} */ ;
+/** @type {__VLS_StyleScopedClasses['gap-3']} */ ;
 /** @type {__VLS_StyleScopedClasses['flex']} */ ;
-/** @type {__VLS_StyleScopedClasses['items-center']} */ ;
-/** @type {__VLS_StyleScopedClasses['gap-2']} */ ;
-/** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
-/** @type {__VLS_StyleScopedClasses['text-gray-500']} */ ;
-/** @type {__VLS_StyleScopedClasses['pi']} */ ;
-/** @type {__VLS_StyleScopedClasses['pi-check-circle']} */ ;
-/** @type {__VLS_StyleScopedClasses['text-green-500']} */ ;
-/** @type {__VLS_StyleScopedClasses['flex']} */ ;
-/** @type {__VLS_StyleScopedClasses['items-center']} */ ;
+/** @type {__VLS_StyleScopedClasses['items-start']} */ ;
 /** @type {__VLS_StyleScopedClasses['gap-2']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-gray-500']} */ ;
@@ -255,7 +268,31 @@ var __VLS_3;
 /** @type {__VLS_StyleScopedClasses['pi-check-circle']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-green-500']} */ ;
 /** @type {__VLS_StyleScopedClasses['flex']} */ ;
-/** @type {__VLS_StyleScopedClasses['items-center']} */ ;
+/** @type {__VLS_StyleScopedClasses['items-start']} */ ;
+/** @type {__VLS_StyleScopedClasses['gap-2']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-gray-500']} */ ;
+/** @type {__VLS_StyleScopedClasses['pi']} */ ;
+/** @type {__VLS_StyleScopedClasses['pi-check-circle']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-green-500']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex']} */ ;
+/** @type {__VLS_StyleScopedClasses['items-start']} */ ;
+/** @type {__VLS_StyleScopedClasses['gap-2']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-gray-500']} */ ;
+/** @type {__VLS_StyleScopedClasses['pi']} */ ;
+/** @type {__VLS_StyleScopedClasses['pi-check-circle']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-green-500']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex']} */ ;
+/** @type {__VLS_StyleScopedClasses['items-start']} */ ;
+/** @type {__VLS_StyleScopedClasses['gap-2']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-gray-500']} */ ;
+/** @type {__VLS_StyleScopedClasses['pi']} */ ;
+/** @type {__VLS_StyleScopedClasses['pi-check-circle']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-green-500']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex']} */ ;
+/** @type {__VLS_StyleScopedClasses['items-start']} */ ;
 /** @type {__VLS_StyleScopedClasses['gap-2']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-gray-500']} */ ;

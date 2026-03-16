@@ -4,30 +4,16 @@ import { defineComponent, ref } from 'vue';
 
 import CommandCenter from './CommandCenter.vue';
 
-const confirmRequireMock = vi.fn();
 const startRealtimeSyncMock = vi.fn();
 const stopRealtimeSyncMock = vi.fn();
-const submitCommandMock = vi.fn(async (_message: string, options?: { force?: boolean }) => {
-  if (!options?.force) {
-    return {
-      requiresConfirmation: true,
-      queued: false,
-      highRisk: true,
-    };
-  }
-
+const startNewDiscussionMock = vi.fn();
+const submitCommandMock = vi.fn(async () => {
   return {
     requiresConfirmation: false,
     queued: true,
     highRisk: true,
   };
 });
-
-vi.mock('primevue/useconfirm', () => ({
-  useConfirm: () => ({
-    require: confirmRequireMock,
-  }),
-}));
 
 vi.mock('../composables/useCommandCenter', () => ({
   useCommandCenter: () => ({
@@ -42,6 +28,7 @@ vi.mock('../composables/useCommandCenter', () => ({
       },
     ]),
     isSubmitting: ref(false),
+    startNewDiscussion: startNewDiscussionMock,
     submitCommand: submitCommandMock,
     startRealtimeSync: startRealtimeSyncMock,
     stopRealtimeSync: stopRealtimeSyncMock,
@@ -70,13 +57,12 @@ describe('CommandCenter', () => {
     vi.clearAllMocks();
   });
 
-  it('opens high-risk confirmation before forced enqueue', async () => {
+  it('queues the command directly from the composer', async () => {
     const wrapper = mount(CommandCenter, {
       global: {
         stubs: {
           CommandComposer: CommandComposerStub,
           CommandTimeline: CommandTimelineStub,
-          ConfirmDialog: true,
         },
       },
     });
@@ -88,14 +74,23 @@ describe('CommandCenter', () => {
     await wrapper.get('[data-testid="submit"]').trigger('click');
 
     expect(submitCommandMock).toHaveBeenCalledWith('Send email update');
-    expect(confirmRequireMock).toHaveBeenCalledTimes(1);
-
-    const confirmConfig = confirmRequireMock.mock.calls[0][0] as { accept: () => void };
-    confirmConfig.accept();
-
-    expect(submitCommandMock).toHaveBeenCalledWith('Send email update', { force: true });
 
     wrapper.unmount();
     expect(stopRealtimeSyncMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts a fresh discussion from the header action', async () => {
+    const wrapper = mount(CommandCenter, {
+      global: {
+        stubs: {
+          CommandComposer: CommandComposerStub,
+          CommandTimeline: CommandTimelineStub,
+        },
+      },
+    });
+
+    await wrapper.get('button.p-button').trigger('click');
+
+    expect(startNewDiscussionMock).toHaveBeenCalledTimes(1);
   });
 });

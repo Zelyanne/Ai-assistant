@@ -1,40 +1,67 @@
-import { ref, onMounted } from 'vue';
+import { computed, ref, onMounted } from 'vue';
 import { supabase } from '../services/supabase';
 import { useUserStore } from '../stores/user';
 import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
+import Message from 'primevue/message';
 import Toast from 'primevue/toast';
 import WorkspaceIntegration from '../components/WorkspaceIntegration.vue';
 import SecurityPerimeterSettings from '../components/SecurityPerimeterSettings.vue';
 import GmailLabelSelector from '../components/GmailLabelSelector.vue';
+const SOCIAL_PROVIDERS = ['telegram', 'whatsapp'];
 const userStore = useUserStore();
 const toast = useToast();
 const integration = ref(null);
+const telegramIntegration = ref(null);
+const whatsappIntegration = ref(null);
+const settingsError = ref(null);
 const currentPreferences = ref([]);
 const hasChanges = ref(false);
 const saving = ref(false);
-const fetchIntegration = async () => {
+function socialStatusLabel(item) {
+    if (!item)
+        return 'Not configured';
+    return item.sync_status === 'error' ? 'Needs attention' : 'Connected';
+}
+function socialStatusClass(item) {
+    if (!item)
+        return 'bg-slate-100 text-slate-600';
+    return item.sync_status === 'error'
+        ? 'bg-rose-100 text-rose-700'
+        : 'bg-emerald-100 text-emerald-700';
+}
+const telegramStatusLabel = computed(() => socialStatusLabel(telegramIntegration.value));
+const telegramStatusClass = computed(() => socialStatusClass(telegramIntegration.value));
+const whatsappStatusLabel = computed(() => socialStatusLabel(whatsappIntegration.value));
+const whatsappStatusClass = computed(() => socialStatusClass(whatsappIntegration.value));
+async function fetchIntegration() {
+    settingsError.value = null;
     const { data: { user } } = await supabase.auth.getUser();
     if (!user || !userStore.profile?.organization_id)
         return;
-    const { data } = await supabase
+    const { data, error } = await supabase
         .from('workspace_integrations')
         .select('*')
         .eq('organization_id', userStore.profile.organization_id)
-        .eq('provider', 'google')
-        .single();
-    if (data) {
-        integration.value = data;
-        currentPreferences.value = Array.isArray(data.label_preferences)
-            ? data.label_preferences.filter((value) => typeof value === 'string')
-            : [];
+        .in('provider', ['google', ...SOCIAL_PROVIDERS]);
+    if (error) {
+        settingsError.value = 'Unable to refresh integration status right now. Last known settings remain visible when available.';
+        return;
     }
-};
-const handlePreferenceUpdate = (prefs) => {
+    const rows = data ?? [];
+    const googleIntegration = rows.find((item) => item.provider === 'google') ?? null;
+    integration.value = googleIntegration;
+    telegramIntegration.value = rows.find((item) => item.provider === 'telegram') ?? null;
+    whatsappIntegration.value = rows.find((item) => item.provider === 'whatsapp') ?? null;
+    currentPreferences.value = Array.isArray(googleIntegration?.label_preferences)
+        ? googleIntegration.label_preferences.filter((value) => typeof value === 'string')
+        : [];
+}
+function handlePreferenceUpdate(prefs) {
     currentPreferences.value = prefs;
     hasChanges.value = true;
-};
-const savePreferences = async () => {
+}
+async function savePreferences() {
     if (!integration.value)
         return;
     if (currentPreferences.value.length === 0) {
@@ -54,7 +81,7 @@ const savePreferences = async () => {
         hasChanges.value = false;
     }
     saving.value = false;
-};
+}
 onMounted(fetchIntegration);
 debugger; /* PartiallyEnd: #3632/scriptSetup.vue */
 const __VLS_ctx = {};
@@ -110,6 +137,123 @@ __VLS_asFunctionalElement(__VLS_intrinsicElements.h2, __VLS_intrinsicElements.h2
 // @ts-ignore
 const __VLS_7 = __VLS_asFunctionalComponent(WorkspaceIntegration, new WorkspaceIntegration({}));
 const __VLS_8 = __VLS_7({}, ...__VLS_functionalComponentArgsRest(__VLS_7));
+__VLS_asFunctionalElement(__VLS_intrinsicElements.section, __VLS_intrinsicElements.section)({
+    ...{ class: "bg-white p-8 rounded-executive border border-slate-200 shadow-sm" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+    ...{ class: "flex items-center gap-3 mb-4" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.i)({
+    ...{ class: "pi pi-comments text-xl text-executive-primary" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.h2, __VLS_intrinsicElements.h2)({
+    ...{ class: "text-xl font-bold text-executive-primary font-sans" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.p, __VLS_intrinsicElements.p)({
+    ...{ class: "text-sm text-slate-500 leading-relaxed" },
+});
+if (__VLS_ctx.settingsError) {
+    const __VLS_10 = {}.Message;
+    /** @type {[typeof __VLS_components.Message, typeof __VLS_components.Message, ]} */ ;
+    // @ts-ignore
+    const __VLS_11 = __VLS_asFunctionalComponent(__VLS_10, new __VLS_10({
+        severity: "error",
+        ...{ class: "mt-4" },
+        closable: (false),
+    }));
+    const __VLS_12 = __VLS_11({
+        severity: "error",
+        ...{ class: "mt-4" },
+        closable: (false),
+    }, ...__VLS_functionalComponentArgsRest(__VLS_11));
+    __VLS_13.slots.default;
+    (__VLS_ctx.settingsError);
+    var __VLS_13;
+}
+__VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+    ...{ class: "mt-6 grid gap-4 lg:grid-cols-2" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.article, __VLS_intrinsicElements.article)({
+    ...{ class: "rounded-2xl border border-slate-200 bg-slate-50 p-5" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+    ...{ class: "flex items-start justify-between gap-3" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.h3, __VLS_intrinsicElements.h3)({
+    ...{ class: "text-lg font-semibold text-executive-primary" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.p, __VLS_intrinsicElements.p)({
+    ...{ class: "mt-1 text-sm text-slate-500" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({
+    ...{ class: "rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide" },
+    ...{ class: (__VLS_ctx.telegramStatusClass) },
+});
+(__VLS_ctx.telegramStatusLabel);
+__VLS_asFunctionalElement(__VLS_intrinsicElements.ul, __VLS_intrinsicElements.ul)({
+    ...{ class: "mt-4 space-y-2 text-sm text-slate-600" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.li, __VLS_intrinsicElements.li)({});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.li, __VLS_intrinsicElements.li)({});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.li, __VLS_intrinsicElements.li)({});
+if (__VLS_ctx.telegramIntegration?.last_sync_at) {
+    __VLS_asFunctionalElement(__VLS_intrinsicElements.p, __VLS_intrinsicElements.p)({
+        ...{ class: "mt-4 text-xs italic text-slate-400" },
+    });
+    (new Date(__VLS_ctx.telegramIntegration.last_sync_at).toLocaleString());
+}
+__VLS_asFunctionalElement(__VLS_intrinsicElements.article, __VLS_intrinsicElements.article)({
+    ...{ class: "rounded-2xl border border-slate-200 bg-slate-50 p-5" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+    ...{ class: "flex items-start justify-between gap-3" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.h3, __VLS_intrinsicElements.h3)({
+    ...{ class: "text-lg font-semibold text-executive-primary" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.p, __VLS_intrinsicElements.p)({
+    ...{ class: "mt-1 text-sm text-slate-500" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({
+    ...{ class: "rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide" },
+    ...{ class: (__VLS_ctx.whatsappStatusClass) },
+});
+(__VLS_ctx.whatsappStatusLabel);
+__VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+    ...{ class: "mt-4 grid gap-3 md:grid-cols-2" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+    ...{ class: "rounded-xl border border-slate-200 bg-white p-4" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.h4, __VLS_intrinsicElements.h4)({
+    ...{ class: "text-sm font-semibold text-slate-800" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.ul, __VLS_intrinsicElements.ul)({
+    ...{ class: "mt-2 space-y-2 text-sm text-slate-600" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.li, __VLS_intrinsicElements.li)({});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.li, __VLS_intrinsicElements.li)({});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.li, __VLS_intrinsicElements.li)({});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+    ...{ class: "rounded-xl border border-slate-200 bg-white p-4" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.h4, __VLS_intrinsicElements.h4)({
+    ...{ class: "text-sm font-semibold text-slate-800" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.ul, __VLS_intrinsicElements.ul)({
+    ...{ class: "mt-2 space-y-2 text-sm text-slate-600" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.li, __VLS_intrinsicElements.li)({});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.li, __VLS_intrinsicElements.li)({});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.li, __VLS_intrinsicElements.li)({});
+if (__VLS_ctx.whatsappIntegration?.last_sync_at) {
+    __VLS_asFunctionalElement(__VLS_intrinsicElements.p, __VLS_intrinsicElements.p)({
+        ...{ class: "mt-4 text-xs italic text-slate-400" },
+    });
+    (new Date(__VLS_ctx.whatsappIntegration.last_sync_at).toLocaleString());
+}
 if (__VLS_ctx.integration) {
     __VLS_asFunctionalElement(__VLS_intrinsicElements.section, __VLS_intrinsicElements.section)({
         ...{ class: "bg-white p-8 rounded-executive border border-slate-200 shadow-sm" },
@@ -127,10 +271,10 @@ if (__VLS_ctx.integration) {
         ...{ class: "text-xl font-bold text-executive-primary font-sans" },
     });
     if (__VLS_ctx.hasChanges) {
-        const __VLS_10 = {}.Button;
+        const __VLS_14 = {}.Button;
         /** @type {[typeof __VLS_components.Button, ]} */ ;
         // @ts-ignore
-        const __VLS_11 = __VLS_asFunctionalComponent(__VLS_10, new __VLS_10({
+        const __VLS_15 = __VLS_asFunctionalComponent(__VLS_14, new __VLS_14({
             ...{ 'onClick': {} },
             label: "Save Changes",
             icon: "pi pi-check",
@@ -138,41 +282,41 @@ if (__VLS_ctx.integration) {
             severity: "success",
             size: "small",
         }));
-        const __VLS_12 = __VLS_11({
+        const __VLS_16 = __VLS_15({
             ...{ 'onClick': {} },
             label: "Save Changes",
             icon: "pi pi-check",
             loading: (__VLS_ctx.saving),
             severity: "success",
             size: "small",
-        }, ...__VLS_functionalComponentArgsRest(__VLS_11));
-        let __VLS_14;
-        let __VLS_15;
-        let __VLS_16;
-        const __VLS_17 = {
+        }, ...__VLS_functionalComponentArgsRest(__VLS_15));
+        let __VLS_18;
+        let __VLS_19;
+        let __VLS_20;
+        const __VLS_21 = {
             onClick: (__VLS_ctx.savePreferences)
         };
-        var __VLS_13;
+        var __VLS_17;
     }
     /** @type {[typeof GmailLabelSelector, ]} */ ;
     // @ts-ignore
-    const __VLS_18 = __VLS_asFunctionalComponent(GmailLabelSelector, new GmailLabelSelector({
+    const __VLS_22 = __VLS_asFunctionalComponent(GmailLabelSelector, new GmailLabelSelector({
         ...{ 'onUpdate:preferences': {} },
         organizationId: (__VLS_ctx.integration.organization_id),
-        initialPreferences: (__VLS_ctx.integration.label_preferences || []),
+        initialPreferences: (__VLS_ctx.currentPreferences),
     }));
-    const __VLS_19 = __VLS_18({
+    const __VLS_23 = __VLS_22({
         ...{ 'onUpdate:preferences': {} },
         organizationId: (__VLS_ctx.integration.organization_id),
-        initialPreferences: (__VLS_ctx.integration.label_preferences || []),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_18));
-    let __VLS_21;
-    let __VLS_22;
-    let __VLS_23;
-    const __VLS_24 = {
+        initialPreferences: (__VLS_ctx.currentPreferences),
+    }, ...__VLS_functionalComponentArgsRest(__VLS_22));
+    let __VLS_25;
+    let __VLS_26;
+    let __VLS_27;
+    const __VLS_28 = {
         'onUpdate:preferences': (__VLS_ctx.handlePreferenceUpdate)
     };
-    var __VLS_20;
+    var __VLS_24;
 }
 /** @type {__VLS_StyleScopedClasses['space-y-8']} */ ;
 /** @type {__VLS_StyleScopedClasses['p-6']} */ ;
@@ -234,6 +378,116 @@ if (__VLS_ctx.integration) {
 /** @type {__VLS_StyleScopedClasses['shadow-sm']} */ ;
 /** @type {__VLS_StyleScopedClasses['flex']} */ ;
 /** @type {__VLS_StyleScopedClasses['items-center']} */ ;
+/** @type {__VLS_StyleScopedClasses['gap-3']} */ ;
+/** @type {__VLS_StyleScopedClasses['mb-4']} */ ;
+/** @type {__VLS_StyleScopedClasses['pi']} */ ;
+/** @type {__VLS_StyleScopedClasses['pi-comments']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-xl']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-executive-primary']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-xl']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-bold']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-executive-primary']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-sans']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-slate-500']} */ ;
+/** @type {__VLS_StyleScopedClasses['leading-relaxed']} */ ;
+/** @type {__VLS_StyleScopedClasses['mt-4']} */ ;
+/** @type {__VLS_StyleScopedClasses['mt-6']} */ ;
+/** @type {__VLS_StyleScopedClasses['grid']} */ ;
+/** @type {__VLS_StyleScopedClasses['gap-4']} */ ;
+/** @type {__VLS_StyleScopedClasses['lg:grid-cols-2']} */ ;
+/** @type {__VLS_StyleScopedClasses['rounded-2xl']} */ ;
+/** @type {__VLS_StyleScopedClasses['border']} */ ;
+/** @type {__VLS_StyleScopedClasses['border-slate-200']} */ ;
+/** @type {__VLS_StyleScopedClasses['bg-slate-50']} */ ;
+/** @type {__VLS_StyleScopedClasses['p-5']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex']} */ ;
+/** @type {__VLS_StyleScopedClasses['items-start']} */ ;
+/** @type {__VLS_StyleScopedClasses['justify-between']} */ ;
+/** @type {__VLS_StyleScopedClasses['gap-3']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-lg']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-semibold']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-executive-primary']} */ ;
+/** @type {__VLS_StyleScopedClasses['mt-1']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-slate-500']} */ ;
+/** @type {__VLS_StyleScopedClasses['rounded-full']} */ ;
+/** @type {__VLS_StyleScopedClasses['px-3']} */ ;
+/** @type {__VLS_StyleScopedClasses['py-1']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-semibold']} */ ;
+/** @type {__VLS_StyleScopedClasses['uppercase']} */ ;
+/** @type {__VLS_StyleScopedClasses['tracking-wide']} */ ;
+/** @type {__VLS_StyleScopedClasses['mt-4']} */ ;
+/** @type {__VLS_StyleScopedClasses['space-y-2']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-slate-600']} */ ;
+/** @type {__VLS_StyleScopedClasses['mt-4']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
+/** @type {__VLS_StyleScopedClasses['italic']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-slate-400']} */ ;
+/** @type {__VLS_StyleScopedClasses['rounded-2xl']} */ ;
+/** @type {__VLS_StyleScopedClasses['border']} */ ;
+/** @type {__VLS_StyleScopedClasses['border-slate-200']} */ ;
+/** @type {__VLS_StyleScopedClasses['bg-slate-50']} */ ;
+/** @type {__VLS_StyleScopedClasses['p-5']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex']} */ ;
+/** @type {__VLS_StyleScopedClasses['items-start']} */ ;
+/** @type {__VLS_StyleScopedClasses['justify-between']} */ ;
+/** @type {__VLS_StyleScopedClasses['gap-3']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-lg']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-semibold']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-executive-primary']} */ ;
+/** @type {__VLS_StyleScopedClasses['mt-1']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-slate-500']} */ ;
+/** @type {__VLS_StyleScopedClasses['rounded-full']} */ ;
+/** @type {__VLS_StyleScopedClasses['px-3']} */ ;
+/** @type {__VLS_StyleScopedClasses['py-1']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-semibold']} */ ;
+/** @type {__VLS_StyleScopedClasses['uppercase']} */ ;
+/** @type {__VLS_StyleScopedClasses['tracking-wide']} */ ;
+/** @type {__VLS_StyleScopedClasses['mt-4']} */ ;
+/** @type {__VLS_StyleScopedClasses['grid']} */ ;
+/** @type {__VLS_StyleScopedClasses['gap-3']} */ ;
+/** @type {__VLS_StyleScopedClasses['md:grid-cols-2']} */ ;
+/** @type {__VLS_StyleScopedClasses['rounded-xl']} */ ;
+/** @type {__VLS_StyleScopedClasses['border']} */ ;
+/** @type {__VLS_StyleScopedClasses['border-slate-200']} */ ;
+/** @type {__VLS_StyleScopedClasses['bg-white']} */ ;
+/** @type {__VLS_StyleScopedClasses['p-4']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-semibold']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-slate-800']} */ ;
+/** @type {__VLS_StyleScopedClasses['mt-2']} */ ;
+/** @type {__VLS_StyleScopedClasses['space-y-2']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-slate-600']} */ ;
+/** @type {__VLS_StyleScopedClasses['rounded-xl']} */ ;
+/** @type {__VLS_StyleScopedClasses['border']} */ ;
+/** @type {__VLS_StyleScopedClasses['border-slate-200']} */ ;
+/** @type {__VLS_StyleScopedClasses['bg-white']} */ ;
+/** @type {__VLS_StyleScopedClasses['p-4']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-semibold']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-slate-800']} */ ;
+/** @type {__VLS_StyleScopedClasses['mt-2']} */ ;
+/** @type {__VLS_StyleScopedClasses['space-y-2']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-slate-600']} */ ;
+/** @type {__VLS_StyleScopedClasses['mt-4']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
+/** @type {__VLS_StyleScopedClasses['italic']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-slate-400']} */ ;
+/** @type {__VLS_StyleScopedClasses['bg-white']} */ ;
+/** @type {__VLS_StyleScopedClasses['p-8']} */ ;
+/** @type {__VLS_StyleScopedClasses['rounded-executive']} */ ;
+/** @type {__VLS_StyleScopedClasses['border']} */ ;
+/** @type {__VLS_StyleScopedClasses['border-slate-200']} */ ;
+/** @type {__VLS_StyleScopedClasses['shadow-sm']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex']} */ ;
+/** @type {__VLS_StyleScopedClasses['items-center']} */ ;
 /** @type {__VLS_StyleScopedClasses['justify-between']} */ ;
 /** @type {__VLS_StyleScopedClasses['mb-6']} */ ;
 /** @type {__VLS_StyleScopedClasses['flex']} */ ;
@@ -252,13 +506,22 @@ const __VLS_self = (await import('vue')).defineComponent({
     setup() {
         return {
             Button: Button,
+            Message: Message,
             Toast: Toast,
             WorkspaceIntegration: WorkspaceIntegration,
             SecurityPerimeterSettings: SecurityPerimeterSettings,
             GmailLabelSelector: GmailLabelSelector,
             integration: integration,
+            telegramIntegration: telegramIntegration,
+            whatsappIntegration: whatsappIntegration,
+            settingsError: settingsError,
+            currentPreferences: currentPreferences,
             hasChanges: hasChanges,
             saving: saving,
+            telegramStatusLabel: telegramStatusLabel,
+            telegramStatusClass: telegramStatusClass,
+            whatsappStatusLabel: whatsappStatusLabel,
+            whatsappStatusClass: whatsappStatusClass,
             handlePreferenceUpdate: handlePreferenceUpdate,
             savePreferences: savePreferences,
         };

@@ -70,6 +70,29 @@ function conversationStorageKey(organizationId: string, userId: string): string 
   return `${CONVERSATION_STORAGE_KEY_BASE}:${organizationId}:${userId}`;
 }
 
+async function createConversationId(organizationId: string, userId: string): Promise<string | null> {
+  const inserted = await supabase
+    .from('command_conversations')
+    .insert({
+      organization_id: organizationId,
+      created_by: userId,
+      channel: 'web',
+      title: 'Command Center',
+      metadata: { source: 'dashboard-command-center' },
+    })
+    .select('id')
+    .single();
+
+  if (!inserted.data?.id) return null;
+
+  activeConversationId.value = inserted.data.id;
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(conversationStorageKey(organizationId, userId), inserted.data.id);
+  }
+
+  return inserted.data.id;
+}
+
 function persistTimeline(): void {
   if (typeof window === 'undefined') return;
 
@@ -441,25 +464,7 @@ async function ensureConversationId(): Promise<string | null> {
     return existing.data.id;
   }
 
-  const inserted = await supabase
-    .from('command_conversations')
-    .insert({
-      organization_id: organizationId,
-      created_by: userId,
-      channel: 'web',
-      title: 'Command Center',
-      metadata: { source: 'dashboard-command-center' },
-    })
-    .select('id')
-    .single();
-
-  if (!inserted.data?.id) return null;
-
-  activeConversationId.value = inserted.data.id;
-  if (typeof window !== 'undefined') {
-    window.localStorage.setItem(conversationStorageKey(organizationId, userId), inserted.data.id);
-  }
-  return inserted.data.id;
+  return createConversationId(organizationId, userId);
 }
 
 async function persistMessages(rows: CommandMessageInsert[]): Promise<Map<string, string>> {
@@ -572,9 +577,30 @@ export function useCommandCenter() {
     }
   }
 
+  async function startNewDiscussion(): Promise<void> {
+    const organizationId = userStore.profile?.organization_id;
+    const userId = userStore.profile?.id;
+
+    stopRealtimeSync();
+    activeConversationId.value = null;
+    messageIdByEntryId.clear();
+    timeline.value = defaultTimeline();
+    persistTimeline();
+
+    if (typeof window !== 'undefined' && organizationId && userId) {
+      window.localStorage.removeItem(conversationStorageKey(organizationId, userId));
+    }
+
+    if (organizationId && userId) {
+      await createConversationId(organizationId, userId);
+    }
+
+    startRealtimeSync();
+  }
+
   async function submitCommand(
     message: string,
-    options: SubmitCommandOptions = {}
+    _options: SubmitCommandOptions = {}
   ): Promise<SubmitCommandResult> {
     const command = message.trim();
     if (!command) {
@@ -586,13 +612,6 @@ export function useCommandCenter() {
     }
 
     const highRisk = isHighRiskCommand(command);
-    if (highRisk && !options.force) {
-      return {
-        requiresConfirmation: true,
-        queued: false,
-        highRisk,
-      };
-    }
 
     const organizationId = userStore.profile?.organization_id ?? null;
     const userId = userStore.profile?.id ?? null;
@@ -663,9 +682,10 @@ export function useCommandCenter() {
       {
         command,
         command_text: command,
+        channel: 'web',
         source: 'dashboard-command-center',
+        user_initiated: true,
         high_risk: highRisk,
-        confirmed: options.force === true,
         conversation_id: conversationId,
         correlation_id: correlationId,
         source_message_id: sourceMessageId,
@@ -727,6 +747,7 @@ export function useCommandCenter() {
     timeline,
     isSubmitting,
     startRealtimeSync,
+    startNewDiscussion,
     stopRealtimeSync,
     submitCommand,
   };
