@@ -381,6 +381,24 @@ export class MemoryService {
     }
   }
 
+  async readMemoryIfExists<T extends MemoryArtifactType>(
+    organizationId: string,
+    userId: string,
+    artifactType: T,
+  ): Promise<MemoryArtifactValueMap[T] | null> {
+    const artifactPath = this.resolveArtifactPath(organizationId, userId, artifactType);
+
+    try {
+      return await this.readArtifactFile(artifactPath, artifactType);
+    } catch (error) {
+      if (!isMissingFileError(error)) {
+        throw error;
+      }
+
+      return null;
+    }
+  }
+
   async writeMemory<T extends MemoryArtifactType>(
     organizationId: string,
     userId: string,

@@ -55,7 +55,7 @@ development_status:
   2-8-confidence-evaluation-escalation-logic: done
   2-9-multi-channel-messaging-adapter-routing-delivery-state: done
   2-10-layered-memory-manager-md-system: done
-  2-11-eod-memory-aggregator-rotation: in-progress
+  2-11-eod-memory-aggregator-rotation: done
   epic-2-retrospective: optional
 
   epic-3: in-progress
@@ -94,5 +94,5 @@ development_status:
 
   epic-7: in-progress
   7-1-messaging-channel-webhooks-alignment: ready-for-dev
-  7-2-json-schedule-cron-service: backlog
+  7-2-json-schedule-cron-service: ready-for-dev
   epic-7-retrospective: optional

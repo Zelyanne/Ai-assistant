@@ -9,6 +9,7 @@ import { googleAuthService } from './services/googleAuth.js';
 import { briefingScheduler } from './services/BriefingScheduler.js';
 import { relancingScheduler } from './services/RelancingScheduler.js';
 import { statusReportScheduler } from './services/StatusReportScheduler.js';
+import { eodScheduler } from './services/EODScheduler.js';
 import { initOTel, shutdownOTel } from './services/llm/otel-setup.js';
 import { telegramWebhookRouter } from './routes/webhooks/telegram.js';
 import { whatsAppWebhookRouter } from './routes/webhooks/whatsapp.js';
@@ -194,6 +195,9 @@ relancingScheduler.start();
 // --- Status Report Scheduler ---
 statusReportScheduler.start();
 
+// --- EOD Memory Rotation Scheduler ---
+eodScheduler.start();
+
 // --- Graceful Shutdown ---
 const shutdown = async (signal: string) => {
   console.log(`\n[Shutdown] Received ${signal}. Cleaning up...`);
@@ -202,6 +206,7 @@ const shutdown = async (signal: string) => {
   briefingScheduler.stop();
   relancingScheduler.stop();
   statusReportScheduler.stop();
+  eodScheduler.stop();
   
   if (config.ENABLE_LANGFUSE_TRACING) {
     await shutdownOTel();

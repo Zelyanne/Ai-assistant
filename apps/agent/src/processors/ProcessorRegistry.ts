@@ -13,6 +13,7 @@ import { StatusReportProcessor } from "./StatusReportProcessor.js";
 import { AssistantCommandProcessor } from "./AssistantCommandProcessor.js";
 import { ProtocolUpdateProcessor } from "./ProtocolUpdateProcessor.js";
 import { ProtocolOptimizationProcessor } from "./ProtocolOptimizationProcessor.js";
+import { EODMemoryProcessor } from "./EODMemoryProcessor.js";
 
 export class ProcessorRegistry {
   private static processors: Map<string, BaseProcessor> = new Map();
@@ -35,6 +36,7 @@ export class ProcessorRegistry {
       "system.optimize_protocol",
       new ProtocolOptimizationProcessor(),
     );
+    this.processors.set("eod.memory.rotate", new EODMemoryProcessor());
   }
 
   static getProcessor(domainAction: string): BaseProcessor | undefined {

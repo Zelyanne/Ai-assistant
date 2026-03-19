@@ -41,6 +41,7 @@ const PROXY_EXECUTION_ACTIONS = new Set<string>([
   "relancing.nudge",
   "relancing.update",
   "status.report",
+  "eod.memory.rotate",
   "assistant.command",
   "system.optimize_protocol",
   "protocol.update",
@@ -1825,7 +1826,7 @@ function routeAfterWorkspaceContext(state: AgentState) {
 
   // Dynamic routing based on registry
   if (ProcessorRegistry.getProcessor(domainAction)) {
-    return domainAction.replace(".", "_");
+    return domainAction.replaceAll(".", "_");
   }
 
   return "unsupported_domain";
@@ -1958,6 +1959,10 @@ const workflow = new StateGraph(AgentStateAnnotation)
     withTaskStateTracking("status_report", processStatusReport),
   )
   .addNode(
+    "eod_memory_rotate",
+    withTaskStateTracking("eod_memory_rotate", executeProcessor),
+  )
+  .addNode(
     "relancing_update",
     withTaskStateTracking("relancing_update", processRelancingUpdate),
   )
@@ -2009,6 +2014,7 @@ const workflow = new StateGraph(AgentStateAnnotation)
   .addEdge("channel_send", "finalize")
   .addEdge("relancing_nudge", "finalize")
   .addEdge("status_report", "finalize")
+  .addEdge("eod_memory_rotate", "finalize")
   .addEdge("relancing_update", "finalize")
   .addEdge("system_optimize_protocol", "finalize")
   .addEdge("thread_action", "finalize")

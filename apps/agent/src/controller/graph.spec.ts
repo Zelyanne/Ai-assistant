@@ -66,6 +66,10 @@ vi.mock('../services/mcp.js', () => ({
 }));
 
 vi.mock('../services/MemoryService.js', () => ({
+  MemoryService: class MockMemoryService {
+    readMemoryIfExists = vi.fn();
+    writeMemory = vi.fn();
+  },
   memoryService: {
     loadStartupMemoryContext: mockLoadStartupMemoryContext,
     loadShortTermMemory: mockLoadShortTermMemory,

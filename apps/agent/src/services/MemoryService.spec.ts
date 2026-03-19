@@ -174,6 +174,20 @@ describe("MemoryService", () => {
     );
   });
 
+  it("returns null for missing artifacts without creating defaults", async () => {
+    const service = new MemoryService();
+
+    const shortTerm = await service.readMemoryIfExists(
+      "org-123",
+      "user-456",
+      "short_term",
+    );
+
+    expect(shortTerm).toBeNull();
+    expect(writeFile).not.toHaveBeenCalled();
+    expect(rename).not.toHaveBeenCalled();
+  });
+
   it("writes markdown memories atomically and reads them back", async () => {
     const service = new MemoryService();
 

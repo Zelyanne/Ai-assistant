@@ -34,6 +34,7 @@ Required groups:
 - Google OAuth client values
 - 32-character `ENCRYPTION_SECRET`
 - Optional tracing controls (Langfuse, legacy LangSmith)
+- Scheduler controls such as `EOD_TRIGGER_TIME_UTC` (UTC `HH:MM`, default `23:00`) and optional per-org overrides via `EOD_TRIGGER_TIME_BY_ORG_JSON`
 
 ## Observability
 
