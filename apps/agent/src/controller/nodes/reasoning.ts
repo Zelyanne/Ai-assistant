@@ -109,6 +109,35 @@ export async function reasoningNode(state: AgentState): Promise<Partial<AgentSta
     ? `SPECIFIC LEADERSHIP PROTOCOL RULES:\n${state.active_protocol_rules}\n\nTASK:\n${basePrompt}`
     : basePrompt;
 
+  const taskStateMemory =
+    typeof state.memory_task_state === 'object'
+    && state.memory_task_state !== null
+    && !Array.isArray(state.memory_task_state)
+      ? state.memory_task_state
+      : null;
+
+  const memorySections = [
+    state.persona_memory
+      ? `PERSONA MEMORY:\n${state.persona_memory}`
+      : null,
+    state.weekly_memory
+      ? `WEEKLY MEMORY:\n${state.weekly_memory}`
+      : null,
+    state.short_term_memory
+      ? `SHORT-TERM MEMORY:\n${state.short_term_memory}`
+      : null,
+    state.long_term_memory
+      ? `LONG-TERM MEMORY:\n${state.long_term_memory}`
+      : null,
+    taskStateMemory && Object.keys(taskStateMemory).length > 0
+      ? `TASK STATE MEMORY:\n${JSON.stringify(taskStateMemory, null, 2)}`
+      : null,
+  ].filter((section): section is string => Boolean(section));
+
+  if (memorySections.length > 0) {
+    prompt = `${memorySections.join('\n\n')}\n\n${prompt}`;
+  }
+
   // Incorporate workspace context if available (AC 6.3)
   if (state.workspace_context_items && state.workspace_context_items.length > 0) {
     const contextLines = state.workspace_context_items.map(

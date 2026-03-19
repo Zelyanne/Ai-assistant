@@ -1,9 +1,9 @@
-# generated: 2026-01-17
+# generated: 2026-03-18
 # project: Ai assistant
 # project_key: ai-assistant
 # tracking_system: file-system
 # story_location: _bmad-output
-# last_updated: 2026-03-09 (Created Story 6.3 file; set to ready-for-dev)
+# last_updated: 2026-03-18 (Refreshed status tracking via sprint-planning workflow)
 
 # STATUS DEFINITIONS:
 # ==================
@@ -28,12 +28,8 @@
 # - Mark epic as 'in-progress' when starting work on its first story
 # - SM typically creates next story ONLY after previous one is 'done' to incorporate learnings
 # - Dev moves story to 'review', then Dev runs code-review (fresh context, ideally different LLM)
-#
-# IMPORTANT: Epic 2 (Agent Controller) is now a CRITICAL DEPENDENCY for Epics 3-6.
-# - Epic 3-6 (UI/Frontend) should NOT start until Epic 2 is complete.
-# - Epic 2 provides the backend execution layer that all UI components depend on.
 
-generated: 2026-02-01
+generated: 2026-03-18
 project: Ai assistant
 project_key: ai-assistant
 tracking_system: file-system
@@ -48,7 +44,7 @@ development_status:
   1-5-perimeterguard-pii-redaction-service: done
   epic-1-retrospective: done
 
-  epic-2: in-progress # NEW: Agent Controller Foundation & Task Orchestration (CRITICAL DEPENDENCY)
+  epic-2: in-progress
   2-1-agent-controller-initialization-langgraph-foundation: done
   2-2-task-processor-with-domain-action-routing: done
   2-3-mcp-sdk-integration-with-google-workspace-server: done
@@ -58,21 +54,20 @@ development_status:
   2-7-protocol-execution-engine: done
   2-8-confidence-evaluation-escalation-logic: done
   2-9-multi-channel-messaging-adapter-routing-delivery-state: done
+  2-10-layered-memory-manager-md-system: done
+  2-11-eod-memory-aggregator-rotation: in-progress
   epic-2-retrospective: optional
 
-  epic-3: in-progress # RENAMED: Personalized Triage & The "Brain" Setup (was Epic 2)
-  3-0-ui-design-system-app-shell: done # NEW: UI Foundation (Added via Correct-Course)
+  epic-3: in-progress
+  3-0-ui-design-system-app-shell: done
   3-1-natural-language-protocol-generation: done
   3-2-semantic-email-triage-keyword-classification: done
   3-3-outcome-centric-morning-brief-ui: done
   3-4-smart-thread-summarization-with-action-items: done
   3-5-reasoning-trace-source-citation-engine: done
-  fix-dashboard-template-error: done
-  fix-routing-and-mcp-timeout: done
-  supabase-google-auth-onboarding-fix: done # FIXED: Google Auth flow, RLS policies, onboarding retry logic
   epic-3-retrospective: optional
 
-  epic-4: in-progress # RENAMED: Autonomous Proxy & Actionable Trust (was Epic 3)
+  epic-4: in-progress
   4-1-agency-tier-configuration-perimeter-management: done
   4-2-autonomous-proxy-execution: done
   4-3-controlled-topic-drafting-approval-flow: done
@@ -80,15 +75,15 @@ development_status:
   4-5-confidence-based-escalation-logic: done
   epic-4-retrospective: optional
 
-  epic-5: in-progress # RENAMED: Adaptive Relancing & Team Alignment (was Epic 4)
+  epic-5: in-progress
   5-1-adaptive-relancing-scheduler: done
   5-2-bidirectional-nudge-interface: done
   5-3-blocker-detection-automatic-protocol-adjustment: done
   5-4-automated-status-aggregation-reporting: done
   epic-5-retrospective: optional
 
-  epic-6: in-progress # RENAMED: Operational Mastery & Transparency (was Epic 5)
-  6-1-natural-language-command-center: done # Scope updated to conversational execution chat
+  epic-6: in-progress
+  6-1-natural-language-command-center: done
   6-2-calendar-conflict-resolution-logic: done
   6-3-cross-channel-context-gathering-docs-sheets: done
   6-4-comprehensive-reasoning-trace-audit-logs: done
@@ -97,13 +92,7 @@ development_status:
   6-7-whatsapp-bidirectional-proxy-execution: review
   epic-6-retrospective: optional
 
-# EPIC DEPENDENCIES:
-# ==================
-# Epic 1: No dependencies
-# Epic 2: Depends on Epic 1 (database schema, Supabase setup)
-# Epic 3: Depends on Epic 2 (protocol execution, LLM reasoning backend)
-# Epic 4: Depends on Epic 2 (autonomous execution, confidence evaluation backend)
-# Epic 5: Depends on Epic 2 (task processing, MCP integration backend)
-# Epic 6: Depends on Epic 2 (MCP integration, audit logging backend)
-#
-# RECOMMENDED SEQUENCE: Epic 1 → Epic 2 → Epic 3-6 (can proceed in parallel after Epic 2)
+  epic-7: in-progress
+  7-1-messaging-channel-webhooks-alignment: ready-for-dev
+  7-2-json-schedule-cron-service: backlog
+  epic-7-retrospective: optional

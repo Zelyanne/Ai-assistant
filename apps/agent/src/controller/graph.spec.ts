@@ -40,10 +40,20 @@ vi.mock('../services/ProtocolService.js', () => ({
   },
 }));
 
-const { mockCheckCapabilityReadiness, mockResolveToolName, mockExecuteWorkerTool } = vi.hoisted(() => ({
+const {
+  mockCheckCapabilityReadiness,
+  mockResolveToolName,
+  mockExecuteWorkerTool,
+  mockLoadStartupMemoryContext,
+  mockLoadShortTermMemory,
+  mockUpdateTaskState,
+} = vi.hoisted(() => ({
   mockCheckCapabilityReadiness: vi.fn(),
   mockResolveToolName: vi.fn(),
   mockExecuteWorkerTool: vi.fn(),
+  mockLoadStartupMemoryContext: vi.fn(),
+  mockLoadShortTermMemory: vi.fn(),
+  mockUpdateTaskState: vi.fn(),
 }));
 
 vi.mock('../services/mcp.js', () => ({
@@ -52,6 +62,14 @@ vi.mock('../services/mcp.js', () => ({
     resolveToolName: mockResolveToolName,
     executeWorkerTool: mockExecuteWorkerTool,
     getLangChainTools: vi.fn().mockResolvedValue([]),
+  },
+}));
+
+vi.mock('../services/MemoryService.js', () => ({
+  memoryService: {
+    loadStartupMemoryContext: mockLoadStartupMemoryContext,
+    loadShortTermMemory: mockLoadShortTermMemory,
+    updateTaskState: mockUpdateTaskState,
   },
 }));
 
@@ -232,6 +250,27 @@ describe('Agent Controller Graph planner-worker flow', () => {
         result: { content: [{ type: 'text', text: 'Done' }] },
       };
     });
+
+    mockLoadStartupMemoryContext.mockResolvedValue({
+      files: {
+        persona: '/memory/org/user/persona.md',
+        short_term: '/memory/org/user/short-term.md',
+        weekly_memory: '/memory/org/user/weekly-memory.md',
+        long_term: '/memory/org/user/long-term.md',
+        task_state: '/memory/org/user/task-state.json',
+      },
+      persona: '# Persona\n\n- Tone: Crisp\n',
+      weekly_memory: '# Weekly Memory\n\n- Weekly focus\n',
+      long_term: '# Long-Term Memory\n\n- Long-term preference\n',
+      task_state: { current_node: 'load_memory', status: 'processing' },
+    });
+    mockLoadShortTermMemory.mockResolvedValue(
+      '# Short-Term Memory\n\n- Current draft\n',
+    );
+    mockUpdateTaskState.mockImplementation(async (_orgId, _userId, taskId, state) => ({
+      task_id: taskId,
+      ...state,
+    }));
   });
 
   it('creates and completes a persisted Drive -> Docs -> Gmail execution run', async () => {
@@ -300,6 +339,82 @@ describe('Agent Controller Graph planner-worker flow', () => {
       expect.any(Object),
     );
     expect(result.task.result.execution_run.completed_steps).toHaveLength(3);
+  });
+
+  it('loads user-scoped memory into graph state before workspace execution', async () => {
+    const task = {
+      ...baseTask,
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'Draft an update email',
+        target_domain_action: 'email.draft',
+        target_payload: {
+          plan_steps: [
+            {
+              key: 'gmail-step',
+              title: 'Draft email',
+              worker_type: 'gmail',
+              action: 'draft_email',
+              requested_tools: ['draft_gmail_message'],
+              input: {
+                recipient: 'alexis@example.com',
+                subject: 'Weekly update',
+              },
+            },
+          ],
+        },
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(mockLoadStartupMemoryContext).toHaveBeenCalledWith(
+      task.organization_id,
+      task.user_id,
+    );
+    expect(mockLoadShortTermMemory).toHaveBeenCalledWith(
+      task.organization_id,
+      task.user_id,
+    );
+    expect(
+      mockLoadStartupMemoryContext.mock.invocationCallOrder[0],
+    ).toBeLessThan(mockLoadShortTermMemory.mock.invocationCallOrder[0] ?? Infinity);
+    expect(result.persona_memory).toContain('Tone: Crisp');
+    expect(result.weekly_memory).toContain('Weekly focus');
+    expect(result.short_term_memory).toContain('Current draft');
+  });
+
+  it('persists task-state transitions across intermediate graph nodes', async () => {
+    const task = {
+      ...baseTask,
+      domain_action: 'email.draft',
+      payload: {
+        recipient: 'alexis@example.com',
+        subject: 'Status',
+        body: 'Draft body',
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+
+    await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]);
+
+    const visitedNodes = mockUpdateTaskState.mock.calls.map((call) => call[3]?.current_node);
+
+    expect(visitedNodes).toEqual(
+      expect.arrayContaining([
+        'initialize',
+        'load_memory',
+        'load_protocol',
+        'load_short_term_memory',
+        'check_perimeter',
+        'load_workspace_context',
+        'email_draft',
+        'finalize',
+      ]),
+    );
   });
 
   it('records one automatic re-plan and continues when a recoverable worker step fails', async () => {

@@ -20,6 +20,7 @@ import { AgencyService } from "../services/agency.js";
 import { SafetyControlsService } from "../services/SafetyControlsService.js";
 import { reasoningNode } from "./nodes/reasoning.js";
 import { loadProtocol } from "./nodes/protocol.js";
+import { loadMemoryNode, loadShortTermMemoryNode } from "./nodes/memory.js";
 import { loadWorkspaceContext } from "./nodes/workspaceContext.js";
 import { escalateNode } from "./nodes/escalate.js";
 import { calendarConflictNode } from "./nodes/calendarConflict.js";
@@ -28,6 +29,7 @@ import { AuditLogger } from "../services/AuditLogger.js";
 import { tracingService } from "../services/llm/tracing.js";
 import { LLMProviderFactory } from "../services/llm/factory.js";
 import { executionRunService } from "../services/ExecutionRunService.js";
+import { memoryService } from "../services/MemoryService.js";
 import { buildEscalationPayload, CONFIDENCE_THRESHOLD } from "./escalation.js";
 
 const PROXY_EXECUTION_ACTIONS = new Set<string>([
@@ -111,6 +113,21 @@ export const AgentStateAnnotation = Annotation.Root({
     default: () => [],
   }),
   active_protocol_rules: Annotation<string>({
+    reducer: (x, y) => y ?? x,
+  }),
+  persona_memory: Annotation<string>({
+    reducer: (x, y) => y ?? x,
+  }),
+  short_term_memory: Annotation<string>({
+    reducer: (x, y) => y ?? x,
+  }),
+  weekly_memory: Annotation<string>({
+    reducer: (x, y) => y ?? x,
+  }),
+  long_term_memory: Annotation<string>({
+    reducer: (x, y) => y ?? x,
+  }),
+  memory_task_state: Annotation<Json>({
     reducer: (x, y) => y ?? x,
   }),
   workspace_context_items: Annotation<WorkspaceContextItem[]>({
@@ -303,6 +320,19 @@ async function initializeTask(
 
     if (error) throw new Error(error.message);
 
+    if (state.task.user_id) {
+      await memoryService.updateTaskState(
+        state.task.organization_id,
+        state.task.user_id,
+        state.task.id,
+        {
+          status: "processing",
+          current_node: "initialize",
+          domain_action: state.task.domain_action,
+        },
+      );
+    }
+
     return {
       task: { ...state.task, status: "processing" },
       trace: [step],
@@ -317,6 +347,58 @@ async function initializeTask(
       trace: [AuditLogger.createStep("Initialize", "Initialization failed")],
     };
   }
+}
+
+async function persistTaskStateProgress(
+  state: AgentState,
+  nodeName: string,
+): Promise<void> {
+  if (!state.task.id || !state.task.user_id) {
+    return;
+  }
+
+  await memoryService.updateTaskState(
+    state.task.organization_id,
+    state.task.user_id,
+    state.task.id,
+    {
+      status: state.task.status,
+      current_node: nodeName,
+      domain_action: state.task.domain_action,
+    },
+  );
+}
+
+function withTaskStateTracking(
+  nodeName: string,
+  handler: (
+    state: AgentState,
+    config?: RunnableConfig,
+  ) => Promise<Partial<AgentState>>,
+): (state: AgentState, config?: RunnableConfig) => Promise<Partial<AgentState>> {
+  return async (
+    state: AgentState,
+    config?: RunnableConfig,
+  ): Promise<Partial<AgentState>> => {
+    if (!state.error) {
+      try {
+        await persistTaskStateProgress(state, nodeName);
+      } catch (err: unknown) {
+        const safeMessage = redactErrorMessage(err);
+        return {
+          error: `Task-state tracking failed: ${safeMessage}`,
+          trace: [
+            AuditLogger.createStep(
+              "Task State",
+              `Failed to persist ${nodeName}: ${safeMessage}`,
+            ),
+          ],
+        };
+      }
+    }
+
+    return handler(state, config);
+  };
 }
 
 /**
@@ -1639,6 +1721,23 @@ async function finalizeTask(
 
     // 3. Flush Tracing
     await tracingService.flush();
+
+    if (state.task.user_id) {
+      await memoryService.updateTaskState(
+        state.task.organization_id,
+        state.task.user_id,
+        state.task.id,
+        {
+          status,
+          current_node: "finalize",
+          domain_action: state.task.domain_action,
+          result_summary:
+            status === "done"
+              ? "Task completed"
+              : state.error ?? `Task ${status}`,
+        },
+      );
+    }
   } catch (err: unknown) {
     const safeMessage = redactErrorMessage(err);
     console.error(
@@ -1663,6 +1762,11 @@ async function handleUnsupportedDomain(
  */
 function routeAfterInit(state: AgentState) {
   if (state.error) return "finalize";
+  return "load_memory";
+}
+
+function routeAfterMemoryLoad(state: AgentState) {
+  if (state.error) return "finalize";
   return "load_protocol";
 }
 
@@ -1676,6 +1780,11 @@ function routeAfterBrake(state: AgentState) {
  * Routing logic after protocol loading
  */
 function routeAfterProtocol(state: AgentState) {
+  if (state.error) return "finalize";
+  return "load_short_term_memory";
+}
+
+function routeAfterShortTermMemory(state: AgentState) {
   if (state.error) return "finalize";
   return "check_perimeter";
 }
@@ -1793,35 +1902,93 @@ function routeAfterCalendarConflict(state: AgentState) {
 const workflow = new StateGraph(AgentStateAnnotation)
   .addNode("emergency_brake", checkEmergencyBrake)
   .addNode("initialize", initializeTask)
-  .addNode("load_protocol", loadProtocol)
-  .addNode("load_workspace_context", loadWorkspaceContext)
-  .addNode("check_perimeter", checkPerimeter)
-  .addNode("calendar_conflict", calendarConflictNode)
-  .addNode("reasoning", reasoningNode)
-  .addNode("escalate", escalateNode)
-  .addNode("email_draft", processEmailDraft)
-  .addNode("email_send", processEmailSend)
-  .addNode("email_triage", processEmailTriage)
-  .addNode("email_summarize", processEmailSummarize)
-  .addNode("calendar_create", processCalendarCreate)
-  .addNode("morning_brief", processMorningBrief)
-  .addNode("protocol_generate", processProtocolGenerate)
-  .addNode("protocol_update", executeProcessor)
-  .addNode("channel_send", processChannelSend)
-  .addNode("relancing_nudge", processRelancingNudge)
-  .addNode("status_report", processStatusReport)
-  .addNode("relancing_update", processRelancingUpdate)
-  .addNode("assistant_command", processAssistantCommand)
-  .addNode("planner", plannerNode)
-  .addNode("workspace_worker", workspaceWorkerNode)
-  .addNode("system_optimize_protocol", executeProcessor)
-  .addNode("thread_action", processThreadAction)
-  .addNode("unsupported_domain", handleUnsupportedDomain)
+  .addNode("load_memory", loadMemoryNode)
+  .addNode("load_protocol", withTaskStateTracking("load_protocol", loadProtocol))
+  .addNode(
+    "load_short_term_memory",
+    withTaskStateTracking("load_short_term_memory", loadShortTermMemoryNode),
+  )
+  .addNode(
+    "load_workspace_context",
+    withTaskStateTracking("load_workspace_context", loadWorkspaceContext),
+  )
+  .addNode(
+    "check_perimeter",
+    withTaskStateTracking("check_perimeter", checkPerimeter),
+  )
+  .addNode(
+    "calendar_conflict",
+    withTaskStateTracking("calendar_conflict", calendarConflictNode),
+  )
+  .addNode("reasoning", withTaskStateTracking("reasoning", reasoningNode))
+  .addNode("escalate", withTaskStateTracking("escalate", escalateNode))
+  .addNode("email_draft", withTaskStateTracking("email_draft", processEmailDraft))
+  .addNode("email_send", withTaskStateTracking("email_send", processEmailSend))
+  .addNode(
+    "email_triage",
+    withTaskStateTracking("email_triage", processEmailTriage),
+  )
+  .addNode(
+    "email_summarize",
+    withTaskStateTracking("email_summarize", processEmailSummarize),
+  )
+  .addNode(
+    "calendar_create",
+    withTaskStateTracking("calendar_create", processCalendarCreate),
+  )
+  .addNode(
+    "morning_brief",
+    withTaskStateTracking("morning_brief", processMorningBrief),
+  )
+  .addNode(
+    "protocol_generate",
+    withTaskStateTracking("protocol_generate", processProtocolGenerate),
+  )
+  .addNode(
+    "protocol_update",
+    withTaskStateTracking("protocol_update", executeProcessor),
+  )
+  .addNode("channel_send", withTaskStateTracking("channel_send", processChannelSend))
+  .addNode(
+    "relancing_nudge",
+    withTaskStateTracking("relancing_nudge", processRelancingNudge),
+  )
+  .addNode(
+    "status_report",
+    withTaskStateTracking("status_report", processStatusReport),
+  )
+  .addNode(
+    "relancing_update",
+    withTaskStateTracking("relancing_update", processRelancingUpdate),
+  )
+  .addNode(
+    "assistant_command",
+    withTaskStateTracking("assistant_command", processAssistantCommand),
+  )
+  .addNode("planner", withTaskStateTracking("planner", plannerNode))
+  .addNode(
+    "workspace_worker",
+    withTaskStateTracking("workspace_worker", workspaceWorkerNode),
+  )
+  .addNode(
+    "system_optimize_protocol",
+    withTaskStateTracking("system_optimize_protocol", executeProcessor),
+  )
+  .addNode(
+    "thread_action",
+    withTaskStateTracking("thread_action", processThreadAction),
+  )
+  .addNode(
+    "unsupported_domain",
+    withTaskStateTracking("unsupported_domain", handleUnsupportedDomain),
+  )
   .addNode("finalize", finalizeTask)
   .addEdge(START, "emergency_brake")
   .addConditionalEdges("emergency_brake", routeAfterBrake)
   .addConditionalEdges("initialize", routeAfterInit)
+  .addConditionalEdges("load_memory", routeAfterMemoryLoad)
   .addConditionalEdges("load_protocol", routeAfterProtocol)
+  .addConditionalEdges("load_short_term_memory", routeAfterShortTermMemory)
   .addConditionalEdges("check_perimeter", routeAfterPerimeter)
   .addConditionalEdges("load_workspace_context", routeAfterWorkspaceContext)
   .addConditionalEdges("calendar_conflict", routeAfterCalendarConflict)

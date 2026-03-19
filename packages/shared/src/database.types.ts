@@ -527,6 +527,7 @@ export type Database = {
           full_name: string | null
           id: string
           last_brief_generated_at: string | null
+          memory_file_paths: Json
           organization_id: string | null
           role: Database["public"]["Enums"]["user_role"] | null
           updated_at: string
@@ -537,6 +538,7 @@ export type Database = {
           full_name?: string | null
           id: string
           last_brief_generated_at?: string | null
+          memory_file_paths?: Json
           organization_id?: string | null
           role?: Database["public"]["Enums"]["user_role"] | null
           updated_at?: string
@@ -547,6 +549,7 @@ export type Database = {
           full_name?: string | null
           id?: string
           last_brief_generated_at?: string | null
+          memory_file_paths?: Json
           organization_id?: string | null
           role?: Database["public"]["Enums"]["user_role"] | null
           updated_at?: string

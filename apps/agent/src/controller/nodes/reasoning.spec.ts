@@ -125,6 +125,32 @@ describe('reasoningNode', () => {
     expect(mockInvoke).toHaveBeenCalled();
   });
 
+  it('prepends layered memory context to the reasoning prompt when available', async () => {
+    mockInvoke.mockResolvedValue({
+      content: 'Memory-aware response',
+      additional_kwargs: {},
+      response_metadata: {},
+    });
+
+    const memoryState: any = {
+      task: mockTask,
+      persona_memory: '# Persona\n\n- Tone: Crisp',
+      weekly_memory: '# Weekly Memory\n\n- Focus: Launch',
+      short_term_memory: '# Short-Term Memory\n\n- Draft in progress',
+      long_term_memory: '# Long-Term Memory\n\n- Prefers concise updates',
+      memory_task_state: { current_node: 'load_memory', status: 'processing' },
+    };
+
+    await reasoningNode(memoryState);
+
+    expect(mockInvoke).toHaveBeenCalledWith(
+      expect.stringContaining('PERSONA MEMORY:\n# Persona\n\n- Tone: Crisp'),
+    );
+    expect(mockInvoke).toHaveBeenCalledWith(
+      expect.stringContaining('TASK STATE MEMORY:\n{\n  "current_node": "load_memory"'),
+    );
+  });
+
   it('should require confidence and ambiguity_detected in structured output', async () => {
     mockInvoke.mockResolvedValue({ 
       summary: 'Test summary', 
