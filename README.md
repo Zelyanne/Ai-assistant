@@ -101,6 +101,21 @@ Set `WHATSAPP_PROVIDER=auto` to prefer Evolution when configured and fall back t
   - Twilio callbacks with invalid `x-twilio-signature` must return HTTP 401.
   - Telegram with invalid `x-telegram-bot-api-secret-token` must return HTTP 401.
 
+## Cron Scheduler Configuration
+
+The agent process includes a polling cron scheduler that evaluates `user_schedules` and enqueues due tasks.
+
+- `CRON_POLL_INTERVAL_MS` - Polling interval in milliseconds (default `60000`)
+- `DEFAULT_TIMEZONE` - Fallback timezone for schedule parsing when user timezone is missing (default `UTC`)
+- `MAX_SCHEDULE_FAILURES` - Consecutive schedule execution failures before auto-disabling the schedule (default `3`)
+
+Operational notes:
+
+- The scheduler starts automatically with the agent service (`apps/agent/src/index.ts`).
+- Due schedules create queued rows in `tasks` with `payload.schedule_id` for traceability.
+- Dispatch idempotency is enforced through `user_schedule_dispatches`.
+- Production monitoring and failure alert runbook: `apps/agent/README.md#schedule-cron-runbook`.
+
 ## Workspace Commands
 
 - `pnpm dev` - Run app dev servers

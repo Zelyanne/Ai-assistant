@@ -8,6 +8,7 @@ import Toast from 'primevue/toast';
 import WorkspaceIntegration from '../components/WorkspaceIntegration.vue';
 import SecurityPerimeterSettings from '../components/SecurityPerimeterSettings.vue';
 import GmailLabelSelector from '../components/GmailLabelSelector.vue';
+import ScheduleManager from '../components/schedules/ScheduleManager.vue';
 const SOCIAL_PROVIDERS = ['telegram', 'whatsapp'];
 const userStore = useUserStore();
 const toast = useToast();
@@ -254,6 +255,22 @@ if (__VLS_ctx.whatsappIntegration?.last_sync_at) {
     });
     (new Date(__VLS_ctx.whatsappIntegration.last_sync_at).toLocaleString());
 }
+__VLS_asFunctionalElement(__VLS_intrinsicElements.section, __VLS_intrinsicElements.section)({
+    ...{ class: "bg-white p-8 rounded-executive border border-slate-200 shadow-sm" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+    ...{ class: "flex items-center gap-3 mb-6" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.i)({
+    ...{ class: "pi pi-clock text-xl text-executive-primary" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.h2, __VLS_intrinsicElements.h2)({
+    ...{ class: "text-xl font-bold text-executive-primary font-sans" },
+});
+/** @type {[typeof ScheduleManager, ]} */ ;
+// @ts-ignore
+const __VLS_14 = __VLS_asFunctionalComponent(ScheduleManager, new ScheduleManager({}));
+const __VLS_15 = __VLS_14({}, ...__VLS_functionalComponentArgsRest(__VLS_14));
 if (__VLS_ctx.integration) {
     __VLS_asFunctionalElement(__VLS_intrinsicElements.section, __VLS_intrinsicElements.section)({
         ...{ class: "bg-white p-8 rounded-executive border border-slate-200 shadow-sm" },
@@ -271,10 +288,10 @@ if (__VLS_ctx.integration) {
         ...{ class: "text-xl font-bold text-executive-primary font-sans" },
     });
     if (__VLS_ctx.hasChanges) {
-        const __VLS_14 = {}.Button;
+        const __VLS_17 = {}.Button;
         /** @type {[typeof __VLS_components.Button, ]} */ ;
         // @ts-ignore
-        const __VLS_15 = __VLS_asFunctionalComponent(__VLS_14, new __VLS_14({
+        const __VLS_18 = __VLS_asFunctionalComponent(__VLS_17, new __VLS_17({
             ...{ 'onClick': {} },
             label: "Save Changes",
             icon: "pi pi-check",
@@ -282,41 +299,41 @@ if (__VLS_ctx.integration) {
             severity: "success",
             size: "small",
         }));
-        const __VLS_16 = __VLS_15({
+        const __VLS_19 = __VLS_18({
             ...{ 'onClick': {} },
             label: "Save Changes",
             icon: "pi pi-check",
             loading: (__VLS_ctx.saving),
             severity: "success",
             size: "small",
-        }, ...__VLS_functionalComponentArgsRest(__VLS_15));
-        let __VLS_18;
-        let __VLS_19;
-        let __VLS_20;
-        const __VLS_21 = {
+        }, ...__VLS_functionalComponentArgsRest(__VLS_18));
+        let __VLS_21;
+        let __VLS_22;
+        let __VLS_23;
+        const __VLS_24 = {
             onClick: (__VLS_ctx.savePreferences)
         };
-        var __VLS_17;
+        var __VLS_20;
     }
     /** @type {[typeof GmailLabelSelector, ]} */ ;
     // @ts-ignore
-    const __VLS_22 = __VLS_asFunctionalComponent(GmailLabelSelector, new GmailLabelSelector({
+    const __VLS_25 = __VLS_asFunctionalComponent(GmailLabelSelector, new GmailLabelSelector({
         ...{ 'onUpdate:preferences': {} },
         organizationId: (__VLS_ctx.integration.organization_id),
         initialPreferences: (__VLS_ctx.currentPreferences),
     }));
-    const __VLS_23 = __VLS_22({
+    const __VLS_26 = __VLS_25({
         ...{ 'onUpdate:preferences': {} },
         organizationId: (__VLS_ctx.integration.organization_id),
         initialPreferences: (__VLS_ctx.currentPreferences),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_22));
-    let __VLS_25;
-    let __VLS_26;
-    let __VLS_27;
-    const __VLS_28 = {
+    }, ...__VLS_functionalComponentArgsRest(__VLS_25));
+    let __VLS_28;
+    let __VLS_29;
+    let __VLS_30;
+    const __VLS_31 = {
         'onUpdate:preferences': (__VLS_ctx.handlePreferenceUpdate)
     };
-    var __VLS_24;
+    var __VLS_27;
 }
 /** @type {__VLS_StyleScopedClasses['space-y-8']} */ ;
 /** @type {__VLS_StyleScopedClasses['p-6']} */ ;
@@ -488,6 +505,24 @@ if (__VLS_ctx.integration) {
 /** @type {__VLS_StyleScopedClasses['shadow-sm']} */ ;
 /** @type {__VLS_StyleScopedClasses['flex']} */ ;
 /** @type {__VLS_StyleScopedClasses['items-center']} */ ;
+/** @type {__VLS_StyleScopedClasses['gap-3']} */ ;
+/** @type {__VLS_StyleScopedClasses['mb-6']} */ ;
+/** @type {__VLS_StyleScopedClasses['pi']} */ ;
+/** @type {__VLS_StyleScopedClasses['pi-clock']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-xl']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-executive-primary']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-xl']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-bold']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-executive-primary']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-sans']} */ ;
+/** @type {__VLS_StyleScopedClasses['bg-white']} */ ;
+/** @type {__VLS_StyleScopedClasses['p-8']} */ ;
+/** @type {__VLS_StyleScopedClasses['rounded-executive']} */ ;
+/** @type {__VLS_StyleScopedClasses['border']} */ ;
+/** @type {__VLS_StyleScopedClasses['border-slate-200']} */ ;
+/** @type {__VLS_StyleScopedClasses['shadow-sm']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex']} */ ;
+/** @type {__VLS_StyleScopedClasses['items-center']} */ ;
 /** @type {__VLS_StyleScopedClasses['justify-between']} */ ;
 /** @type {__VLS_StyleScopedClasses['mb-6']} */ ;
 /** @type {__VLS_StyleScopedClasses['flex']} */ ;
@@ -511,6 +546,7 @@ const __VLS_self = (await import('vue')).defineComponent({
             WorkspaceIntegration: WorkspaceIntegration,
             SecurityPerimeterSettings: SecurityPerimeterSettings,
             GmailLabelSelector: GmailLabelSelector,
+            ScheduleManager: ScheduleManager,
             integration: integration,
             telegramIntegration: telegramIntegration,
             whatsappIntegration: whatsappIntegration,

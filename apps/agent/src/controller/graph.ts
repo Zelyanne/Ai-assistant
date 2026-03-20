@@ -30,6 +30,10 @@ import { tracingService } from "../services/llm/tracing.js";
 import { LLMProviderFactory } from "../services/llm/factory.js";
 import { executionRunService } from "../services/ExecutionRunService.js";
 import { memoryService } from "../services/MemoryService.js";
+import {
+  getScheduledTaskContext,
+  syncScheduledTaskCompletion,
+} from "../services/ScheduledTaskLifecycle.js";
 import { buildEscalationPayload, CONFIDENCE_THRESHOLD } from "./escalation.js";
 
 const PROXY_EXECUTION_ACTIONS = new Set<string>([
@@ -1641,6 +1645,23 @@ async function finalizeTask(
   try {
     if (!state.task.id) throw new Error("Task ID is missing");
 
+    const scheduledTaskContext = getScheduledTaskContext(state.task);
+    const scheduledTaskError =
+      status === "done"
+        ? null
+        : (() => {
+            const resultRecord = asRecord(state.result ?? state.task.result);
+            if (typeof resultRecord.summary === "string") {
+              return resultRecord.summary;
+            }
+
+            if (typeof resultRecord.reason === "string") {
+              return resultRecord.reason;
+            }
+
+            return state.error ?? `Scheduled task ended with status ${status}`;
+          })();
+
     // When channel delivery callbacks and task finalization happen concurrently,
     // avoid clobbering existing JSONB result fields by merging with the latest DB state.
     let dbResult: unknown = undefined;
@@ -1698,6 +1719,15 @@ async function finalizeTask(
     // 2. Flush Audit Log
     const channelContext = extractChannelContext(state.task.payload);
     const channelCitations = [...(state.citations || [])];
+    if (scheduledTaskContext) {
+      channelCitations.push(
+        AuditLogger.createCitation(
+          "schedule",
+          scheduledTaskContext.scheduleId,
+          `Scheduled task source ${scheduledTaskContext.scheduleId}`,
+        ),
+      );
+    }
     if (channelContext.channel && channelContext.externalMessageId) {
       channelCitations.push(
         AuditLogger.createCitation(
@@ -1706,6 +1736,10 @@ async function finalizeTask(
           `Channel context (${channelContext.channel}) linked to task`,
         ),
       );
+    }
+
+    if (scheduledTaskContext) {
+      await syncScheduledTaskCompletion(state.task, status, scheduledTaskError);
     }
 
     await AuditLogger.flush(
@@ -1970,6 +2004,10 @@ const workflow = new StateGraph(AgentStateAnnotation)
     "assistant_command",
     withTaskStateTracking("assistant_command", processAssistantCommand),
   )
+  .addNode(
+    "schedule_manage",
+    withTaskStateTracking("schedule_manage", executeProcessor),
+  )
   .addNode("planner", withTaskStateTracking("planner", plannerNode))
   .addNode(
     "workspace_worker",
@@ -2016,6 +2054,7 @@ const workflow = new StateGraph(AgentStateAnnotation)
   .addEdge("status_report", "finalize")
   .addEdge("eod_memory_rotate", "finalize")
   .addEdge("relancing_update", "finalize")
+  .addEdge("schedule_manage", "finalize")
   .addEdge("system_optimize_protocol", "finalize")
   .addEdge("thread_action", "finalize")
   .addEdge("unsupported_domain", "finalize")

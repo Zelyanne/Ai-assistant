@@ -14,6 +14,7 @@ import { AssistantCommandProcessor } from "./AssistantCommandProcessor.js";
 import { ProtocolUpdateProcessor } from "./ProtocolUpdateProcessor.js";
 import { ProtocolOptimizationProcessor } from "./ProtocolOptimizationProcessor.js";
 import { EODMemoryProcessor } from "./EODMemoryProcessor.js";
+import { ScheduleManageProcessor } from "./ScheduleManageProcessor.js";
 
 export class ProcessorRegistry {
   private static processors: Map<string, BaseProcessor> = new Map();
@@ -32,6 +33,7 @@ export class ProcessorRegistry {
     this.processors.set("status.report", new StatusReportProcessor());
     this.processors.set("channel.send", new ChannelSendProcessor());
     this.processors.set("assistant.command", new AssistantCommandProcessor());
+    this.processors.set("schedule.manage", new ScheduleManageProcessor());
     this.processors.set(
       "system.optimize_protocol",
       new ProtocolOptimizationProcessor(),

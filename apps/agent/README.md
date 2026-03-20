@@ -41,3 +41,52 @@ Required groups:
 - Primary tracing path is Langfuse (`ENABLE_LANGFUSE_TRACING=true`).
 - Legacy LangSmith flags remain for rollback compatibility.
 - Task execution metadata includes task/org/action context for filtering.
+
+## Schedule Cron Runbook
+
+The user schedule cron loop starts with the agent process and polls on `CRON_POLL_INTERVAL_MS`.
+
+### Production checks
+
+- Confirm boot logs include `[CronSchedulerService] Starting cron scheduler monitor...`.
+- Confirm env values are present in deployment: `CRON_POLL_INTERVAL_MS`, `DEFAULT_TIMEZONE`, `MAX_SCHEDULE_FAILURES`.
+- Validate queueing by checking fresh `tasks` rows with `payload.schedule_id` for due schedules.
+
+### Poll interval monitoring
+
+- Baseline query for active due schedules (run periodically in Supabase SQL editor):
+
+```sql
+select count(*) as due_active_schedules
+from public.user_schedules
+where is_active = true
+  and next_run <= now();
+```
+
+- If this value keeps growing across multiple polling windows, the scheduler is lagging.
+
+### Failure alerting via `agent_activity_log`
+
+- Alert trigger query (last 15 minutes):
+
+```sql
+select created_at, organization_id, action_taken, reasoning_trace
+from public.agent_activity_log
+where action_taken in (
+  'schedule_execution_failed',
+  'schedule_execution_disabled_after_failures'
+)
+  and created_at >= now() - interval '15 minutes'
+order by created_at desc;
+```
+
+- Recommended alert policy:
+  - Warning: `schedule_execution_failed` >= 5 in 15 minutes (per organization).
+  - Critical: any `schedule_execution_disabled_after_failures` event.
+
+### Incident steps
+
+1. Check latest `agent_activity_log` schedule failure rows and extract `schedule.id` from reasoning trace.
+2. Inspect corresponding `user_schedules` row (`failure_count`, `last_error`, `is_active`, `next_run`).
+3. Fix downstream cause (tool availability, task payload, credentials), then reactivate schedule if disabled.
+4. Verify recovery by confirming new queued task + next successful audit dispatch event.

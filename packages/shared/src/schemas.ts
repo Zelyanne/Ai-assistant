@@ -63,6 +63,37 @@ export const TaskSchema = z.object({
 
 export type Task = z.infer<typeof TaskSchema>;
 
+export const UserScheduleSchema = z.object({
+  id: z.string().uuid().optional(),
+  organization_id: z.string().uuid(),
+  user_id: z.string().uuid(),
+  task_type: z.string().regex(/^[a-z]+\.[a-z_]+$/),
+  task_payload: z.record(z.unknown()).default({}),
+  cron_expression: z.string().trim().min(1),
+  timezone: z.string().trim().min(1).default('UTC'),
+  is_active: z.boolean().default(true),
+  last_run: z.string().datetime().nullable().optional(),
+  next_run: z.string().datetime(),
+  failure_count: z.number().int().nonnegative().default(0),
+  last_error: z.string().nullable().optional(),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
+});
+
+export type UserSchedule = z.infer<typeof UserScheduleSchema>;
+
+export const UserScheduleDispatchSchema = z.object({
+  id: z.string().uuid().optional(),
+  organization_id: z.string().uuid(),
+  schedule_id: z.string().uuid(),
+  dispatch_window_start: z.string().datetime(),
+  dispatch_window_end: z.string().datetime(),
+  task_id: z.string().uuid().nullable().optional(),
+  created_at: z.string().optional(),
+});
+
+export type UserScheduleDispatch = z.infer<typeof UserScheduleDispatchSchema>;
+
 export const ChannelSchema = z.enum(["web", "telegram", "whatsapp"]);
 export type Channel = z.infer<typeof ChannelSchema>;
 

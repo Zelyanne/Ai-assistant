@@ -26,11 +26,13 @@ type SupportedDelegationAction =
   | 'email.send'
   | 'calendar.create'
   | 'channel.send'
+  | 'schedule.manage'
   | 'system.analyze';
 
 type AssistantCommandPayload = {
   command?: unknown;
   command_text?: unknown;
+  external_message_id?: unknown;
   high_risk?: unknown;
   confirmed?: unknown;
   source?: unknown;
@@ -69,6 +71,7 @@ const SUPPORTED_ACTIONS: ReadonlySet<string> = new Set([
   'email.send',
   'calendar.create',
   'channel.send',
+  'schedule.manage',
   'system.analyze',
 ]);
 
@@ -439,7 +442,7 @@ function inferWorkspacePlan(
   const wantsEmail = /\b(email|mail)\b/.test(commandLower);
   const wantsDraft = /\b(draft|compose|write|r[ée]dige|[ée]cris)\b/.test(commandLower);
   const wantsSend = /\b(send|envoie|envoyer)\b/.test(commandLower) && wantsEmail;
-  const wantsCalendar = /\b(calendar|schedule|meeting|invite)\b/.test(commandLower);
+  const wantsCalendar = /\b(calendar|meeting|invite|appointment)\b/.test(commandLower);
   const wantsDoc = /\b(doc|document|google doc)\b/.test(commandLower);
   const wantsSheet = /\b(sheet|spreadsheet)\b/.test(commandLower);
   const wantsSlide = /\b(slide|deck|presentation)\b/.test(commandLower);
@@ -598,6 +601,32 @@ export class AssistantCommandProcessor extends BaseProcessor {
       throw new Error('CONFIRMATION_REQUIRED: High-risk delegated action requires explicit confirmation.');
     }
 
+    if (explicitAction === 'schedule.manage') {
+      this.addTraceStep('command_intent_parse', 'Mapped command to schedule.manage', 0.9);
+      return {
+        delegated_domain_action: 'schedule.manage',
+        delegated_payload: {
+          command_text: commandText,
+          message_text: commandText,
+          timezone: asString(payload.channel_metadata && asRecord(payload.channel_metadata).timezone),
+          channel: asString(payload.channel),
+          external_message_id: asString(payload.external_message_id),
+          thread_id: asString(payload.thread_id),
+          channel_metadata: asRecord(payload.channel_metadata),
+          source: asString(payload.source),
+          user_initiated: payload.user_initiated === true,
+          confirmed: payload.confirmed === true,
+          conversation_id: asString(payload.conversation_id),
+          source_message_id: asString(payload.source_message_id),
+          correlation_id: asString(payload.correlation_id),
+          conversation_context: payload.conversation_context,
+        },
+        summary: 'Mapped command to schedule.manage',
+        trace: this.getTrace(),
+        citations,
+      };
+    }
+
     if (explicitAction && explicitAction !== 'thread.action' && explicitAction !== 'channel.send' && explicitAction !== 'system.analyze') {
       const plannerIntent = buildExplicitPlan(
         task,
@@ -641,6 +670,32 @@ export class AssistantCommandProcessor extends BaseProcessor {
           context_references: contextReferences.length > 0 ? contextReferences : undefined,
         },
         summary: 'Mapped command to thread.action',
+        trace: this.getTrace(),
+        citations,
+      };
+    }
+
+    if (/\b(schedule|schedules|cron|recurr|every\s+(?:\d+\s+)?(?:minutes?|hours?|days?|weeks?|months?|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|daily|weekly|monthly|pause\s+schedule|resume\s+schedule|delete\s+schedule|list\s+(my\s+)?schedules?)\b/.test(commandLower)) {
+      this.addTraceStep('command_intent_parse', 'Mapped command to schedule.manage', 0.82);
+      return {
+        delegated_domain_action: 'schedule.manage',
+        delegated_payload: {
+          command_text: commandText,
+          message_text: commandText,
+          timezone: asString(payload.channel_metadata && asRecord(payload.channel_metadata).timezone),
+          channel: asString(payload.channel),
+          external_message_id: asString(payload.external_message_id),
+          thread_id: asString(payload.thread_id),
+          channel_metadata: asRecord(payload.channel_metadata),
+          source: asString(payload.source),
+          user_initiated: payload.user_initiated === true,
+          confirmed: payload.confirmed === true,
+          conversation_id: asString(payload.conversation_id),
+          source_message_id: asString(payload.source_message_id),
+          correlation_id: asString(payload.correlation_id),
+          conversation_context: payload.conversation_context,
+        },
+        summary: 'Mapped command to schedule.manage',
         trace: this.getTrace(),
         citations,
       };

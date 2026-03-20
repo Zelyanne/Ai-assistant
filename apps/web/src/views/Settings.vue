@@ -9,6 +9,7 @@ import Toast from 'primevue/toast';
 import WorkspaceIntegration from '../components/WorkspaceIntegration.vue';
 import SecurityPerimeterSettings from '../components/SecurityPerimeterSettings.vue';
 import GmailLabelSelector from '../components/GmailLabelSelector.vue';
+import ScheduleManager from '../components/schedules/ScheduleManager.vue';
 
 interface WorkspaceIntegrationRow {
   id: string;
@@ -245,6 +246,16 @@ onMounted(fetchIntegration);
             </p>
           </article>
         </div>
+      </section>
+
+      <section class="bg-white p-8 rounded-executive border border-slate-200 shadow-sm">
+        <div class="flex items-center gap-3 mb-6">
+          <i class="pi pi-clock text-xl text-executive-primary" />
+          <h2 class="text-xl font-bold text-executive-primary font-sans">
+            Scheduled Tasks
+          </h2>
+        </div>
+        <ScheduleManager />
       </section>
 
       <section

@@ -219,4 +219,48 @@ describe('AssistantCommandProcessor', () => {
       correlation_id: 'corr-123',
     });
   });
+
+  it('maps schedule commands to schedule.manage delegation', async () => {
+    const processor = new AssistantCommandProcessor();
+
+    const result = await processor.process({
+      ...baseTask,
+      payload: {
+        command: 'Remind me every Monday at 9am to check my emails',
+        source: 'telegram-webhook',
+        channel: 'telegram',
+        external_message_id: 'telegram-msg-1',
+        thread_id: 'telegram-chat-1',
+        channel_metadata: {
+          timezone: 'Europe/Paris',
+        },
+        user_initiated: true,
+      },
+    });
+
+    expect(result.delegated_domain_action).toBe('schedule.manage');
+    expect(result.delegated_payload).toMatchObject({
+      command_text: 'Remind me every Monday at 9am to check my emails',
+      message_text: 'Remind me every Monday at 9am to check my emails',
+      channel: 'telegram',
+      external_message_id: 'telegram-msg-1',
+      thread_id: 'telegram-chat-1',
+      timezone: 'Europe/Paris',
+      user_initiated: true,
+    });
+  });
+
+  it('supports explicit schedule.manage target action', async () => {
+    const processor = new AssistantCommandProcessor();
+
+    const result = await processor.process({
+      ...baseTask,
+      payload: {
+        command: 'pause schedule 11111111-1111-4111-8111-111111111111',
+        target_domain_action: 'schedule.manage',
+      },
+    });
+
+    expect(result.delegated_domain_action).toBe('schedule.manage');
+  });
 });

@@ -68,6 +68,9 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.string().default('3001'),
   CONFIDENCE_THRESHOLD: z.coerce.number().default(0.8),
+  CRON_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(60000),
+  DEFAULT_TIMEZONE: z.string().trim().min(1).default('UTC'),
+  MAX_SCHEDULE_FAILURES: z.coerce.number().int().positive().default(3),
   EOD_TRIGGER_TIME_UTC: z
     .string()
     .regex(UTC_TIME_LABEL_PATTERN)
