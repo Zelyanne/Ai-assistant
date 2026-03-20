@@ -93,6 +93,6 @@ development_status:
   epic-6-retrospective: optional
 
   epic-7: in-progress
-  7-1-messaging-channel-webhooks-alignment: ready-for-dev
+  7-1-messaging-channel-webhooks-alignment: in-progress
   7-2-json-schedule-cron-service: ready-for-dev
   epic-7-retrospective: optional

@@ -23,11 +23,30 @@ function ensureRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function readEventName(body: Record<string, unknown>): string | undefined {
+  return typeof body.event === 'string' ? body.event : undefined;
+}
+
+function isFromMePayload(body: Record<string, unknown>): boolean {
+  const data = ensureRecord(body.data);
+  const key = ensureRecord(data.key);
+  return key.fromMe === true || data.fromMe === true;
+}
+
 function isDeliveryPayload(body: Record<string, unknown>): boolean {
-  return typeof body.MessageStatus === 'string'
+  const event = readEventName(body);
+  return event === 'send.message'
+    || event === 'send.message.update'
+    || event === 'messages.update'
+    || typeof body.MessageStatus === 'string'
     || typeof body.SmsStatus === 'string'
     || typeof body.ErrorCode === 'string'
-    || typeof body.ErrorMessage === 'string';
+    || typeof body.ErrorMessage === 'string'
+    || Boolean((body as any).entry?.[0]?.changes?.[0]?.value?.statuses);
+}
+
+function shouldIgnorePayload(body: Record<string, unknown>): boolean {
+  return readEventName(body) === 'messages.upsert' && isFromMePayload(body);
 }
 
 export async function handleWhatsAppWebhook(req: Request, res: Response, deps: WhatsAppWebhookDeps): Promise<void> {
@@ -92,6 +111,25 @@ export async function handleWhatsAppWebhook(req: Request, res: Response, deps: W
       return;
     }
 
+    if (shouldIgnorePayload(body)) {
+      res.status(202).json({
+        accepted: true,
+        persisted: false,
+        reason: 'self_message_ignored',
+      });
+      return;
+    }
+
+    const eventName = readEventName(body);
+    if (eventName && eventName !== 'messages.upsert') {
+      res.status(202).json({
+        accepted: false,
+        persisted: false,
+        reason: `unsupported_event:${eventName}`,
+      });
+      return;
+    }
+
     const result = await deps.routerService.enqueueInbound('whatsapp', {
       ...body,
       organization_id: organizationId,
@@ -119,13 +157,20 @@ export function createWhatsAppWebhookRouter(deps: WhatsAppWebhookDeps = { regist
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
 
-    const adapter = deps.registry.get('whatsapp') as any; // Cast to access private/internal fields if needed
-    // In a real app, we'd check against WHATSAPP_WEBHOOK_SECRET
-    if (mode === 'subscribe' && token === process.env.WHATSAPP_WEBHOOK_SECRET) {
-      res.status(200).send(challenge);
-    } else {
-      res.sendStatus(403);
+    if (mode === 'subscribe') {
+      if (token === process.env.WHATSAPP_WEBHOOK_SECRET) {
+        res.status(200).send(challenge);
+      } else {
+        res.sendStatus(403);
+      }
+      return;
     }
+
+    res.status(200).json({
+      ok: true,
+      providers: ['evolution', 'meta', 'twilio'],
+      path: buildRequestPath(req),
+    });
   });
 
   router.post('/', async (req, res) => {

@@ -83,10 +83,18 @@ const envSchema = z.object({
   ENCRYPTION_SECRET: z.string().length(32),
   TELEGRAM_BOT_TOKEN: z.string().min(1).optional().transform((val) => val?.trim()),
   TELEGRAM_WEBHOOK_SECRET: z.string().min(1).optional().transform((val) => val?.trim()),
-  // WhatsApp/Twilio
+  // WhatsApp provider selection
+  WHATSAPP_PROVIDER: z.enum(['auto', 'evolution', 'meta', 'twilio']).default('auto'),
+  // WhatsApp / Evolution API
+  EVOLUTION_API_BASE_URL: z.string().url().optional().transform((val) => val?.trim()),
+  EVOLUTION_API_KEY: z.string().min(1).optional().transform((val) => val?.trim()),
+  EVOLUTION_INSTANCE_NAME: z.string().min(1).optional().transform((val) => val?.trim()),
+  EVOLUTION_WEBHOOK_SECRET: z.string().min(1).optional().transform((val) => val?.trim()),
+  // WhatsApp / Meta Cloud API
   WHATSAPP_API_KEY: z.string().min(1).optional().transform((val) => val?.trim()),
   WHATSAPP_PHONE_NUMBER_ID: z.string().min(1).optional().transform((val) => val?.trim()),
   WHATSAPP_WEBHOOK_SECRET: z.string().min(1).optional().transform((val) => val?.trim()),
+  // WhatsApp / Twilio
   TWILIO_ACCOUNT_SID: z.string().min(1).optional().transform((val) => val?.trim()),
   TWILIO_AUTH_TOKEN: z.string().min(1).optional().transform((val) => val?.trim()),
   TWILIO_WHATSAPP_PHONE_NUMBER: z.string().min(1).optional().transform((val) => val?.trim()),

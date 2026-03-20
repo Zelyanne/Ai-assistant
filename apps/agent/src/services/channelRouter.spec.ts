@@ -275,4 +275,37 @@ describe('ChannelRouterService', () => {
     expect(response.persisted).toBe(false);
     expect(chain.update).not.toHaveBeenCalled();
   });
+
+  it('resolves channel.send task by provider_message_id when delivery event omits task_id', async () => {
+    const { mockSupabase, chain, state } = createSupabaseMock();
+    const registry = new ChannelAdapterRegistry([createAdapterStub()]);
+    vi.spyOn(AuditLogger, 'flush').mockResolvedValue(undefined);
+
+    state.maybeSingleResponse = {
+      data: {
+        id: '55555555-5555-4555-8555-555555555555',
+      },
+      error: null,
+    };
+    state.selectResponse = {
+      data: {
+        result: {},
+      },
+      error: null,
+    };
+
+    const service = new ChannelRouterService({
+      registry,
+      supabaseClient: mockSupabase as unknown as typeof import('./supabase.js').supabase,
+    });
+
+    const response = await service.handleDeliveryEvent('telegram', {
+      delivery_state: 'sent',
+    });
+
+    expect(response.accepted).toBe(true);
+    expect(response.persisted).toBe(true);
+    expect(response.event?.task_id).toBe('55555555-5555-4555-8555-555555555555');
+    expect(chain.update).toHaveBeenCalled();
+  });
 });

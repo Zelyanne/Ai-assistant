@@ -28,6 +28,15 @@ function readCorrelationId(payload: unknown): string | undefined {
   return typeof payload.correlation_id === 'string' ? payload.correlation_id : undefined;
 }
 
+function readStringField(payload: unknown, key: string): string | undefined {
+  if (!isRecord(payload)) {
+    return undefined;
+  }
+
+  const value = payload[key];
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
 function toJson(value: unknown): Json {
   if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
     return value;
@@ -232,6 +241,45 @@ export class ChannelRouterService {
     }
 
     return Array.isArray(data) && data.length > 0 ? 'relancing.update' : normalized.domain_action;
+  }
+
+  private async findChannelSendTaskIdByField(field: string, value: string, organizationId: string): Promise<string | undefined> {
+    const { data, error } = await this.supabaseClient
+      .from('tasks')
+      .select('id')
+      .eq('organization_id', organizationId)
+      .eq('domain_action', 'channel.send')
+      .eq(field, value)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    return readStringField(data, 'id');
+  }
+
+  private async resolveDeliveryTaskId(event: DeliveryEventEnvelope): Promise<string | undefined> {
+    if (event.task_id) {
+      return event.task_id;
+    }
+
+    if (event.provider_message_id) {
+      const resolvedByProviderId = await this.findChannelSendTaskIdByField(
+        'result->channel_delivery->>provider_message_id',
+        event.provider_message_id,
+        event.organization_id,
+      );
+      if (resolvedByProviderId) {
+        return resolvedByProviderId;
+      }
+    }
+
+    return await this.findChannelSendTaskIdByField(
+      'payload->>external_message_id',
+      event.external_message_id,
+      event.organization_id,
+    );
   }
 
   async enqueueInbound(channel: Channel, payload: unknown): Promise<EnqueueInboundResult> {
@@ -444,7 +492,8 @@ export class ChannelRouterService {
     }
 
     const event = DeliveryEventEnvelopeSchema.parse(mapped);
-    if (!event.task_id) {
+    const taskId = await this.resolveDeliveryTaskId(event);
+    if (!taskId) {
       return {
         accepted: true,
         persisted: false,
@@ -453,12 +502,17 @@ export class ChannelRouterService {
       };
     }
 
-    await this.persistDeliveryEvent(event);
+    const resolvedEvent: DeliveryEventEnvelope = {
+      ...event,
+      task_id: taskId,
+    };
+
+    await this.persistDeliveryEvent(resolvedEvent);
 
     return {
       accepted: true,
       persisted: true,
-      event,
+      event: resolvedEvent,
     };
   }
 

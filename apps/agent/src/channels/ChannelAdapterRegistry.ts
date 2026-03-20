@@ -38,7 +38,12 @@ export class ChannelAdapterRegistry {
         webhook_secret_token: process.env.TELEGRAM_WEBHOOK_SECRET,
       }),
       new WhatsAppAdapter({
+        whatsapp_provider: process.env.WHATSAPP_PROVIDER,
         webhook_signing_secret: process.env.WHATSAPP_WEBHOOK_SECRET,
+        evolution_webhook_secret: process.env.EVOLUTION_WEBHOOK_SECRET,
+        evolution_api_base_url: process.env.EVOLUTION_API_BASE_URL,
+        evolution_api_key: process.env.EVOLUTION_API_KEY,
+        evolution_instance_name: process.env.EVOLUTION_INSTANCE_NAME,
         whatsapp_api_key: process.env.WHATSAPP_API_KEY,
         whatsapp_phone_number_id: process.env.WHATSAPP_PHONE_NUMBER_ID,
         twilio_account_sid: process.env.TWILIO_ACCOUNT_SID,
