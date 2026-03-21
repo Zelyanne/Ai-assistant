@@ -135,6 +135,36 @@ function isTrustedUserInitiatedCommand(task: Task, payload: AssistantCommandPayl
   return false;
 }
 
+function buildConfirmationRecap(
+  task: Task,
+  payload: AssistantCommandPayload,
+  commandText: string,
+  action?: SupportedDelegationAction | 'channel.send' | 'email.send' | null,
+): string {
+  const trustedChannel = isTrustedUserInitiatedCommand(task, payload);
+  const recapText = commandText.trim().replace(/\s+/g, ' ').slice(0, 220);
+  const recipient = normalizeRecipient(payload);
+  const subject = asString(payload.subject);
+  const messageText = asString(payload.message_text) ?? asString(payload.body);
+
+  if (action === 'email.send' && recipient) {
+    const subjectText = subject ? ` with subject "${subject}"` : '';
+    return `Quick recap: you want me to send an email to ${recipient}${subjectText}. Reply YES to confirm or reply with changes.`;
+  }
+
+  if (action === 'channel.send') {
+    const channel = asString(payload.channel) ?? 'chat';
+    const bodyPreview = messageText ? ` Message: "${messageText.slice(0, 120)}".` : '';
+    return `Quick recap: you want me to send a ${channel} message.${bodyPreview} Reply YES to confirm or reply with changes.`;
+  }
+
+  if (trustedChannel) {
+    return `Quick recap: you asked me to "${recapText}". Reply YES to confirm or reply with changes.`;
+  }
+
+  return 'Confirm this high-risk command before queueing execution.';
+}
+
 function isHighRisk(payload: AssistantCommandPayload): boolean {
   return payload.high_risk === true;
 }
@@ -586,9 +616,9 @@ export class AssistantCommandProcessor extends BaseProcessor {
       throw new Error('COMMAND_INVALID: Missing command text.');
     }
 
-    const confirmed = isConfirmed(payload) || isTrustedUserInitiatedCommand(task, payload);
+    const confirmed = isConfirmed(payload);
     if (isHighRisk(payload) && !confirmed) {
-      throw new Error('CONFIRMATION_REQUIRED: High-risk command requires explicit confirmation.');
+      throw new Error(`CONFIRMATION_REQUIRED: ${buildConfirmationRecap(task, payload, commandText)}`);
     }
 
     const citations = buildCitations(task, payload, commandText);
@@ -598,7 +628,7 @@ export class AssistantCommandProcessor extends BaseProcessor {
 
     const explicitAction = resolveExplicitAction(payload);
     if (explicitAction && requiresConfirmation(explicitAction) && !confirmed) {
-      throw new Error('CONFIRMATION_REQUIRED: High-risk delegated action requires explicit confirmation.');
+      throw new Error(`CONFIRMATION_REQUIRED: ${buildConfirmationRecap(task, payload, commandText, explicitAction)}`);
     }
 
     if (explicitAction === 'schedule.manage') {
@@ -704,7 +734,7 @@ export class AssistantCommandProcessor extends BaseProcessor {
     const inferredPlan = inferWorkspacePlan(task, payload, commandText, contextReferences);
     if (inferredPlan) {
       if (inferredPlan.requested_steps.some((step) => step.action === 'send_email') && !confirmed) {
-        throw new Error('CONFIRMATION_REQUIRED: Email send requires explicit confirmation.');
+        throw new Error(`CONFIRMATION_REQUIRED: ${buildConfirmationRecap(task, payload, commandText, 'email.send')}`);
       }
 
       this.addTraceStep('command_intent_parse', `Planned ${inferredPlan.requested_steps.length} workspace steps`, 0.88);
@@ -718,7 +748,7 @@ export class AssistantCommandProcessor extends BaseProcessor {
 
     if (/\b(message|notify|telegram|whatsapp|channel)\b/.test(commandLower)) {
       if (!confirmed) {
-        throw new Error('CONFIRMATION_REQUIRED: Channel send requires explicit confirmation.');
+        throw new Error(`CONFIRMATION_REQUIRED: ${buildConfirmationRecap(task, payload, commandText, 'channel.send')}`);
       }
 
       const channel = asString(payload.channel) ?? 'web';

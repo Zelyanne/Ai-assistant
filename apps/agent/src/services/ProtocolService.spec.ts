@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ProtocolService } from './ProtocolService.js';
 import { supabase } from './supabase.js';
 import { LLMProviderFactory } from './llm/factory.js';
-import { Task } from '@ai-assistant/shared';
 
 vi.mock('./supabase.js', () => ({
   supabase: {
@@ -83,6 +82,27 @@ describe('ProtocolService', () => {
         expect.anything()
       );
       expect(result).toEqual(mockResponse.data);
+    });
+
+    it('keeps generateStructured happy-path compatibility without resilience options', async () => {
+      const mockResponse = {
+        data: {
+          markdown: '# Leadership Protocol\n...',
+          metadata: {
+            nudging_frequency_hours: 24,
+            tone: 'direct',
+            escalation_threshold: 0.8,
+            preferred_channels: ['email']
+          }
+        }
+      };
+
+      const provider = LLMProviderFactory.getProvider();
+      (provider.generateStructured as any).mockResolvedValue(mockResponse);
+
+      await ProtocolService.generateProtocol('Keep it concise');
+
+      expect((provider.generateStructured as any).mock.calls[0]).toHaveLength(2);
     });
   });
 

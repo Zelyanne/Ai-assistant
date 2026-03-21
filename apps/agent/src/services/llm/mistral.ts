@@ -1,6 +1,15 @@
 import { Mistral } from 'mistralai';
 import { z } from 'zod';
 import { ILLMProvider, LLMOptions, LLMResponse, LLMUsage } from './types.js';
+import {
+  buildStrictJsonRetryPrompt,
+  buildStructuredOutputFailureMetadata,
+  buildStructuredOutputResponseMetadata,
+  createStructuredOutputAttemptState,
+  recordStructuredOutputAttempt,
+  stripMarkdownFences,
+  StructuredOutputError,
+} from './structuredOutput.js';
 
 const ARRAY_TYPE_NAME = 'ZodArray';
 
@@ -74,55 +83,123 @@ export class MistralProvider implements ILLMProvider {
   async generateStructured<T>(
     prompt: string,
     schema: z.ZodSchema<T>,
-    options?: LLMOptions
+    options?: LLMOptions,
   ): Promise<LLMResponse<T>> {
     const startTime = performance.now();
     const model = options?.model || this.defaultModel;
+    const parseAttemptState = createStructuredOutputAttemptState();
+    let accumulatedPromptTokens = 0;
+    let accumulatedCompletionTokens = 0;
+    let accumulatedTotalTokens = 0;
+    const repairMalformedJson = options?.structuredOutput?.repairMalformedJson ?? false;
+    const maxRepairAttempts = repairMalformedJson
+      ? Math.max(0, Math.floor(options?.structuredOutput?.maxRepairAttempts ?? 1))
+      : 0;
 
     try {
-      const requestPayload: {
-        model: string;
-        messages: Array<{ role: 'user'; content: string }>;
-        responseFormat?: { type: 'json_object' };
-        temperature?: number;
-        maxTokens?: number;
-      } = {
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: options?.temperature,
-        maxTokens: options?.maxTokens,
-      };
+      for (let attempt = 0; attempt <= maxRepairAttempts; attempt += 1) {
+        const usedRepairPrompt = attempt > 0;
+        const requestPrompt = usedRepairPrompt
+          ? buildStrictJsonRetryPrompt(prompt)
+          : prompt;
 
-      if (!isTopLevelArraySchema(schema)) {
-        requestPayload.responseFormat = { type: 'json_object' };
+        const requestPayload: {
+          model: string;
+          messages: Array<{ role: 'user'; content: string }>;
+          responseFormat?: { type: 'json_object' };
+          temperature?: number;
+          maxTokens?: number;
+        } = {
+          model,
+          messages: [{ role: 'user', content: requestPrompt }],
+          temperature: options?.temperature,
+          maxTokens: options?.maxTokens,
+        };
+
+        if (!isTopLevelArraySchema(schema)) {
+          requestPayload.responseFormat = { type: 'json_object' };
+        }
+
+        const response = await this.client.chat.complete(requestPayload);
+        accumulatedPromptTokens += response.usage?.promptTokens ?? 0;
+        accumulatedCompletionTokens += response.usage?.completionTokens ?? 0;
+        accumulatedTotalTokens += response.usage?.totalTokens ?? 0;
+        const latencyMs = Math.round(performance.now() - startTime);
+        const content = response.choices?.[0]?.message?.content;
+
+        if (typeof content !== 'string') {
+          const metadata = buildStructuredOutputFailureMetadata(
+            new Error('LLM returned empty or invalid content'),
+            undefined,
+            attempt + 1,
+            attempt >= maxRepairAttempts,
+          );
+
+          recordStructuredOutputAttempt(parseAttemptState, {
+            attemptNumber: attempt + 1,
+            usedRepairPrompt,
+            failureKind: metadata.kind,
+          });
+
+          if (attempt >= maxRepairAttempts) {
+            throw new StructuredOutputError(metadata);
+          }
+
+          continue;
+        }
+
+        const cleanContent = stripMarkdownFences(content);
+
+        try {
+          const parsed = JSON.parse(cleanContent);
+          const validated = schema.parse(parsed);
+
+          recordStructuredOutputAttempt(parseAttemptState, {
+            attemptNumber: attempt + 1,
+            usedRepairPrompt,
+            rawContent: cleanContent,
+          });
+
+          const usage: LLMUsage = {
+            promptTokens: accumulatedPromptTokens,
+            completionTokens: accumulatedCompletionTokens,
+            totalTokens: accumulatedTotalTokens,
+            latencyMs,
+          };
+
+          return {
+            data: validated,
+            usage,
+            model,
+            structuredOutput: buildStructuredOutputResponseMetadata(parseAttemptState),
+          };
+        } catch (error) {
+          if (error instanceof z.ZodError) {
+            console.error('LLM output validation failed:', error.errors);
+            throw new Error(`Structured output validation failed: ${error.message}`);
+          }
+
+          const metadata = buildStructuredOutputFailureMetadata(
+            error,
+            cleanContent,
+            attempt + 1,
+            attempt >= maxRepairAttempts,
+          );
+
+          recordStructuredOutputAttempt(parseAttemptState, {
+            attemptNumber: attempt + 1,
+            usedRepairPrompt,
+            rawContent: cleanContent,
+            failureKind: metadata.kind,
+          });
+
+          if (attempt >= maxRepairAttempts) {
+            throw new StructuredOutputError(metadata);
+          }
+        }
       }
 
-      const response = await this.client.chat.complete(requestPayload);
-
-      const latencyMs = Math.round(performance.now() - startTime);
-      const content = response.choices?.[0]?.message?.content;
-
-      if (typeof content !== 'string') {
-        throw new Error('LLM returned empty or invalid content');
-      }
-
-      // Mistral sometimes wraps JSON in markdown blocks even in JSON mode
-      const cleanContent = content.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
-      const parsed = JSON.parse(cleanContent);
-      const validated = schema.parse(parsed);
-
-      const usage: LLMUsage = {
-        promptTokens: response.usage?.promptTokens ?? 0,
-        completionTokens: response.usage?.completionTokens ?? 0,
-        totalTokens: response.usage?.totalTokens ?? 0,
-        latencyMs,
-      };
-
-      return {
-        data: validated,
-        usage,
-        model,
-      };
+      throw new Error('Structured output recovery exited unexpectedly');
     } catch (error) {
       if (error instanceof z.ZodError) {
         console.error('LLM output validation failed:', error.errors);

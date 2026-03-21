@@ -418,6 +418,25 @@ async function checkPerimeter(state: AgentState): Promise<Partial<AgentState>> {
 
   console.log(`[Graph][${task.id}] Checking perimeter for topic: ${topic}...`);
 
+  if (userInitiatedChannel) {
+    const channelContext = extractChannelContext(task.payload);
+    const channelSummary = channelContext.channel
+      ? `, Channel: ${channelContext.channel}, ExternalMessageId: ${channelContext.externalMessageId ?? "n/a"}`
+      : "";
+
+    const step = AuditLogger.createStep(
+      "Perimeter Check",
+      `Perimeter tier handling bypassed for trusted user-initiated ${userInitiatedChannel} command`,
+      {
+        confidence_score: 1,
+        confidence_threshold: CONFIDENCE_THRESHOLD,
+        input_summary: `Topic: ${topic}, AuthTier: bypassed, ReqTier: bypassed${channelSummary}`,
+      },
+    );
+
+    return { trace: [step] };
+  }
+
   try {
     // 1. Get Authorized Tier
     const authorizedTier = await AgencyService.getTierForTopic(
@@ -943,11 +962,14 @@ async function processAssistantCommand(
   } catch (err: unknown) {
     const userInitiatedChannel = getUserInitiatedCommandChannel(state.task);
     const safeMessage = redactErrorMessage(err);
+    const confirmationPrompt = safeMessage.startsWith("CONFIRMATION_REQUIRED:")
+      ? safeMessage.slice("CONFIRMATION_REQUIRED:".length).trim()
+      : null;
     const reason = safeMessage.startsWith("CONFIRMATION_REQUIRED")
       ? "High-risk command requires confirmation"
       : safeMessage.startsWith("COMMAND_AMBIGUOUS")
-        ? "Command is ambiguous"
-        : safeMessage.startsWith("COMMAND_INVALID")
+          ? "Command is ambiguous"
+          : safeMessage.startsWith("COMMAND_INVALID")
           ? "Command is invalid"
           : "Command processing failed";
 
@@ -969,7 +991,7 @@ async function processAssistantCommand(
       reason,
       prompt:
         reason === "High-risk command requires confirmation"
-          ? "Confirm this high-risk command before queueing execution."
+          ? confirmationPrompt ?? "Confirm this high-risk command before queueing execution."
           : "Please provide explicit command details and retry.",
       confidenceScore: 0,
       trigger: "ambiguity_detected",

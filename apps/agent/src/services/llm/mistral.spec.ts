@@ -114,4 +114,97 @@ describe('MistralProvider', () => {
     await expect(provider.generateStructured('test prompt', schema))
       .rejects.toThrow(/Structured output validation failed/);
   });
+
+  it('retries malformed JSON once with stricter instructions when enabled', async () => {
+    const schema = z.object({ foo: z.string() });
+
+    mocks.complete
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: '{"foo": "bar"' } }],
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      })
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: '{"foo": "bar"}' } }],
+        usage: { promptTokens: 12, completionTokens: 6, totalTokens: 18 },
+      });
+
+    const result = await provider.generateStructured('repair me', schema, {
+      structuredOutput: {
+        repairMalformedJson: true,
+        maxRepairAttempts: 1,
+      },
+    });
+
+    expect(result.data).toEqual({ foo: 'bar' });
+    expect(result.structuredOutput).toEqual({ attempts: 2, repaired: true });
+    expect(result.usage).toMatchObject({
+      promptTokens: 22,
+      completionTokens: 11,
+      totalTokens: 33,
+    });
+    expect(mocks.complete).toHaveBeenCalledTimes(2);
+    expect(mocks.complete.mock.calls[1][0]).toEqual(expect.objectContaining({
+      messages: [
+        expect.objectContaining({
+          content: expect.stringContaining('RETRY INSTRUCTIONS:'),
+        }),
+      ],
+    }));
+  });
+
+  it('throws a structured output error after malformed JSON exhausts the repair limit', async () => {
+    const schema = z.object({ foo: z.string() });
+
+    mocks.complete
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: '{"foo": "bar"' } }],
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      })
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: '{"foo": "baz"' } }],
+        usage: { promptTokens: 11, completionTokens: 5, totalTokens: 16 },
+      });
+
+    await expect(provider.generateStructured('still broken', schema, {
+      structuredOutput: {
+        repairMalformedJson: true,
+        maxRepairAttempts: 1,
+      },
+    })).rejects.toMatchObject({
+      name: 'StructuredOutputError',
+      metadata: expect.objectContaining({
+        kind: 'json_parse_failure',
+        attempts: 2,
+        exhausted: true,
+      }),
+    });
+  });
+
+  it('keeps exhausted empty-content failures distinct from parse exhaustion metadata', async () => {
+    const schema = z.object({ foo: z.string() });
+
+    mocks.complete
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: null } }],
+        usage: { promptTokens: 10, completionTokens: 0, totalTokens: 10 },
+      })
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: null } }],
+        usage: { promptTokens: 11, completionTokens: 0, totalTokens: 11 },
+      });
+
+    await expect(provider.generateStructured('empty output', schema, {
+      structuredOutput: {
+        repairMalformedJson: true,
+        maxRepairAttempts: 1,
+      },
+    })).rejects.toMatchObject({
+      name: 'StructuredOutputError',
+      metadata: expect.objectContaining({
+        kind: 'empty_content',
+        attempts: 2,
+        exhausted: true,
+      }),
+    });
+  });
 });

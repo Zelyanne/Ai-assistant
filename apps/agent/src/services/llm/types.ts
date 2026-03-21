@@ -7,16 +7,41 @@ export interface LLMUsage {
   latencyMs: number;
 }
 
+export type StructuredOutputFailureKind =
+  | 'empty_content'
+  | 'json_parse_failure'
+  | 'schema_validation_failure';
+
+export interface StructuredOutputFailureMetadata {
+  kind: StructuredOutputFailureKind;
+  message: string;
+  attempts: number;
+  exhausted: boolean;
+  rawContent?: string;
+}
+
+export interface StructuredOutputResponseMetadata {
+  attempts: number;
+  repaired: boolean;
+}
+
+export interface StructuredOutputResilienceOptions {
+  repairMalformedJson?: boolean;
+  maxRepairAttempts?: number;
+}
+
 export interface LLMResponse<T> {
   data: T;
   usage: LLMUsage;
   model: string;
+  structuredOutput?: StructuredOutputResponseMetadata;
 }
 
 export interface LLMOptions {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  structuredOutput?: StructuredOutputResilienceOptions;
 }
 
 export interface ILLMProvider {

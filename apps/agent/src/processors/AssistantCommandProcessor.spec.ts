@@ -101,10 +101,10 @@ describe('AssistantCommandProcessor', () => {
     ).rejects.toThrow('CONFIRMATION_REQUIRED');
   });
 
-  it('treats Command Center web commands as trusted confirmation sources', async () => {
+  it('requires recap confirmation for Command Center web send commands', async () => {
     const processor = new AssistantCommandProcessor();
 
-    const result = await processor.process({
+    await expect(processor.process({
       ...baseTask,
       topic: 'Command Center',
       payload: {
@@ -116,19 +116,13 @@ describe('AssistantCommandProcessor', () => {
         subject: 'Status',
         body: 'Ship it',
       },
-    });
-
-    expect(result.planner_intent).toBeDefined();
-    expect(result.planner_intent.requested_steps[0]).toMatchObject({
-      worker_type: 'gmail',
-      action: 'send_email',
-    });
+    })).rejects.toThrow('Quick recap: you asked me to "send an email now". Reply YES to confirm or reply with changes.');
   });
 
-  it('treats trusted WhatsApp commands as confirmed user actions', async () => {
+  it('requires recap confirmation for trusted WhatsApp send commands', async () => {
     const processor = new AssistantCommandProcessor();
 
-    const result = await processor.process({
+    await expect(processor.process({
       ...baseTask,
       payload: {
         command: 'message the client on whatsapp',
@@ -137,16 +131,10 @@ describe('AssistantCommandProcessor', () => {
         user_initiated: true,
         message_text: 'Hello from the assistant',
       },
-    });
-
-    expect(result.delegated_domain_action).toBe('channel.send');
-    expect(result.delegated_payload).toMatchObject({
-      channel: 'whatsapp',
-      message_text: 'Hello from the assistant',
-    });
+    })).rejects.toThrow('Quick recap: you want me to send a whatsapp message. Message: "Hello from the assistant". Reply YES to confirm or reply with changes.');
   });
 
-  it('parses a French send-email command from Command Center without escalating', async () => {
+  it('parses a French send-email command from Command Center after explicit confirmation', async () => {
     const processor = new AssistantCommandProcessor();
 
     const result = await processor.process({
@@ -157,6 +145,7 @@ describe('AssistantCommandProcessor', () => {
         source: 'dashboard-command-center',
         channel: 'web',
         user_initiated: true,
+        confirmed: true,
       },
     });
 

@@ -14,9 +14,11 @@ import { type ILLMProvider } from '../services/llm/types.js';
 import {
   buildTokenAwareBatches,
   executeBatchesWithConcurrency,
+  rebuildSmallerBatches,
   type TokenAwareBatch,
   type TokenAwareBatchInput,
 } from '../services/emailBatching.js';
+import { isStructuredOutputError } from '../services/llm/structuredOutput.js';
 
 const DEFAULT_BATCH_INPUT_TOKENS = 13_000;
 const MIN_BATCH_INPUT_TOKENS = 12_000;
@@ -63,8 +65,22 @@ type TriageBatchItem = TokenAwareBatch<TriageBatchPayload>['items'][number];
 
 interface BatchSummary {
   processedCount: number;
-  unresolvedThreadIds: string[];
+  retryableThreadIds: string[];
+  nonRetryableThreadIds: string[];
 }
+
+interface SingleThreadClassificationResult {
+  classification: EmailTriageClassification | null;
+  failureHint: FailureHint | null;
+}
+
+type FailureHint =
+  | 'empty_content'
+  | 'retryable_external_failure'
+  | 'schema_validation_failure'
+  | 'json_parse_failure'
+  | 'parse_exhausted_failure'
+  | 'non_retryable_failure';
 
 const BatchedEmailTriageEnvelopeSchema = z.object({
   results: BatchedEmailTriageResultSchema,
@@ -202,48 +218,71 @@ export class EmailTriageProcessor extends BaseProcessor {
     );
 
     let processedCount = 0;
-    const unresolvedThreadIds = new Set<string>();
+    const retryableThreadIds = new Set<string>();
+    const nonRetryableThreadIds = new Set<string>();
 
     for (const settledBatch of settledBatches) {
       if (settledBatch.status === 'fulfilled') {
         processedCount += settledBatch.value.processedCount;
-        for (const threadId of settledBatch.value.unresolvedThreadIds) {
-          unresolvedThreadIds.add(threadId);
+        for (const threadId of settledBatch.value.retryableThreadIds) {
+          retryableThreadIds.add(threadId);
+        }
+        for (const threadId of settledBatch.value.nonRetryableThreadIds) {
+          nonRetryableThreadIds.add(threadId);
         }
         continue;
       }
 
       const failedBatch = batches[settledBatch.index];
+      const failureHint = this.classifyFailureHint(settledBatch.reason);
       console.error(
-        `[EmailTriageProcessor] Batch ${failedBatch?.batchIndex ?? settledBatch.index + 1} failed (${this.classifyFailureHint(settledBatch.reason)}): ${this.formatErrorForLog(settledBatch.reason)}`,
+        `[EmailTriageProcessor] Batch ${failedBatch?.batchIndex ?? settledBatch.index + 1} failed (${failureHint}): ${this.formatErrorForLog(settledBatch.reason)}`,
       );
 
       if (failedBatch) {
         for (const batchItem of failedBatch.items) {
-          unresolvedThreadIds.add(batchItem.id);
+          if (failureHint === 'parse_exhausted_failure') {
+            nonRetryableThreadIds.add(batchItem.id);
+          } else {
+            retryableThreadIds.add(batchItem.id);
+          }
         }
       }
     }
 
-    const unresolvedThreadIdList = [...unresolvedThreadIds];
-    const retryResult: RetryQueueResult = unresolvedThreadIdList.length > 0
-      ? await this.queueTriageRetry(task, unresolvedThreadIdList, retryContext.retryAttempt)
+    const retryableThreadIdList = [...retryableThreadIds];
+    const nonRetryableThreadIdList = [...nonRetryableThreadIds];
+
+    if (nonRetryableThreadIdList.length > 0) {
+      await this.logRetryQueueIssue(
+        task,
+        'triage_parse_exhausted',
+        'Structured output recovery was exhausted; these thread classifications were not re-queued.',
+        nonRetryableThreadIdList,
+      );
+    }
+
+    const retryResult: RetryQueueResult = retryableThreadIdList.length > 0
+      ? await this.queueTriageRetry(task, retryableThreadIdList, retryContext.retryAttempt)
       : {
           enqueued: false,
           nextRetryAttempt: null,
           reason: 'not_needed',
         };
 
+    const skippedThreadIds = [...new Set([...retryableThreadIdList, ...nonRetryableThreadIdList])];
+
     return {
       message: this.buildProcessResultMessage(
         processedCount,
         batches.length,
-        unresolvedThreadIdList.length,
+        retryableThreadIdList.length,
+        nonRetryableThreadIdList.length,
         retryResult,
       ),
       processed_count: processedCount,
       task_id: task.id,
-      skipped_thread_ids: unresolvedThreadIdList,
+      skipped_thread_ids: skippedThreadIds,
     };
   }
 
@@ -253,20 +292,47 @@ export class EmailTriageProcessor extends BaseProcessor {
     topics: WatchTopic[],
     guard: PerimeterGuard,
     llmProvider: ILLMProvider,
+    options?: { allowBatchDegradation?: boolean },
   ): Promise<BatchSummary> {
     console.log(
       `[EmailTriageProcessor] Processing batch ${batch.batchIndex} (size=${batch.batchSize}, estimated_tokens=${batch.estimatedTokens}, concurrency_limit=${batch.concurrencyLimit})`,
     );
 
-    const prompt = this.buildBatchPrompt(batch, topics);
-    const results = await this.generateBatchClassifications(prompt, llmProvider);
+    const allowBatchDegradation = options?.allowBatchDegradation ?? true;
+    let results: BatchedEmailTriageResult;
+
+    try {
+      const prompt = this.buildBatchPrompt(batch, topics);
+      results = await this.generateBatchClassifications(prompt, llmProvider);
+    } catch (error) {
+      const failureHint = this.classifyFailureHint(error);
+
+      if (failureHint === 'parse_exhausted_failure') {
+        if (batch.batchSize > 1 && allowBatchDegradation) {
+          return this.salvageMalformedBatch(task, batch, topics, guard, llmProvider);
+        }
+
+        if (batch.batchSize > 1) {
+          return this.salvageBatchAsSingleThreadCalls(task, batch, topics, guard, llmProvider);
+        }
+
+        return {
+          processedCount: 0,
+          retryableThreadIds: [],
+          nonRetryableThreadIds: batch.items.map((item) => item.id),
+        };
+      }
+
+      throw error;
+    }
 
     const resultsByThreadId = new Map(
       results.map((item) => [item.thread_id, item.classification]),
     );
 
     let processedCount = 0;
-    const unresolvedThreadIds: string[] = [];
+    const retryableThreadIds: string[] = [];
+    const nonRetryableThreadIds: string[] = [];
 
     for (const item of batch.items) {
       const threadId = item.id;
@@ -278,14 +344,19 @@ export class EmailTriageProcessor extends BaseProcessor {
           `[EmailTriageProcessor] Batch ${batch.batchIndex} missing classification for thread ${threadId}; retrying as single-thread call.`,
         );
 
-        classification = await this.classifySingleThreadFromBatchItem(
+        const singleThreadResult = await this.classifySingleThreadFromBatchItem(
           item,
           topics,
           llmProvider,
         );
+        classification = singleThreadResult.classification;
 
         if (!classification) {
-          unresolvedThreadIds.push(threadId);
+          if (singleThreadResult.failureHint === 'parse_exhausted_failure') {
+            nonRetryableThreadIds.push(threadId);
+          } else {
+            retryableThreadIds.push(threadId);
+          }
           continue;
         }
       }
@@ -325,7 +396,8 @@ export class EmailTriageProcessor extends BaseProcessor {
 
     return {
       processedCount,
-      unresolvedThreadIds,
+      retryableThreadIds,
+      nonRetryableThreadIds,
     };
   }
 
@@ -333,7 +405,7 @@ export class EmailTriageProcessor extends BaseProcessor {
     item: TriageBatchItem,
     topics: WatchTopic[],
     llmProvider: ILLMProvider,
-  ): Promise<EmailTriageClassification | null> {
+  ): Promise<SingleThreadClassificationResult> {
     const singleItemBatch: TokenAwareBatch<TriageBatchPayload> = {
       batchIndex: 1,
       batchSize: 1,
@@ -351,15 +423,16 @@ export class EmailTriageProcessor extends BaseProcessor {
         console.warn(
           `[EmailTriageProcessor] Single-thread retry still missing classification for thread ${item.id}.`,
         );
-        return null;
+        return { classification: null, failureHint: null };
       }
 
-      return result.classification;
+      return { classification: result.classification, failureHint: null };
     } catch (error) {
+      const failureHint = this.classifyFailureHint(error);
       console.error(
         `[EmailTriageProcessor] Single-thread retry failed for thread ${item.id}: ${this.formatErrorForLog(error)}`,
       );
-      return null;
+      return { classification: null, failureHint };
     }
   }
 
@@ -371,10 +444,150 @@ export class EmailTriageProcessor extends BaseProcessor {
       llmProvider.generateStructured(prompt, BatchedEmailTriageEnvelopeSchema, {
         maxTokens: this.resolveOutputTokenReserve(),
         temperature: 0,
+        structuredOutput: {
+          repairMalformedJson: true,
+          maxRepairAttempts: 1,
+        },
       }),
     );
 
     return response.data.results;
+  }
+
+  private async salvageMalformedBatch(
+    task: Task,
+    batch: TokenAwareBatch<TriageBatchPayload>,
+    topics: WatchTopic[],
+    guard: PerimeterGuard,
+    llmProvider: ILLMProvider,
+  ): Promise<BatchSummary> {
+    console.warn(
+      `[EmailTriageProcessor] Batch ${batch.batchIndex} exhausted provider JSON recovery. Rebuilding smaller sub-batches before single-thread fallback.`,
+    );
+
+    const smallerBatches = rebuildSmallerBatches(batch, {
+      maxInputTokensPerBatch: this.resolveBatchInputTokenBudget(),
+      concurrencyLimit: batch.concurrencyLimit,
+    });
+
+    if (smallerBatches.length <= 1) {
+      return this.salvageBatchAsSingleThreadCalls(task, batch, topics, guard, llmProvider);
+    }
+
+    const settledSubBatches = await executeBatchesWithConcurrency(
+      smallerBatches,
+      batch.concurrencyLimit,
+      async (subBatch) =>
+        this.processBatch(task, subBatch, topics, guard, llmProvider, {
+          allowBatchDegradation: false,
+        }),
+    );
+
+    let processedCount = 0;
+    const retryableThreadIds: string[] = [];
+    const nonRetryableThreadIds: string[] = [];
+
+    for (const settledSubBatch of settledSubBatches) {
+      if (settledSubBatch.status === 'fulfilled') {
+        processedCount += settledSubBatch.value.processedCount;
+        retryableThreadIds.push(...settledSubBatch.value.retryableThreadIds);
+        nonRetryableThreadIds.push(...settledSubBatch.value.nonRetryableThreadIds);
+        continue;
+      }
+
+      const failedSubBatch = smallerBatches[settledSubBatch.index];
+      const failureHint = this.classifyFailureHint(settledSubBatch.reason);
+
+      if (!failedSubBatch) {
+        continue;
+      }
+
+      if (failureHint === 'parse_exhausted_failure') {
+        const singleThreadSummary = await this.salvageBatchAsSingleThreadCalls(
+          task,
+          failedSubBatch,
+          topics,
+          guard,
+          llmProvider,
+        );
+        processedCount += singleThreadSummary.processedCount;
+        retryableThreadIds.push(...singleThreadSummary.retryableThreadIds);
+        nonRetryableThreadIds.push(...singleThreadSummary.nonRetryableThreadIds);
+        continue;
+      }
+
+      retryableThreadIds.push(...failedSubBatch.items.map((item) => item.id));
+    }
+
+    return {
+      processedCount,
+      retryableThreadIds,
+      nonRetryableThreadIds,
+    };
+  }
+
+  private async salvageBatchAsSingleThreadCalls(
+    task: Task,
+    batch: TokenAwareBatch<TriageBatchPayload>,
+    topics: WatchTopic[],
+    guard: PerimeterGuard,
+    llmProvider: ILLMProvider,
+  ): Promise<BatchSummary> {
+    let processedCount = 0;
+    const retryableThreadIds: string[] = [];
+    const nonRetryableThreadIds: string[] = [];
+
+    for (const item of batch.items) {
+      const singleThreadResult = await this.classifySingleThreadFromBatchItem(
+        item,
+        topics,
+        llmProvider,
+      );
+
+      if (!singleThreadResult.classification) {
+        if (singleThreadResult.failureHint === 'parse_exhausted_failure') {
+          nonRetryableThreadIds.push(item.id);
+        } else {
+          retryableThreadIds.push(item.id);
+        }
+        continue;
+      }
+
+      const classificationWithRecoveredPii = this.recoverClassificationPII(
+        singleThreadResult.classification,
+        guard,
+      );
+
+      try {
+        await this.persistClassification(item.id, classificationWithRecoveredPii);
+        await this.queueSummarizationIfNeeded(
+          task.organization_id,
+          task.user_id ?? null,
+          item.id,
+          classificationWithRecoveredPii,
+        );
+        await this.logThreadTriage(
+          task,
+          item.id,
+          item.payload.thread.subject,
+          classificationWithRecoveredPii,
+        );
+
+        processedCount += 1;
+      } catch (error) {
+        console.error(
+          `[EmailTriageProcessor] Failed to persist salvaged triage result for thread ${item.id}:`,
+          error,
+        );
+        retryableThreadIds.push(item.id);
+      }
+    }
+
+    return {
+      processedCount,
+      retryableThreadIds,
+      nonRetryableThreadIds,
+    };
   }
 
   private async queueTriageRetry(
@@ -842,9 +1055,20 @@ The JSON object must follow this exact structure:
       : false;
   }
 
-  private classifyFailureHint(error: unknown): string {
+  private classifyFailureHint(error: unknown): FailureHint {
     if (this.isRetryableExternalError(error)) {
       return 'retryable_external_failure';
+    }
+
+    if (isStructuredOutputError(error)) {
+      if (
+        error.metadata.exhausted
+        && error.metadata.kind === 'json_parse_failure'
+      ) {
+        return 'parse_exhausted_failure';
+      }
+
+      return error.metadata.kind;
     }
 
     if (error instanceof Error) {
@@ -954,21 +1178,30 @@ The JSON object must follow this exact structure:
     processedCount: number,
     batchCount: number,
     unresolvedCount: number,
+    nonRetryableCount: number,
     retryResult: RetryQueueResult,
   ): string {
-    if (unresolvedCount === 0) {
+    if (unresolvedCount === 0 && nonRetryableCount === 0) {
       return `Successfully triaged ${processedCount} threads across ${batchCount} batch(es)`;
     }
 
+    const nonRetryableSuffix = nonRetryableCount > 0
+      ? `; ${nonRetryableCount} thread(s) hit non-retryable parse exhaustion`
+      : '';
+
     switch (retryResult.reason) {
       case 'queued':
-        return `Triaged ${processedCount} threads across ${batchCount} batch(es); ${unresolvedCount} thread(s) were re-queued for retry ${retryResult.nextRetryAttempt}`;
+        return `Triaged ${processedCount} threads across ${batchCount} batch(es); ${unresolvedCount} thread(s) were re-queued for retry ${retryResult.nextRetryAttempt}${nonRetryableSuffix}`;
       case 'retry_limit_reached':
-        return `Triaged ${processedCount} threads across ${batchCount} batch(es); ${unresolvedCount} thread(s) reached the retry limit and remain unresolved`;
+        return `Triaged ${processedCount} threads across ${batchCount} batch(es); ${unresolvedCount} thread(s) reached the retry limit and remain unresolved${nonRetryableSuffix}`;
       case 'queue_failed':
-        return `Triaged ${processedCount} threads across ${batchCount} batch(es); ${unresolvedCount} thread(s) could not be re-queued because follow-up task creation failed`;
+        return `Triaged ${processedCount} threads across ${batchCount} batch(es); ${unresolvedCount} thread(s) could not be re-queued because follow-up task creation failed${nonRetryableSuffix}`;
       default:
-        return `Triaged ${processedCount} threads across ${batchCount} batch(es); ${unresolvedCount} thread(s) remain unresolved`;
+        if (unresolvedCount > 0) {
+          return `Triaged ${processedCount} threads across ${batchCount} batch(es); ${unresolvedCount} thread(s) remain unresolved${nonRetryableSuffix}`;
+        }
+
+        return `Triaged ${processedCount} threads across ${batchCount} batch(es)${nonRetryableSuffix}`;
     }
   }
 }

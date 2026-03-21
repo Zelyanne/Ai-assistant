@@ -80,6 +80,7 @@ interface InternalBatch<TPayload> {
 export interface BuildTokenAwareBatchesOptions {
   maxInputTokensPerBatch?: number;
   concurrencyLimit?: number;
+  maxItemsPerBatch?: number;
 }
 
 export interface SettledSuccess<TValue> {
@@ -146,6 +147,7 @@ export function buildTokenAwareBatches<TPayload>(
     Math.floor(options?.maxInputTokensPerBatch ?? DEFAULT_INPUT_TOKEN_BUDGET),
   );
   const concurrencyLimit = normalizeConcurrencyLimit(options?.concurrencyLimit);
+  const maxItemsPerBatch = options?.maxItemsPerBatch;
 
   const computedItems = inputs
     .map((input, index) => {
@@ -163,7 +165,9 @@ export function buildTokenAwareBatches<TPayload>(
         payload: input.payload,
         estimatedTokens,
         tokenBand: band.name,
-        maxBatchSize: interpolateBatchCap(estimatedTokens, band),
+        maxBatchSize: maxItemsPerBatch
+          ? Math.max(1, Math.min(interpolateBatchCap(estimatedTokens, band), Math.floor(maxItemsPerBatch)))
+          : interpolateBatchCap(estimatedTokens, band),
         originalIndex: index,
       };
     })
@@ -269,6 +273,34 @@ export async function executeBatchesWithConcurrency<TPayload, TResult>(
   worker: (batch: TokenAwareBatch<TPayload>) => Promise<TResult>,
 ): Promise<SettledResult<TResult>[]> {
   return runWithConcurrency(batches, concurrencyLimit, worker);
+}
+
+export function rebuildSmallerBatches<TPayload>(
+  batch: TokenAwareBatch<TPayload>,
+  options?: BuildTokenAwareBatchesOptions,
+): TokenAwareBatch<TPayload>[] {
+  if (batch.items.length <= 1) {
+    return [batch];
+  }
+
+  const nextMaxItemsPerBatch = batch.items.length <= 2
+    ? 1
+    : Math.max(1, Math.floor(batch.items.length / 2));
+
+  return buildTokenAwareBatches(
+    batch.items.map((item) => ({
+      id: item.id,
+      subject: '',
+      content: '',
+      payload: item.payload,
+      estimatedTokens: item.estimatedTokens,
+    })),
+    {
+      maxInputTokensPerBatch: options?.maxInputTokensPerBatch ?? DEFAULT_INPUT_TOKEN_BUDGET,
+      concurrencyLimit: options?.concurrencyLimit ?? batch.concurrencyLimit,
+      maxItemsPerBatch: options?.maxItemsPerBatch ?? nextMaxItemsPerBatch,
+    },
+  );
 }
 
 function normalizeConcurrencyLimit(concurrencyLimit?: number): number {

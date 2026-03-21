@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EmailTriageProcessor } from './EmailTriageProcessor.js';
 import { supabase } from '../services/supabase.js';
 import { LLMProviderFactory } from '../services/llm/factory.js';
+import { StructuredOutputError } from '../services/llm/structuredOutput.js';
 
 interface MockThread {
   id: string;
@@ -255,6 +256,12 @@ describe('EmailTriageProcessor', () => {
     expect(prompt).toContain('THREAD_ID: thread-1');
     expect(prompt).toContain('THREAD_ID: thread-2');
     expect(prompt).toContain('RETURN ONLY A JSON OBJECT');
+    expect(mocks.generateStructured.mock.calls[0][2]).toMatchObject({
+      structuredOutput: {
+        repairMalformedJson: true,
+        maxRepairAttempts: 1,
+      },
+    });
 
     const schema = mocks.generateStructured.mock.calls[0][1] as {
       safeParse: (value: unknown) => { success: boolean };
@@ -755,6 +762,222 @@ describe('EmailTriageProcessor', () => {
       (call) => call.table === 'tasks' && call.values.domain_action === 'email.triage',
     );
     expect(retryTaskInsert).toBeUndefined();
+  });
+
+  it('degrades parse-exhausted batches into smaller token-aware sub-batches and preserves successes', async () => {
+    state.threads = [
+      {
+        id: 'thread-1',
+        subject: 'Thread 1',
+        metadata: { snippet: 'alpha' },
+        summary: null,
+        summary_json: null,
+      },
+      {
+        id: 'thread-2',
+        subject: 'Thread 2',
+        metadata: { snippet: 'beta' },
+        summary: null,
+        summary_json: null,
+      },
+      {
+        id: 'thread-3',
+        subject: 'Thread 3',
+        metadata: { snippet: 'gamma' },
+        summary: null,
+        summary_json: null,
+      },
+      {
+        id: 'thread-4',
+        subject: 'Thread 4',
+        metadata: { snippet: 'delta' },
+        summary: null,
+        summary_json: null,
+      },
+    ];
+    state.topics = [{ topic: 'Operations', priority: 'High' }];
+
+    mocks.generateStructured
+      .mockRejectedValueOnce(new StructuredOutputError({
+        kind: 'json_parse_failure',
+        message: 'Malformed JSON after repair',
+        attempts: 2,
+        exhausted: true,
+      }))
+      .mockResolvedValueOnce({
+        data: {
+          results: [
+            {
+              thread_id: 'thread-1',
+              classification: {
+                matches: [],
+                overall_priority_score: 10,
+                is_highlighted: false,
+              },
+            },
+            {
+              thread_id: 'thread-2',
+              classification: {
+                matches: [],
+                overall_priority_score: 20,
+                is_highlighted: false,
+              },
+            },
+          ],
+        },
+        usage: {
+          promptTokens: 300,
+          completionTokens: 100,
+          totalTokens: 400,
+          latencyMs: 40,
+        },
+        model: 'mistral-small-latest',
+      })
+      .mockResolvedValueOnce({
+        data: {
+          results: [
+            {
+              thread_id: 'thread-3',
+              classification: {
+                matches: [],
+                overall_priority_score: 30,
+                is_highlighted: false,
+              },
+            },
+            {
+              thread_id: 'thread-4',
+              classification: {
+                matches: [],
+                overall_priority_score: 40,
+                is_highlighted: false,
+              },
+            },
+          ],
+        },
+        usage: {
+          promptTokens: 300,
+          completionTokens: 100,
+          totalTokens: 400,
+          latencyMs: 40,
+        },
+        model: 'mistral-small-latest',
+      });
+
+    const task = {
+      id: 'task-batch-salvage',
+      organization_id: 'org-1',
+      user_id: 'user-1',
+      domain_action: 'email.triage',
+      payload: {},
+    };
+
+    const result = await processor.process(task as any);
+
+    expect(result.processed_count).toBe(4);
+    expect(result.skipped_thread_ids).toEqual([]);
+    expect(state.updateCalls).toHaveLength(4);
+    expect(mocks.generateStructured).toHaveBeenCalledTimes(3);
+
+    const secondPrompt = String(mocks.generateStructured.mock.calls[1][0]);
+    const thirdPrompt = String(mocks.generateStructured.mock.calls[2][0]);
+    expect(secondPrompt).toContain('THREAD_ID: thread-1');
+    expect(secondPrompt).toContain('THREAD_ID: thread-2');
+    expect(secondPrompt).not.toContain('THREAD_ID: thread-3');
+    expect(thirdPrompt).toContain('THREAD_ID: thread-3');
+    expect(thirdPrompt).toContain('THREAD_ID: thread-4');
+    expect(thirdPrompt).not.toContain('THREAD_ID: thread-1');
+
+    const retryTaskInsert = state.insertCalls.find(
+      (call) => call.table === 'tasks' && call.values.domain_action === 'email.triage',
+    );
+    expect(retryTaskInsert).toBeUndefined();
+  });
+
+  it('marks parse-exhausted single-thread failures as non-retryable and does not re-queue them', async () => {
+    state.threads = [
+      {
+        id: 'thread-parse-exhausted',
+        subject: 'Broken output',
+        metadata: { snippet: 'still malformed' },
+        summary: null,
+        summary_json: null,
+      },
+    ];
+    state.topics = [{ topic: 'General', priority: 'Low' }];
+
+    mocks.generateStructured.mockRejectedValueOnce(new StructuredOutputError({
+      kind: 'json_parse_failure',
+      message: 'Malformed JSON after repair',
+      attempts: 2,
+      exhausted: true,
+    }));
+
+    const task = {
+      id: 'task-parse-exhausted',
+      organization_id: 'org-1',
+      user_id: 'user-1',
+      domain_action: 'email.triage',
+      payload: {},
+    };
+
+    const result = await processor.process(task as any);
+
+    expect(result.processed_count).toBe(0);
+    expect(result.skipped_thread_ids).toEqual(['thread-parse-exhausted']);
+    expect(result.message).toContain('non-retryable parse exhaustion');
+
+    const retryTaskInsert = state.insertCalls.find(
+      (call) => call.table === 'tasks' && call.values.domain_action === 'email.triage',
+    );
+    expect(retryTaskInsert).toBeUndefined();
+
+    const parseExhaustedAuditCall = mocks.flush.mock.calls.find(
+      (call) => call[3] === 'triage_parse_exhausted',
+    );
+    expect(parseExhaustedAuditCall).toBeDefined();
+  });
+
+  it('keeps exhausted empty-content failures retryable and re-queues them', async () => {
+    state.threads = [
+      {
+        id: 'thread-empty-content',
+        subject: 'Transient blank provider response',
+        metadata: { snippet: 'provider returned nothing' },
+        summary: null,
+        summary_json: null,
+      },
+    ];
+    state.topics = [{ topic: 'General', priority: 'Low' }];
+
+    mocks.generateStructured.mockRejectedValueOnce(new StructuredOutputError({
+      kind: 'empty_content',
+      message: 'LLM returned empty or invalid content',
+      attempts: 2,
+      exhausted: true,
+    }));
+
+    const task = {
+      id: 'task-empty-content',
+      organization_id: 'org-1',
+      user_id: 'user-1',
+      domain_action: 'email.triage',
+      payload: {},
+    };
+
+    const result = await processor.process(task as any);
+
+    expect(result.processed_count).toBe(0);
+    expect(result.skipped_thread_ids).toEqual(['thread-empty-content']);
+    expect(result.message).toContain('re-queued for retry');
+
+    const retryTaskInsert = state.insertCalls.find(
+      (call) => call.table === 'tasks' && call.values.domain_action === 'email.triage',
+    );
+    expect(retryTaskInsert?.values.payload).toEqual({
+      thread_ids: ['thread-empty-content'],
+      retry_reason: 'missing_batch_classification',
+      retry_attempt: 1,
+    });
   });
 
   it('does not enqueue another retry task once retry_attempt reaches the configured limit', async () => {

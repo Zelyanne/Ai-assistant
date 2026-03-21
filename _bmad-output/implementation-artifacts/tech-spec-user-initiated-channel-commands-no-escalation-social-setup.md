@@ -2,7 +2,7 @@
 title: 'User-Initiated Channel Commands Without Escalation + Social Setup Settings'
 slug: 'user-initiated-channel-commands-no-escalation-social-setup'
 created: '2026-03-13'
-status: 'Completed'
+status: 'completed'
 stepsCompleted: [1, 2, 3, 4]
 tech_stack: ['Vue 3', 'TypeScript', 'PrimeVue', 'Pinia', 'Supabase', 'Node.js', 'LangGraph', 'Vitest']
 files_to_modify: ['apps/web/src/views/Settings.vue', 'apps/web/src/components/WorkspaceIntegration.vue', 'apps/web/src/composables/useCommandCenter.ts', 'apps/web/src/composables/useAuth.ts', 'apps/agent/src/controller/graph.ts', 'apps/agent/src/services/channelRouter.ts']
@@ -173,3 +173,4 @@ Add a dedicated Social section in Settings for Telegram and WhatsApp setup guida
 - Adversarial review completed
 - Findings: 12 total, 7 fixed, 5 skipped
 - Resolution approach: auto-fix
+- Follow-up: trusted Command Center, Telegram, and WhatsApp commands now bypass agency-tier lookup and use in-chat recap confirmation for high-risk requests

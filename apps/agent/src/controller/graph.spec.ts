@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { graph } from './graph.js';
+import { AgencyService } from '../services/agency.js';
 
 vi.mock('../services/SafetyControlsService.js', () => ({
   SafetyControlsService: {
@@ -591,6 +592,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
         source: 'dashboard-command-center',
         channel: 'web',
         user_initiated: true,
+        confirmed: true,
         target_domain_action: 'email.send',
         target_payload: {
           recipient: 'alexis@example.com',
@@ -739,6 +741,33 @@ describe('Agent Controller Graph planner-worker flow', () => {
 
     expect(result.task.status).toBe('paused');
     expect(result.task.result.reason).toBe('Command is ambiguous');
+  });
+
+  it('pauses trusted chat commands with a confirmation recap for high-risk sends', async () => {
+    const task = {
+      ...baseTask,
+      topic: 'Command Center',
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'send an email now',
+        source: 'dashboard-command-center',
+        channel: 'web',
+        user_initiated: true,
+        high_risk: true,
+        recipient: 'alexis@example.com',
+        subject: 'Status',
+        body: 'Ship it',
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(result.task.status).toBe('paused');
+    expect(result.task.result.reason).toBe('High-risk command requires confirmation');
+    expect(result.task.result.prompt).toContain('Quick recap: you asked me to "send an email now"');
+    expect(AgencyService.getTierForTopic).not.toHaveBeenCalled();
   });
 
   it('keeps automated thread actions eligible for perimeter escalation', async () => {
