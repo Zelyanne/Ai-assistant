@@ -149,6 +149,13 @@ Default task columns:
 - dependency
 - notes
 
+Helpful tracker details the General Agent should encourage when appropriate:
+
+- notes on columns when a field needs explanation
+- status dropdowns or checkbox-style completion markers
+- filters so owners can focus on their own tasks or overdue work
+- conditional formatting for late, blocked, or at-risk items
+
 Default RAID columns:
 
 - type
@@ -347,6 +354,8 @@ When the user asks for recurring follow-up, reminders, routine status prompts, o
 ### 1. Calendar cadence
 
 Use Calendar when the cadence is about meetings, milestone reviews, or visible time blocks.
+
+When recurring calendar support is the best fit, recurring event series are the right mental model for weekly syncs, steering reviews, and fixed project rituals.
 
 Examples:
 
@@ -576,5 +585,6 @@ This skill is based on:
 - Google Workspace Learning Center guidance for planning and managing projects
 - Google's project-management guidance across Docs, Sheets, Calendar, Drive, Gmail, and Slides
 - Google Workspace blog guidance on scope docs, task trackers, shared drives, and review cadence
+- official developer references surfaced through Context7 for recurring calendar events and structured spreadsheet behaviors like filters, notes, and conditional formatting
 - project reporting best practices for dashboards, status docs, and executive decks
 - this repository's scheduling capability, including recurring scheduled-task flows and cron-backed user schedules
