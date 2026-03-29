@@ -297,6 +297,10 @@ export function getSpecialistPrompt(
 ): string {
   const basePrompt = SPECIALIST_SYSTEM_PROMPTS[specialist];
 
+  if (specialist === 'generalAgent') {
+    return basePrompt + buildAgentSkillAppendix('generalProjectManagement');
+  }
+
   if (specialist === 'sheets') {
     return basePrompt + buildAgentSkillAppendix('sheets');
   }

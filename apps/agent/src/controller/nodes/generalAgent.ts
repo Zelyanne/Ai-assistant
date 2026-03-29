@@ -17,6 +17,7 @@ import { AuditLogger } from '../../services/AuditLogger.js';
 import { executionRunService } from '../../services/ExecutionRunService.js';
 import { workerToolPolicyService, type CapabilityWorkerType } from '../../services/WorkerToolPolicyService.js';
 import { mcpService } from '../../services/mcp.js';
+import { buildAgentSkillAppendix } from '../../prompts/agentSkillInjector.js';
 import type { AgentState } from '../graph.js';
 import { buildEscalationPayload } from '../escalation.js';
 
@@ -163,6 +164,7 @@ async function buildPlanFromUserInput(
     '→ Step 1: worker_type: "drive", action: "Read project brief document", input: { file_name_or_url: "Project Brief" }',
     '→ Step 2: worker_type: "docs", action: "Create summary document from project brief", input: { title: "Project Brief Summary", source_step_key: "step-1" }',
     '→ requested_tools: [] for both steps',
+    buildAgentSkillAppendix('generalProjectManagement'),
   ].join('\n'), { callbacks });
 
   tracingService.handleSuccess();

@@ -2,9 +2,10 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-type AgentSkillTarget = 'sheets' | 'slides';
+type AgentSkillTarget = 'generalProjectManagement' | 'sheets' | 'slides';
 
 const SKILL_FILES: Record<AgentSkillTarget, string> = {
+  generalProjectManagement: 'agent skill/google-workspace-project-management-general-agent-skill.md',
   sheets: 'agent skill/google-sheets-agent-skill.md',
   slides: 'agent skill/google-slides-agent-skill.md',
 };
