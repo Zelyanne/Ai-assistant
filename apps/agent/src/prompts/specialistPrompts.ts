@@ -15,6 +15,8 @@
  * @see ADR-004: Centralized System Prompts
  */
 
+import { buildAgentSkillAppendix } from './agentSkillInjector.js';
+
 export const SPECIALIST_CAPABILITIES = {
   gmail: [
     'Draft Gmail messages (draft_gmail_message)',
@@ -293,7 +295,17 @@ export const SPECIALIST_SYSTEM_PROMPTS = {
 export function getSpecialistPrompt(
   specialist: keyof typeof SPECIALIST_SYSTEM_PROMPTS,
 ): string {
-  return SPECIALIST_SYSTEM_PROMPTS[specialist];
+  const basePrompt = SPECIALIST_SYSTEM_PROMPTS[specialist];
+
+  if (specialist === 'sheets') {
+    return basePrompt + buildAgentSkillAppendix('sheets');
+  }
+
+  if (specialist === 'slides') {
+    return basePrompt + buildAgentSkillAppendix('slides');
+  }
+
+  return basePrompt;
 }
 
 /**

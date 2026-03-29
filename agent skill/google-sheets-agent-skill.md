@@ -297,7 +297,7 @@ These are strong defaults for dashboards.
 ## 10. KPI delta arrow label
 
 ```gs
-=IF(E2>0, "▲ " & TEXT(E2, "0.0%"), IF(E2<0, "▼ " & TEXT(ABS(E2), "0.0%"), "= 0.0%"))
+=IF(E2>0, "+ " & TEXT(E2, "0.0%"), IF(E2<0, "- " & TEXT(ABS(E2), "0.0%"), "= 0.0%"))
 ```
 
 ## 11. Array-driven status logic
