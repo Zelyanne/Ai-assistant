@@ -16,7 +16,7 @@ vi.mock('./AuditLogger.js', () => ({
       message: msg,
       ...opts,
     })),
-    flush: vi.fn(async (orgId, taskId, agentId, action, trace, citations) => {
+    flush: vi.fn(async (_orgId, _taskId, _agentId, _action, _trace, _citations) => {
       // We'll capture this in a global way if needed, or just let it pass
     }),
   },

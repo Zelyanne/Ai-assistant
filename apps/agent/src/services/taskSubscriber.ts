@@ -2,11 +2,13 @@ import { Task } from '@ai-assistant/shared';
 import { graph } from '../controller/graph.js';
 import { tracingService } from './llm/tracing.js';
 import { executionRunService } from './ExecutionRunService.js';
+import { commandConversationContextService } from './CommandConversationContextService.js';
 
 export async function processQueuedTask(task: Task): Promise<void> {
   console.log(`[Realtime] New task detected: ${task.id} (${task.domain_action})`);
 
   try {
+    const hydratedTask = await commandConversationContextService.hydrateTaskConversationContext(task);
     const executionRun = task.id
       ? await executionRunService.getByTaskId(task.id)
       : null;
@@ -15,7 +17,7 @@ export async function processQueuedTask(task: Task): Promise<void> {
 
     await graph.invoke(
       {
-        task,
+        task: hydratedTask,
         execution_run: executionRun,
       },
       {

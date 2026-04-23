@@ -6,6 +6,11 @@ import {
   type Task,
 } from '@ai-assistant/shared';
 import { BaseProcessor, type ProcessorResult } from './BaseProcessor.js';
+import {
+  type AssistantCommandPlanner,
+  type CommandPlanningResponse,
+  planAssistantCommandWithAgent,
+} from './assistant-command/CommandPlanningAgent.js';
 import { AuditLogger } from '../services/AuditLogger.js';
 
 function extractContextReferences(text: string): ContextReference[] {
@@ -27,6 +32,7 @@ type SupportedDelegationAction =
   | 'calendar.create'
   | 'channel.send'
   | 'schedule.manage'
+  | 'skills.manage'
   | 'system.analyze';
 
 type AssistantCommandPayload = {
@@ -72,6 +78,7 @@ const SUPPORTED_ACTIONS: ReadonlySet<string> = new Set([
   'calendar.create',
   'channel.send',
   'schedule.manage',
+  'skills.manage',
   'system.analyze',
 ]);
 
@@ -110,6 +117,77 @@ function asContextReferences(value: unknown): ContextReference[] {
 
 function isConfirmed(payload: AssistantCommandPayload): boolean {
   return payload.confirmed === true;
+}
+
+type ConversationContextEntry = {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  state?: string;
+};
+
+function parseConversationContext(raw: unknown): ConversationContextEntry[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const entries: ConversationContextEntry[] = [];
+
+  for (const item of raw) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      continue;
+    }
+
+    const record = item as Record<string, unknown>;
+    const role = asString(record.role);
+    const content = asString(record.content);
+    if (!role || !content) {
+      continue;
+    }
+
+    if (role !== 'user' && role !== 'assistant' && role !== 'system') {
+      continue;
+    }
+
+    const state = asString(record.state) ?? undefined;
+    entries.push({ role, content, state });
+  }
+
+  return entries;
+}
+
+function isConfirmationOnlyMessage(commandText: string): boolean {
+  const normalized = commandText.trim().toLowerCase();
+  return normalized === 'confirm' || normalized === 'yes' || normalized === 'y' || normalized === 'ok' || normalized === 'okay';
+}
+
+function extractPendingConfirmationCommand(rawContext: unknown): string | null {
+  const context = parseConversationContext(rawContext);
+  if (context.length === 0) return null;
+
+  for (let i = context.length - 1; i >= 0; i -= 1) {
+    const entry = context[i]!;
+    if (entry.role !== 'assistant') continue;
+    if (entry.state !== 'paused') continue;
+
+    const lower = entry.content.toLowerCase();
+    const looksLikeConfirmationPause =
+      (lower.includes('quick recap') || lower.includes('high-risk') || lower.includes('high risk'))
+      && (lower.includes('reply yes') || lower.includes('confirm'));
+
+    if (!looksLikeConfirmationPause) {
+      continue;
+    }
+
+    for (let j = i - 1; j >= 0; j -= 1) {
+      const prior = context[j]!;
+      if (prior.role !== 'user') continue;
+      const candidate = prior.content.trim();
+      if (candidate.length === 0) continue;
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 function isTrustedUserInitiatedCommand(task: Task, payload: AssistantCommandPayload): boolean {
@@ -291,15 +369,15 @@ function getDefaultRequestedTools(step: {
   }
 
   if (step.worker_type === 'docs') {
-    return ['create_doc'];
+    return ['create_doc', 'modify_doc_text', 'get_doc_content'];
   }
 
   if (step.worker_type === 'sheets') {
-    return ['modify_sheet_values'];
+    return ['create_spreadsheet', 'modify_sheet_values', 'read_sheet_values'];
   }
 
   if (step.worker_type === 'slides') {
-    return ['create_presentation'];
+    return ['create_presentation', 'batch_update_presentation', 'get_presentation'];
   }
 
   return [];
@@ -397,7 +475,7 @@ function buildExplicitPlan(
     const body = asString(mergedPayload.body) ?? asString(payload.body);
 
     if (!recipient || !subject || !body) {
-      throw new Error(`COMMAND_AMBIGUOUS: ${explicitAction} command missing recipient/subject/body payload fields.`);
+      throw new Error(`COMMAND_CLARIFICATION_REQUIRED: I need the recipient, subject, and body before I can ${explicitAction === 'email.send' ? 'send' : 'draft'} the email.`);
     }
 
     const step = makePlanStep(0, {
@@ -432,7 +510,7 @@ function buildExplicitPlan(
     const endTime = asString(mergedPayload.endTime) ?? asString(mergedPayload.end_time) ?? asString(payload.endTime) ?? asString(payload.end_time);
 
     if (!summary || !startTime || !endTime) {
-      throw new Error('COMMAND_AMBIGUOUS: Calendar command missing summary/start/end payload fields.');
+      throw new Error('COMMAND_CLARIFICATION_REQUIRED: What title, start time, and end time should I use for this calendar event?');
     }
 
     const step = makePlanStep(0, {
@@ -455,6 +533,96 @@ function buildExplicitPlan(
       [step],
       'Plan Calendar capability worker',
     );
+  }
+
+  return null;
+}
+
+function normalizeAgenticPlanStep(
+  task: Task,
+  payload: AssistantCommandPayload,
+  step: {
+    title: string;
+    worker_type: AssistantCommandIntentStep['worker_type'];
+    action: string;
+    requested_tools?: string[];
+    input?: Record<string, unknown>;
+    recoverable?: boolean;
+  },
+  index: number,
+): AssistantCommandIntentStep {
+  const input = asRecord(step.input);
+
+  if (step.worker_type === 'gmail') {
+    const recipient = asString(input.recipient) ?? asString(input.to);
+    const normalizedInput: Record<string, unknown> = {
+      ...input,
+      recipient: recipient ?? undefined,
+      to: recipient ?? undefined,
+      subject: asString(input.subject) ?? 'Planner update',
+      body: asString(input.body) ?? extractEmailBodyFromText(String(payload.command ?? '')) ?? undefined,
+      body_format: asString(input.body_format) ?? 'plain',
+    };
+
+    if (step.action === 'send_email') {
+      Object.assign(normalizedInput, buildSendApprovalFields(task, payload, input));
+    }
+
+    return makePlanStep(index, {
+      ...step,
+      input: normalizedInput,
+    });
+  }
+
+  if (step.worker_type === 'calendar') {
+    return makePlanStep(index, {
+      ...step,
+      input: {
+        ...input,
+        summary: asString(input.summary) ?? undefined,
+        startTime: asString(input.startTime) ?? asString(input.start_time) ?? undefined,
+        endTime: asString(input.endTime) ?? asString(input.end_time) ?? undefined,
+        description: asString(input.description) ?? undefined,
+        location: asString(input.location) ?? undefined,
+      },
+    });
+  }
+
+  if (step.worker_type === 'drive') {
+    return makePlanStep(index, {
+      ...step,
+      input: {
+        ...input,
+        context_references: Array.isArray(input.context_references) ? input.context_references : payload.context_references,
+      },
+    });
+  }
+
+  return makePlanStep(index, {
+    ...step,
+    input,
+  });
+}
+
+function validatePlannerIntent(intent: AssistantCommandIntent): string | null {
+  for (const step of intent.requested_steps) {
+    const input = asRecord(step.input);
+
+    if (step.worker_type === 'gmail') {
+      const recipient = asString(input.recipient) ?? asString(input.to);
+      if (!recipient) {
+        return 'I need the recipient email address before I can draft or send that email.';
+      }
+    }
+
+    if (step.worker_type === 'calendar') {
+      const summary = asString(input.summary);
+      const startTime = asString(input.startTime) ?? asString(input.start_time);
+      const endTime = asString(input.endTime) ?? asString(input.end_time);
+      if (!summary || !startTime || !endTime) {
+        return 'What title, start time, and end time should I use for this calendar event?';
+      }
+    }
   }
 
   return null;
@@ -547,7 +715,7 @@ function inferWorkspacePlan(
     const endTime = asString(payload.endTime) ?? asString(payload.end_time);
 
     if (!summary || !startTime || !endTime) {
-      throw new Error('COMMAND_AMBIGUOUS: Calendar command missing summary/start/end payload fields.');
+      throw new Error('COMMAND_CLARIFICATION_REQUIRED: What title, start time, and end time should I use for this calendar event?');
     }
 
     steps.push(
@@ -571,7 +739,7 @@ function inferWorkspacePlan(
     const body = asString(payload.body) ?? extractEmailBodyFromText(commandText);
 
     if (!recipient) {
-      throw new Error('COMMAND_AMBIGUOUS: Email command missing recipient payload field.');
+      throw new Error('COMMAND_CLARIFICATION_REQUIRED: I need the recipient email address before I can draft or send that email.');
     }
 
     steps.push(
@@ -605,18 +773,79 @@ function inferWorkspacePlan(
   );
 }
 
+function isSkillsManageIntent(commandText: string): boolean {
+  const lower = commandText.toLowerCase();
+
+  return (
+    /\bskills?\s*:/.test(lower)
+    || (/\b(save|store|remember)\b/.test(lower) && /\bskill\b/.test(lower))
+    || (/\bremember\b/.test(lower) && /\bwhen you write\b/.test(lower))
+    || /\bcover[- ]?letter\s+style\b/.test(lower)
+    || (/\b(list|show|delete|remove|forget)\b/.test(lower) && /\bskills?\b/.test(lower))
+  );
+}
+
+function inferSkillsManageOperation(commandText: string): 'list' | 'upsert' | 'delete' {
+  const lower = commandText.toLowerCase();
+
+  if (/\b(list|show|view)\b/.test(lower) && /\bskills?\b/.test(lower)) {
+    return 'list';
+  }
+
+  if (/\b(delete|remove|forget)\b/.test(lower) && /\bskills?\b/.test(lower)) {
+    return 'delete';
+  }
+
+  return 'upsert';
+}
+
+function extractSkillNameFromCommand(commandText: string): string | null {
+  const direct = commandText.match(/\bskill\s*[:\-]\s*([a-z0-9][a-z0-9\-_ ]{1,80})/i);
+  if (direct?.[1]) {
+    return direct[1].trim();
+  }
+
+  const called = commandText.match(/\b(?:called|named)\s+["“']([^"”']+)["”']/i);
+  if (called?.[1]) {
+    return called[1].trim();
+  }
+
+  return null;
+}
+
 export class AssistantCommandProcessor extends BaseProcessor {
+  private static plannerOverride: AssistantCommandPlanner | null = null;
+
+  static setPlannerForTests(planner: AssistantCommandPlanner | null): void {
+    this.plannerOverride = planner;
+  }
+
+  constructor(private readonly planner: AssistantCommandPlanner = planAssistantCommandWithAgent) {
+    super();
+  }
+
   async process(task: Task): Promise<ProcessorResult> {
     this.clearTrace();
 
     const payload = asRecord(task.payload) as AssistantCommandPayload;
-    const commandText = resolveCommandText(payload);
+    let commandText = resolveCommandText(payload);
 
     if (!commandText) {
       throw new Error('COMMAND_INVALID: Missing command text.');
     }
 
-    const confirmed = isConfirmed(payload);
+    const explicitAction = resolveExplicitAction(payload);
+    let confirmed = isConfirmed(payload);
+
+    if (!confirmed && isConfirmationOnlyMessage(commandText)) {
+      const pending = extractPendingConfirmationCommand(payload.conversation_context);
+      if (pending) {
+        commandText = pending;
+        confirmed = true;
+        this.addTraceStep('command_confirmation', 'Resolved bare confirmation using conversation context', 0.86);
+      }
+    }
+
     if (isHighRisk(payload) && !confirmed) {
       throw new Error(`CONFIRMATION_REQUIRED: ${buildConfirmationRecap(task, payload, commandText)}`);
     }
@@ -626,7 +855,6 @@ export class AssistantCommandProcessor extends BaseProcessor {
     const existingRefs = asContextReferences(payload.context_references);
     const contextReferences = [...existingRefs, ...extractedRefs];
 
-    const explicitAction = resolveExplicitAction(payload);
     if (explicitAction && requiresConfirmation(explicitAction) && !confirmed) {
       throw new Error(`CONFIRMATION_REQUIRED: ${buildConfirmationRecap(task, payload, commandText, explicitAction)}`);
     }
@@ -645,7 +873,7 @@ export class AssistantCommandProcessor extends BaseProcessor {
           channel_metadata: asRecord(payload.channel_metadata),
           source: asString(payload.source),
           user_initiated: payload.user_initiated === true,
-          confirmed: payload.confirmed === true,
+          confirmed,
           conversation_id: asString(payload.conversation_id),
           source_message_id: asString(payload.source_message_id),
           correlation_id: asString(payload.correlation_id),
@@ -705,7 +933,7 @@ export class AssistantCommandProcessor extends BaseProcessor {
       };
     }
 
-    if (/\b(schedule|schedules|cron|recurr|every\s+(?:\d+\s+)?(?:minutes?|hours?|days?|weeks?|months?|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|daily|weekly|monthly|pause\s+schedule|resume\s+schedule|delete\s+schedule|list\s+(my\s+)?schedules?)\b/.test(commandLower)) {
+    if (/\b(schedule|schedules|cron|recurr|in\s+\d+\s+(?:minutes?|hours?|days?)|tomorrow|every\s+(?:\d+\s+)?(?:minutes?|hours?|days?|weeks?|months?|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|daily|weekly|monthly|pause\s+schedule|resume\s+schedule|delete\s+schedule|list\s+(my\s+)?schedules?)\b/.test(commandLower)) {
       this.addTraceStep('command_intent_parse', 'Mapped command to schedule.manage', 0.82);
       return {
         delegated_domain_action: 'schedule.manage',
@@ -719,13 +947,100 @@ export class AssistantCommandProcessor extends BaseProcessor {
           channel_metadata: asRecord(payload.channel_metadata),
           source: asString(payload.source),
           user_initiated: payload.user_initiated === true,
-          confirmed: payload.confirmed === true,
+          confirmed,
           conversation_id: asString(payload.conversation_id),
           source_message_id: asString(payload.source_message_id),
           correlation_id: asString(payload.correlation_id),
           conversation_context: payload.conversation_context,
         },
         summary: 'Mapped command to schedule.manage',
+        trace: this.getTrace(),
+        citations,
+      };
+    }
+
+    if (explicitAction === 'skills.manage' || isSkillsManageIntent(commandText)) {
+      const actionPayload = asRecord(payload.action_payload);
+      const targetPayload = asRecord(payload.target_payload);
+      const explicitOperation = asString(actionPayload.operation) ?? asString(targetPayload.operation);
+      const operation =
+        explicitOperation === 'list' || explicitOperation === 'upsert' || explicitOperation === 'delete'
+          ? explicitOperation
+          : inferSkillsManageOperation(commandText);
+
+      const skillName =
+        asString(actionPayload.skill_name)
+        ?? asString(targetPayload.skill_name)
+        ?? extractSkillNameFromCommand(commandText);
+
+      this.addTraceStep('command_intent_parse', `Mapped command to skills.manage (${operation})`, 0.87);
+
+      return {
+        delegated_domain_action: 'skills.manage',
+        delegated_payload: {
+          command_text: commandText,
+          operation,
+          skill_name: skillName,
+          user_initiated: payload.user_initiated === true,
+          conversation_id: asString(payload.conversation_id),
+          source_message_id: asString(payload.source_message_id),
+          correlation_id: asString(payload.correlation_id),
+          conversation_context: payload.conversation_context,
+        },
+        summary:
+          operation === 'list'
+            ? 'List user skills'
+            : operation === 'delete'
+              ? 'Delete user skill'
+              : 'Save or update user skill',
+        trace: this.getTrace(),
+        citations,
+      };
+    }
+
+    const planner = AssistantCommandProcessor.plannerOverride ?? this.planner;
+    let agenticDecision: CommandPlanningResponse | null = null;
+    try {
+      agenticDecision = await planner({
+        task,
+        commandText,
+        contextReferences,
+        knownFields: payload as Record<string, unknown>,
+      });
+    } catch (err: unknown) {
+      this.addTraceStep('command_intent_agentic_fallback', `Agentic planning failed: ${err instanceof Error ? err.message : String(err)}`, 0);
+      agenticDecision = null;
+    }
+
+    if (agenticDecision && agenticDecision.decision === 'clarify') {
+      const clarificationPrompt = agenticDecision.clarification_prompt
+        ?? 'I need a bit more detail before I can plan this command.';
+      this.addTraceStep('command_intent_clarification', clarificationPrompt, 0.72);
+      throw new Error(`COMMAND_CLARIFICATION_REQUIRED: ${clarificationPrompt}`);
+    }
+
+    if (agenticDecision && agenticDecision.decision === 'plan' && agenticDecision.steps.length > 0) {
+      const plannerIntent = buildPlannerIntent(
+        commandText,
+        payload,
+        contextReferences,
+        agenticDecision.steps.map((step: any, index: number) => normalizeAgenticPlanStep(task, payload, step, index)),
+        agenticDecision.summary,
+      );
+
+      const validationError = validatePlannerIntent(plannerIntent);
+      if (validationError) {
+        throw new Error(`COMMAND_CLARIFICATION_REQUIRED: ${validationError}`);
+      }
+
+      if (plannerIntent.requested_steps.some((step) => step.action === 'send_email') && !confirmed) {
+        throw new Error(`CONFIRMATION_REQUIRED: ${buildConfirmationRecap(task, payload, commandText, 'email.send')}`);
+      }
+
+      this.addTraceStep('command_intent_agentic', `Agentically planned ${plannerIntent.requested_steps.length} workspace steps`, 0.9);
+      return {
+        planner_intent: plannerIntent,
+        summary: plannerIntent.summary,
         trace: this.getTrace(),
         citations,
       };

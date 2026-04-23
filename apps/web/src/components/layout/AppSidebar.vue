@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useRoute } from 'vue-router';
 
 const route = useRoute();
 
 const navItems = [
-  { label: 'Dashboard', icon: 'pi pi-home', to: '/dashboard' },
   { label: 'Command Center', icon: 'pi pi-comments', to: '/dashboard/command-center' },
+  { label: 'Dashboard', icon: 'pi pi-home', to: '/dashboard' },
   { label: 'Messages', icon: 'pi pi-envelope', to: '/messages/topic' },
   { label: 'Protocol', icon: 'pi pi-bolt', to: '/dashboard/brain-setup' },
   { label: 'Audit Log', icon: 'pi pi-shield', to: '/dashboard/audit-log' },
@@ -14,11 +14,15 @@ const navItems = [
 ];
 
 const isCollapsed = ref(false);
+
+const collapseButtonLabel = computed(() => {
+  return isCollapsed.value ? 'Expand sidebar' : 'Collapse sidebar';
+});
 </script>
 
 <template>
   <aside 
-    class="bg-white border-r border-executive-background flex flex-col transition-all duration-300 ease-in-out"
+    class="bg-white border-r border-executive-background flex flex-col transition-[width] duration-300 ease-in-out"
     :class="[isCollapsed ? 'w-20' : 'w-64']"
   >
     <div class="flex-1 py-6 px-3 space-y-2">
@@ -26,7 +30,9 @@ const isCollapsed = ref(false);
         v-for="item in navItems"
         :key="item.to"
         :to="item.to"
-        class="flex items-center gap-3 px-3 py-3 rounded-executive no-underline transition-colors"
+        :aria-label="item.label"
+        :title="item.label"
+        class="flex items-center gap-3 px-3 py-3 rounded-executive no-underline transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-executive-primary/30"
         :class="[
           route.path.startsWith(item.to) && (item.to !== '/dashboard' || route.path === '/dashboard')
             ? 'bg-slate-100 text-executive-primary font-semibold' 
@@ -36,6 +42,7 @@ const isCollapsed = ref(false);
         <i
           :class="item.icon"
           class="text-lg"
+          aria-hidden="true"
         />
         <span
           v-if="!isCollapsed"
@@ -46,10 +53,16 @@ const isCollapsed = ref(false);
 
     <div class="p-4 border-t border-executive-background">
       <button 
-        class="w-full flex items-center justify-center p-2 rounded-executive hover:bg-slate-50 text-slate-400 hover:text-executive-primary transition-colors"
+        type="button"
+        class="w-full flex items-center justify-center p-2 rounded-executive hover:bg-slate-50 text-slate-400 hover:text-executive-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-executive-primary/30"
+        :aria-label="collapseButtonLabel"
+        :aria-expanded="!isCollapsed"
         @click="isCollapsed = !isCollapsed"
       >
-        <i :class="isCollapsed ? 'pi pi-angle-double-right' : 'pi pi-angle-double-left'" />
+        <i
+          :class="isCollapsed ? 'pi pi-angle-double-right' : 'pi pi-angle-double-left'"
+          aria-hidden="true"
+        />
       </button>
     </div>
   </aside>

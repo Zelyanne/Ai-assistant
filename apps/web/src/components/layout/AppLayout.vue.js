@@ -1,8 +1,11 @@
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import AppHeader from './AppHeader.vue';
 import AppSidebar from './AppSidebar.vue';
 import Drawer from 'primevue/drawer';
+import { useRoute } from 'vue-router';
 const mobileMenuVisible = ref(false);
+const route = useRoute();
+const isWideLayout = computed(() => route.meta.layoutWidth === 'wide');
 debugger; /* PartiallyEnd: #3632/scriptSetup.vue */
 const __VLS_ctx = {};
 let __VLS_components;
@@ -11,6 +14,10 @@ let __VLS_directives;
 // CSS variable injection end 
 __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
     ...{ class: "min-h-screen bg-executive-background flex flex-col font-sans text-executive-primary" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.a, __VLS_intrinsicElements.a)({
+    href: "#app-main",
+    ...{ class: "sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 rounded-xl bg-white px-4 py-2 text-sm font-semibold shadow-sm ring-2 ring-executive-primary/20" },
 });
 /** @type {[typeof AppHeader, ]} */ ;
 // @ts-ignore
@@ -44,14 +51,18 @@ const __VLS_10 = {}.Drawer;
 /** @type {[typeof __VLS_components.Drawer, typeof __VLS_components.Drawer, ]} */ ;
 // @ts-ignore
 const __VLS_11 = __VLS_asFunctionalComponent(__VLS_10, new __VLS_10({
+    id: "app-mobile-nav",
     visible: (__VLS_ctx.mobileMenuVisible),
     header: "Navigation",
     ...{ class: "!w-72" },
+    role: "region",
 }));
 const __VLS_12 = __VLS_11({
+    id: "app-mobile-nav",
     visible: (__VLS_ctx.mobileMenuVisible),
     header: "Navigation",
     ...{ class: "!w-72" },
+    role: "region",
 }, ...__VLS_functionalComponentArgsRest(__VLS_11));
 __VLS_13.slots.default;
 /** @type {[typeof AppSidebar, ]} */ ;
@@ -64,10 +75,13 @@ const __VLS_15 = __VLS_14({
 }, ...__VLS_functionalComponentArgsRest(__VLS_14));
 var __VLS_13;
 __VLS_asFunctionalElement(__VLS_intrinsicElements.main, __VLS_intrinsicElements.main)({
+    id: "app-main",
     ...{ class: "flex-1 overflow-y-auto p-8 lg:p-12" },
+    tabindex: "-1",
 });
 __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
-    ...{ class: "max-w-6xl mx-auto" },
+    ...{ class: "mx-auto min-h-0" },
+    ...{ class: (__VLS_ctx.isWideLayout ? 'max-w-none' : 'max-w-6xl') },
 });
 const __VLS_17 = {}.RouterView;
 /** @type {[typeof __VLS_components.RouterView, typeof __VLS_components.routerView, typeof __VLS_components.RouterView, typeof __VLS_components.routerView, ]} */ ;
@@ -103,6 +117,21 @@ var __VLS_20;
 /** @type {__VLS_StyleScopedClasses['flex-col']} */ ;
 /** @type {__VLS_StyleScopedClasses['font-sans']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-executive-primary']} */ ;
+/** @type {__VLS_StyleScopedClasses['sr-only']} */ ;
+/** @type {__VLS_StyleScopedClasses['focus:not-sr-only']} */ ;
+/** @type {__VLS_StyleScopedClasses['focus:fixed']} */ ;
+/** @type {__VLS_StyleScopedClasses['focus:left-4']} */ ;
+/** @type {__VLS_StyleScopedClasses['focus:top-4']} */ ;
+/** @type {__VLS_StyleScopedClasses['focus:z-50']} */ ;
+/** @type {__VLS_StyleScopedClasses['rounded-xl']} */ ;
+/** @type {__VLS_StyleScopedClasses['bg-white']} */ ;
+/** @type {__VLS_StyleScopedClasses['px-4']} */ ;
+/** @type {__VLS_StyleScopedClasses['py-2']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-semibold']} */ ;
+/** @type {__VLS_StyleScopedClasses['shadow-sm']} */ ;
+/** @type {__VLS_StyleScopedClasses['ring-2']} */ ;
+/** @type {__VLS_StyleScopedClasses['ring-executive-primary/20']} */ ;
 /** @type {__VLS_StyleScopedClasses['flex-1']} */ ;
 /** @type {__VLS_StyleScopedClasses['flex']} */ ;
 /** @type {__VLS_StyleScopedClasses['overflow-hidden']} */ ;
@@ -116,8 +145,8 @@ var __VLS_20;
 /** @type {__VLS_StyleScopedClasses['overflow-y-auto']} */ ;
 /** @type {__VLS_StyleScopedClasses['p-8']} */ ;
 /** @type {__VLS_StyleScopedClasses['lg:p-12']} */ ;
-/** @type {__VLS_StyleScopedClasses['max-w-6xl']} */ ;
 /** @type {__VLS_StyleScopedClasses['mx-auto']} */ ;
+/** @type {__VLS_StyleScopedClasses['min-h-0']} */ ;
 var __VLS_dollars;
 const __VLS_self = (await import('vue')).defineComponent({
     setup() {
@@ -126,6 +155,7 @@ const __VLS_self = (await import('vue')).defineComponent({
             AppSidebar: AppSidebar,
             Drawer: Drawer,
             mobileMenuVisible: mobileMenuVisible,
+            isWideLayout: isWideLayout,
         };
     },
 });

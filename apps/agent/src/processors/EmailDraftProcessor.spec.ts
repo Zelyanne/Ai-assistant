@@ -27,7 +27,7 @@ describe('EmailDraftProcessor', () => {
 
   it('creates an email draft with normalized Gmail tool names', async () => {
     mockResolveToolName.mockResolvedValue({
-      requestedTool: 'create_gmail_draft',
+      requestedTool: 'draft_gmail_message',
       resolvedTool: 'draft_gmail_message',
       availableTools: ['draft_gmail_message'],
     });
@@ -50,7 +50,7 @@ describe('EmailDraftProcessor', () => {
     expect(mockExecuteWorkerTool).toHaveBeenCalledWith(
       'org-1',
       'gmail',
-      'create_gmail_draft',
+      'draft_gmail_message',
       expect.objectContaining({
         to: 'test@example.com',
         subject: 'Test Subject',

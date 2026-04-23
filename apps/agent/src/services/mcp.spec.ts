@@ -153,14 +153,14 @@ describe('MCPService', () => {
     expect(lastTransport).toBeDefined();
   });
 
-  it('normalizes legacy aliases and enforces worker policy', async () => {
+  it('resolves tool name and enforces worker policy', async () => {
     const { MCPService } = await import('./mcp.js');
     const service = new MCPService();
 
-    const resolution = await service.resolveToolName('org-123', 'create_gmail_draft');
+    const resolution = await service.resolveToolName('org-123', 'draft_gmail_message');
     expect(resolution.resolvedTool).toBe('draft_gmail_message');
 
-    await service.executeWorkerTool('org-123', 'gmail', 'create_gmail_draft', {
+    await service.executeWorkerTool('org-123', 'gmail', 'draft_gmail_message', {
       to: 'alexis@example.com',
       subject: 'Hello',
       body: 'Body',

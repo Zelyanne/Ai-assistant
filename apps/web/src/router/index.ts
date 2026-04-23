@@ -49,12 +49,12 @@ const routes = [
         component: () => import('../views/BrainSetup.vue'),
         meta: { requiresAuth: true }
       },
-      {
-        path: 'command-center',
-        name: 'command-center',
-        component: () => import('../views/CommandCenter.vue'),
-        meta: { requiresAuth: true }
-      },
+       {
+         path: 'command-center',
+         name: 'command-center',
+         component: () => import('../views/CommandCenter.vue'),
+         meta: { requiresAuth: true, layoutWidth: 'wide' }
+       },
       {
         path: 'audit-log',
         name: 'audit-log',
@@ -120,10 +120,10 @@ router.beforeEach(async (to, _from, next) => {
     return;
   }
 
-  if (isAuthenticated && to.name === 'login') {
-    next({ name: 'dashboard' });
-    return;
-  }
+   if (isAuthenticated && to.name === 'login') {
+     next({ name: 'command-center' });
+     return;
+   }
 
   // Ensure profile is loaded if authenticated
   if (isAuthenticated && !userStore.profile) {
@@ -136,11 +136,11 @@ router.beforeEach(async (to, _from, next) => {
     return;
   }
 
-  // Redirect away from onboarding if organization already exists
-  if (isAuthenticated && userStore.hasOrganization && to.name === 'onboarding') {
-    next({ name: 'dashboard' });
-    return;
-  }
+   // Redirect away from onboarding if organization already exists
+   if (isAuthenticated && userStore.hasOrganization && to.name === 'onboarding') {
+     next({ name: 'command-center' });
+     return;
+   }
 
   if (to.meta.requiresCEO && !userStore.isCEO) {
     next({ name: 'unauthorized' });

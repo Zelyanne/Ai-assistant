@@ -204,12 +204,18 @@ onUnmounted(() => {
       </Message>
     </section>
 
-    <section v-if="suggestions.length > 0" class="space-y-6">
+    <section
+      v-if="suggestions.length > 0"
+      class="space-y-6"
+    >
       <header class="flex items-center justify-between">
         <h2 class="text-xl font-bold text-executive-primary tracking-tight font-sans">
           Protocol Optimization Suggestions
         </h2>
-        <Badge :value="suggestions.length" severity="info" />
+        <Badge
+          :value="suggestions.length"
+          severity="info"
+        />
       </header>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <OutcomeCard

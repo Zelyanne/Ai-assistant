@@ -94,7 +94,7 @@ describe('EmailSendProcessor', () => {
   it('falls back to draft when send tool is unavailable', async () => {
     mockExecuteWorkerTool.mockRejectedValueOnce(new Error('Unknown tool: send_gmail_message'));
     mockResolveToolName.mockResolvedValueOnce({
-      requestedTool: 'create_gmail_draft',
+      requestedTool: 'draft_gmail_message',
       resolvedTool: 'draft_gmail_message',
       availableTools: ['draft_gmail_message'],
     });
@@ -117,7 +117,7 @@ describe('EmailSendProcessor', () => {
     } as any);
 
     expect(mockExecuteWorkerTool).toHaveBeenNthCalledWith(1, 'org-1', 'gmail', 'send_gmail_message', expect.any(Object));
-    expect(mockExecuteWorkerTool).toHaveBeenNthCalledWith(2, 'org-1', 'gmail', 'create_gmail_draft', expect.any(Object));
+    expect(mockExecuteWorkerTool).toHaveBeenNthCalledWith(2, 'org-1', 'gmail', 'draft_gmail_message', expect.any(Object));
     expect(result.send_status).toBe('draft_created');
     expect(result.tool_name).toBe('draft_gmail_message');
   });

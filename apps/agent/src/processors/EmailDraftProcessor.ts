@@ -31,31 +31,23 @@ export class EmailDraftProcessor extends BaseProcessor {
 
     const resolution = await mcpService.resolveToolName(
       task.organization_id,
-      'create_gmail_draft',
+      'draft_gmail_message',
     );
 
-    const actualTool = resolution.resolvedTool ?? 'create_gmail_draft';
-    const args = actualTool === 'draft_gmail_message'
-      ? {
-          to: recipient,
-          subject,
-          body,
-          body_format: typeof payload.body_format === 'string' ? payload.body_format : 'plain',
-          thread_id: typeof payload.thread_external_id === 'string' ? payload.thread_external_id : undefined,
-        }
-      : {
-          userId: 'me',
-          draft: {
-            message: {
-              raw: encodeRawEmail(recipient, subject, body),
-            },
-          },
-        };
+    const actualTool = resolution.resolvedTool ?? 'draft_gmail_message';
+    // Use MCP tool format (draft_gmail_message params)
+    const args = {
+      to: recipient,
+      subject,
+      body,
+      body_format: typeof payload.body_format === 'string' ? payload.body_format : 'plain',
+      thread_id: typeof payload.thread_external_id === 'string' ? payload.thread_external_id : undefined,
+    };
 
     const { toolName, result } = await mcpService.executeWorkerTool(
       task.organization_id,
       'gmail',
-      'create_gmail_draft',
+      'draft_gmail_message',
       args,
     );
 

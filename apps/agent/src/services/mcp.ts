@@ -56,30 +56,6 @@ type IntegrationRow = {
   sync_status?: string | null;
 } | null;
 
-const TOOL_ALIAS_MAP: Record<string, string[]> = {
-  create_gmail_draft: ['draft_gmail_message'],
-  draft_gmail_message: ['create_gmail_draft'],
-  send_gmail_message: [],
-  create_calendar_event: ['manage_event'],
-  patch_calendar_event: ['manage_event'],
-  update_calendar_event: ['manage_event'],
-  query_calendar_freebusy: ['query_freebusy'],
-  manage_event: ['create_calendar_event', 'patch_calendar_event', 'update_calendar_event'],
-  query_freebusy: ['query_calendar_freebusy'],
-  create_doc: [],
-  modify_doc_text: [],
-  get_doc_content: [],
-  search_drive_files: [],
-  get_drive_file_content: [],
-  create_drive_file: [],
-  import_to_google_doc: [],
-  create_spreadsheet: [],
-  read_sheet_values: [],
-  modify_sheet_values: [],
-  create_presentation: [],
-  modify_presentation: [],
-};
-
 const TOOL_KEYWORD_MAP: Record<string, string[][]> = {
   draft_gmail_message: [['draft', 'gmail']],
   send_gmail_message: [['send', 'gmail']],
@@ -541,6 +517,13 @@ export class MCPService {
     return toolName.trim().toLowerCase();
   }
 
+  private isRequestedToolAllowed(
+    workerType: CapabilityWorkerType,
+    requestedTool: string,
+  ): boolean {
+    return workerToolPolicyService.isToolAllowed(workerType, requestedTool);
+  }
+
   private matchToolByKeywords(toolNames: string[], keywords: string[][]): string | null {
     for (const keywordSet of keywords) {
       for (const toolName of toolNames) {
@@ -611,16 +594,7 @@ export class MCPService {
       return { requestedTool, resolvedTool: exactMatch, availableTools };
     }
 
-    const aliases = TOOL_ALIAS_MAP[requestedTool] ?? [];
-    for (const alias of aliases) {
-      const aliasMatch = availableTools.find(
-        (toolName) => this.normalizeToolName(toolName) === this.normalizeToolName(alias),
-      );
-      if (aliasMatch) {
-        return { requestedTool, resolvedTool: aliasMatch, availableTools };
-      }
-    }
-
+    // Keyword-based fallback
     const keywordMatch = this.matchToolByKeywords(
       availableTools,
       TOOL_KEYWORD_MAP[requestedTool] ?? [],
@@ -639,7 +613,7 @@ export class MCPService {
     requestedTool: string,
     args: Record<string, unknown>,
   ): Promise<{ toolName: string; result: unknown }> {
-    if (!workerToolPolicyService.isToolAllowed(workerType, requestedTool)) {
+    if (!this.isRequestedToolAllowed(workerType, requestedTool)) {
       throw new Error(
         `Worker policy denied tool ${requestedTool} for ${workerType}`,
       );
@@ -673,7 +647,7 @@ export class MCPService {
     }
 
     for (const requestedTool of requestedTools) {
-      if (!workerToolPolicyService.isToolAllowed(workerType, requestedTool)) {
+      if (!this.isRequestedToolAllowed(workerType, requestedTool)) {
         unavailableTools.push(requestedTool);
         errors.push(`Worker policy denied tool: ${requestedTool}`);
         continue;

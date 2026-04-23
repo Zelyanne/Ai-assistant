@@ -242,48 +242,37 @@ export class CronSchedulerService {
       );
       const dispatchWindowEnd = nextScheduledRun.toISOString();
 
-      const dispatchClaim = await this.claimDispatchWindow(
-        schedule,
-        dispatchWindowStart,
-        dispatchWindowEnd,
+      const rpcClient = this.supabaseClient as unknown as {
+        rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: { message?: string } | null }>;
+      };
+
+      const { data: rpcData, error: rpcError } = await rpcClient.rpc(
+        'claim_schedule_dispatch',
+        {
+          schedule_id: schedule.id,
+          dispatch_window_start: dispatchWindowStart,
+          dispatch_window_end: dispatchWindowEnd,
+        },
       );
 
-      if (dispatchClaim) {
-        const payload: Record<string, unknown> = {
-          ...schedule.task_payload,
-          schedule_id: schedule.id,
-          schedule_dispatch_id: dispatchClaim,
-          cron_expression: schedule.cron_expression,
-          timezone: schedule.timezone,
-          scheduled: true,
-          trigger_time: dispatchWindowStart,
-        };
+      if (rpcError) {
+        await this.recordFailure(schedule, rpcError?.message ?? 'Failed to claim schedule dispatch');
+        return;
+      }
 
-        const { data: taskRow, error: taskError } = await this.supabaseClient
-          .from('tasks')
-          .insert({
-            organization_id: schedule.organization_id,
-            user_id: schedule.user_id,
-            domain_action: schedule.task_type,
-            topic: 'Schedule',
-            status: 'queued',
-            payload,
-          })
-          .select('id')
-          .single();
+      const rpcRow = Array.isArray(rpcData)
+        ? (rpcData[0] as Record<string, unknown> | undefined)
+        : (rpcData as Record<string, unknown> | null);
 
-        if (taskError || !taskRow?.id) {
-          await this.releaseDispatchClaim(dispatchClaim);
-          await this.recordFailure(schedule, taskError?.message ?? 'Failed to queue scheduled task');
-          return;
-        }
+      const shouldDispatch = rpcRow?.should_dispatch === true;
+      const reason = typeof rpcRow?.reason === 'string' ? rpcRow.reason : null;
+      const taskId = typeof rpcRow?.task_id === 'string' ? rpcRow.task_id : null;
 
-        await this.attachTaskToDispatch(dispatchClaim, taskRow.id);
-
+      if (shouldDispatch) {
         const nowIso = now.toISOString();
         await this.auditLogger.flush(
           schedule.organization_id,
-          taskRow.id,
+          taskId,
           'agent-controller',
           'schedule_execution_dispatched',
           [
@@ -292,11 +281,14 @@ export class CronSchedulerService {
               step_name: 'Schedule Dispatch',
               message: `Queued ${schedule.task_type} from schedule ${schedule.id}`,
               input_summary: `cron=${schedule.cron_expression}; timezone=${schedule.timezone}; trigger_time=${dispatchWindowStart}`,
-              output_summary: `task_id=${taskRow.id}; dispatch_window_end=${dispatchWindowEnd}`,
+              output_summary: `task_id=${taskId}; dispatch_window_end=${dispatchWindowEnd}`,
             },
           ],
           [],
         );
+      } else if (reason === 'exhausted' || reason === 'ended' || reason === 'inactive' || reason === 'invalid_payload') {
+        // Stop catch-up early: no further windows should be dispatched for this schedule.
+        return;
       }
 
       dispatchCursor = nextScheduledRun;
@@ -305,72 +297,6 @@ export class CronSchedulerService {
 
     if (dispatchCursor.getTime() <= now.getTime()) {
       console.warn(`[CronSchedulerService] Catch-up capped at ${MAX_CATCH_UP_RUNS_PER_CYCLE} runs for schedule ${schedule.id}`);
-    }
-  }
-
-  private async claimDispatchWindow(
-    schedule: UserScheduleRow,
-    dispatchWindowStart: string,
-    dispatchWindowEnd: string,
-  ): Promise<string | null> {
-    const { data: existing, error: existingError } = await this.supabaseClient
-      .from('user_schedule_dispatches')
-      .select('id')
-      .eq('schedule_id', schedule.id)
-      .eq('dispatch_window_start', dispatchWindowStart)
-      .maybeSingle();
-
-    if (existingError) {
-      console.error('[CronSchedulerService] Failed schedule dispatch idempotency check:', existingError.message);
-      return null;
-    }
-
-    if (existing?.id) {
-      return null;
-    }
-
-    const { data: inserted, error: insertError } = await this.supabaseClient
-      .from('user_schedule_dispatches')
-      .insert({
-        organization_id: schedule.organization_id,
-        schedule_id: schedule.id,
-        dispatch_window_start: dispatchWindowStart,
-        dispatch_window_end: dispatchWindowEnd,
-      })
-      .select('id')
-      .single();
-
-    if (insertError || !inserted?.id) {
-      if (insertError?.code === '23505') {
-        return null;
-      }
-
-      console.error('[CronSchedulerService] Failed to claim schedule dispatch window:', insertError?.message);
-      return null;
-    }
-
-    return inserted.id;
-  }
-
-  private async attachTaskToDispatch(dispatchId: string, taskId: string): Promise<void> {
-    const { error } = await this.supabaseClient
-      .from('user_schedule_dispatches')
-      .update({ task_id: taskId })
-      .eq('id', dispatchId);
-
-    if (error) {
-      console.error(`[CronSchedulerService] Failed to link task ${taskId} to dispatch ${dispatchId}: ${error.message}`);
-    }
-  }
-
-  private async releaseDispatchClaim(dispatchId: string): Promise<void> {
-    const { error } = await this.supabaseClient
-      .from('user_schedule_dispatches')
-      .delete()
-      .eq('id', dispatchId);
-
-    if (error) {
-      console.error(`[CronSchedulerService] Failed to release dispatch ${dispatchId}: ${error.message}`);
     }
   }
 

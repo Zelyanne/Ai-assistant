@@ -13,6 +13,7 @@ function createSupabaseMock() {
       data: unknown;
       error: unknown;
     },
+    maybeSingleResponses: [] as Array<{ data: unknown; error: unknown }>,
     maybeSingleResponse: { data: null, error: null } as { data: unknown; error: unknown },
     selectResponse: { data: { result: {} }, error: null } as { data: unknown; error: unknown },
     updateResponse: { error: null } as { error: unknown },
@@ -27,7 +28,16 @@ function createSupabaseMock() {
       state.mode = state.mode === 'insert' ? 'insert-select' : 'select';
       return chain;
     }),
-    maybeSingle: vi.fn(async () => state.maybeSingleResponse),
+    maybeSingle: vi.fn(async () => {
+      if (state.maybeSingleResponses.length > 0) {
+        const next = state.maybeSingleResponses.shift();
+        if (next) {
+          return next;
+        }
+      }
+
+      return state.maybeSingleResponse;
+    }),
     single: vi.fn(async () => (state.mode === 'insert-select' ? state.insertResponse : state.selectResponse)),
     update: vi.fn(() => {
       state.mode = 'update';
@@ -170,6 +180,88 @@ describe('ChannelRouterService', () => {
     expect(result.correlation_id).toBe('corr-existing');
     expect(chain.insert).not.toHaveBeenCalled();
     expect(flushSpy).toHaveBeenCalled();
+  });
+
+  it('returns existing task when outbound message is a duplicate', async () => {
+    const { mockSupabase, chain, state } = createSupabaseMock();
+    const registry = new ChannelAdapterRegistry([createAdapterStub()]);
+    const flushSpy = vi.spyOn(AuditLogger, 'flush').mockResolvedValue(undefined);
+
+    state.maybeSingleResponse = {
+      data: {
+        id: '77777777-7777-4777-8777-777777777777',
+        payload: {
+          correlation_id: 'corr-existing-outbound',
+        },
+      },
+      error: null,
+    };
+
+    const service = new ChannelRouterService({
+      registry,
+      supabaseClient: mockSupabase as unknown as typeof import('./supabase.js').supabase,
+    });
+
+    const result = await service.enqueueOutbound({
+      channel: 'telegram',
+      organization_id: '11111111-1111-1111-1111-111111111111',
+      user_id: '22222222-2222-4222-8222-222222222222',
+      external_message_id: 'outbound-ext-1',
+      thread_id: 'thread-1',
+      message_text: 'Reply message',
+      channel_metadata: {},
+      correlation_id: 'corr-new-outbound',
+    });
+
+    expect(result.task_id).toBe('77777777-7777-4777-8777-777777777777');
+    expect(result.correlation_id).toBe('corr-existing-outbound');
+    expect(chain.insert).not.toHaveBeenCalled();
+    expect(flushSpy).toHaveBeenCalled();
+  });
+
+  it('handles outbound insert races by returning the existing task on unique violation', async () => {
+    const { mockSupabase, state } = createSupabaseMock();
+    const registry = new ChannelAdapterRegistry([createAdapterStub()]);
+
+    state.maybeSingleResponses = [
+      { data: null, error: null },
+      {
+        data: {
+          id: '66666666-6666-4666-8666-666666666666',
+          payload: {
+            correlation_id: 'corr-race-existing',
+          },
+        },
+        error: null,
+      },
+    ];
+
+    state.insertResponse = {
+      data: null,
+      error: {
+        code: '23505',
+        message: 'duplicate key value violates unique constraint tasks_pkey',
+      },
+    };
+
+    const service = new ChannelRouterService({
+      registry,
+      supabaseClient: mockSupabase as unknown as typeof import('./supabase.js').supabase,
+    });
+
+    const result = await service.enqueueOutbound({
+      channel: 'telegram',
+      organization_id: '11111111-1111-1111-1111-111111111111',
+      user_id: '22222222-2222-4222-8222-222222222222',
+      external_message_id: 'outbound-ext-race-1',
+      thread_id: 'thread-1',
+      message_text: 'Reply message',
+      channel_metadata: {},
+      correlation_id: 'corr-race-new',
+    });
+
+    expect(result.task_id).toBe('66666666-6666-4666-8666-666666666666');
+    expect(result.correlation_id).toBe('corr-race-existing');
   });
 
   it('auto-routes relancing hints to relancing.update', async () => {

@@ -4,22 +4,18 @@ import { useUserStore } from '../stores/user';
 import { supabase } from '../services/supabase';
 const STORAGE_KEY_BASE = 'command-center-timeline-v1';
 const CONVERSATION_STORAGE_KEY_BASE = 'command-center-conversation-id-v1';
-const HIGH_RISK_PATTERNS = [
-    /\bsend\b/i,
-    /\bemail\b/i,
-    /\bforward\b/i,
-    /\breply\b/i,
-    /\bmessage\b/i,
-    /\bnotify\b/i,
-];
 const timeline = ref([]);
 const isSubmitting = ref(false);
 const activeConversationId = ref(null);
+const conversations = ref([]);
 let initialized = false;
 let idCounter = 0;
 let stopTaskSubscription = null;
 let stopMessageSubscription = null;
 let stopExecutionRunSubscription = null;
+let stopConversationSubscription = null;
+let messagesLoadedConversationId = null;
+let realtimeBootstrapNonce = 0;
 const messageIdByEntryId = new Map();
 function nextId(prefix) {
     idCounter += 1;
@@ -36,10 +32,8 @@ function defaultTimeline() {
         },
     ];
 }
-function timelineStorageKey(organizationId, userId) {
-    if (!organizationId || !userId)
-        return STORAGE_KEY_BASE;
-    return `${STORAGE_KEY_BASE}:${organizationId}:${userId}`;
+function timelineStorageKey(organizationId, userId, conversationId) {
+    return `${STORAGE_KEY_BASE}:${organizationId}:${userId}:${conversationId}`;
 }
 function conversationStorageKey(organizationId, userId) {
     return `${CONVERSATION_STORAGE_KEY_BASE}:${organizationId}:${userId}`;
@@ -68,42 +62,33 @@ function persistTimeline() {
     if (typeof window === 'undefined')
         return;
     const userStore = useUserStore();
-    const organizationId = userStore.profile?.organization_id ?? null;
-    const userId = userStore.profile?.id ?? null;
-    window.localStorage.setItem(timelineStorageKey(organizationId, userId), JSON.stringify(timeline.value));
+    const organizationId = userStore.profile?.organization_id;
+    const userId = userStore.profile?.id;
+    const conversationId = activeConversationId.value;
+    if (!organizationId || !userId || !conversationId)
+        return;
+    window.localStorage.setItem(timelineStorageKey(organizationId, userId, conversationId), JSON.stringify(timeline.value));
 }
-function initializeTimeline() {
-    if (initialized)
+function restoreTimelineFromCache(organizationId, userId, conversationId) {
+    if (typeof window === 'undefined')
         return;
-    if (typeof window === 'undefined') {
-        timeline.value = defaultTimeline();
-        initialized = true;
+    const raw = window.localStorage.getItem(timelineStorageKey(organizationId, userId, conversationId));
+    if (!raw)
         return;
-    }
-    const userStore = useUserStore();
-    const organizationId = userStore.profile?.organization_id ?? null;
-    const userId = userStore.profile?.id ?? null;
-    const raw = window.localStorage.getItem(timelineStorageKey(organizationId, userId));
-    if (!raw) {
-        timeline.value = defaultTimeline();
-        persistTimeline();
-        initialized = true;
-        return;
-    }
     try {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
             timeline.value = parsed;
         }
-        else {
-            timeline.value = defaultTimeline();
-            persistTimeline();
-        }
     }
     catch {
-        timeline.value = defaultTimeline();
-        persistTimeline();
+        // Ignore bad cache
     }
+}
+function initializeTimeline() {
+    if (initialized)
+        return;
+    timeline.value = defaultTimeline();
     initialized = true;
 }
 function updateEntry(id, patch) {
@@ -131,7 +116,57 @@ function taskResultSummary(result, fallback) {
     if (!result || typeof result !== 'object' || Array.isArray(result))
         return fallback;
     const summary = result.summary;
-    return typeof summary === 'string' && summary.trim().length > 0 ? summary : fallback;
+    if (typeof summary === 'string' && summary.trim().length > 0) {
+        return summary.trim();
+    }
+    const prompt = result.prompt;
+    if (typeof prompt === 'string' && prompt.trim().length > 0) {
+        return prompt.trim();
+    }
+    const reason = result.reason;
+    if (typeof reason === 'string' && reason.trim().length > 0) {
+        return reason.trim();
+    }
+    return fallback;
+}
+function asResultRecord(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+        return {};
+    return value;
+}
+function isInternalExecutionSummary(text) {
+    const lower = text.toLowerCase();
+    return lower.startsWith('execution run completed with') || lower.startsWith('execution run ');
+}
+function buildScheduleCreatedMessage(result) {
+    if (result.outcome !== 'schedule_created')
+        return null;
+    const schedule = asResultRecord(result.schedule);
+    const nextRun = typeof schedule.next_run === 'string' && schedule.next_run.trim().length > 0
+        ? schedule.next_run.trim()
+        : null;
+    if (nextRun) {
+        return `Got it — I scheduled this. First run: ${nextRun}.`;
+    }
+    return 'Got it — your schedule is created.';
+}
+function doneAssistantMessage(task, executionRun) {
+    const result = asResultRecord(task.result);
+    const scheduleMessage = buildScheduleCreatedMessage(result);
+    if (scheduleMessage)
+        return scheduleMessage;
+    const summary = typeof result.summary === 'string' ? result.summary.trim() : '';
+    if (summary && !isInternalExecutionSummary(summary)) {
+        return summary;
+    }
+    if (executionRun?.summary && executionRun.summary.trim().length > 0) {
+        return `Done — ${executionRun.summary.trim()}`;
+    }
+    if (typeof executionRun?.completedSteps === 'number' && executionRun.completedSteps > 0) {
+        const plural = executionRun.completedSteps > 1 ? 's' : '';
+        return `Done — I completed ${executionRun.completedSteps} step${plural}.`;
+    }
+    return 'Done.';
 }
 function toCommandRole(value) {
     if (value === 'assistant' || value === 'system')
@@ -152,7 +187,7 @@ function taskStatusMessage(task, executionRun) {
     if (task.status === 'processing')
         return executionRun ? executionRunMessage(executionRun) : 'Processing command...';
     if (task.status === 'done')
-        return taskResultSummary(task.result, 'Command completed.');
+        return doneAssistantMessage(task, executionRun);
     if (task.status === 'escalation')
         return taskResultSummary(task.result, 'Command escalated for review.');
     if (task.status === 'paused')
@@ -198,6 +233,48 @@ function applyExecutionRunUpdate(row) {
             content: terminalState ? entry.content : executionRunMessage(executionRun),
         });
     });
+}
+function toConversationListItem(row) {
+    return {
+        id: row.id,
+        title: row.title,
+        updatedAt: row.updated_at,
+        createdAt: row.created_at,
+    };
+}
+function safeTimestamp(value) {
+    if (!value)
+        return 0;
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? 0 : parsed;
+}
+function deriveConversationTitleFromCommand(command) {
+    const firstLine = command
+        .split('\n')
+        .map((line) => line.trim())
+        .find((line) => line.length > 0) ?? command.trim();
+    const compact = firstLine.replace(/\s+/g, ' ').trim();
+    if (compact.length <= 64)
+        return compact;
+    return `${compact.slice(0, 61)}…`;
+}
+function isGenericConversationTitle(title) {
+    const raw = title?.trim();
+    if (!raw)
+        return true;
+    return raw === 'Command Center' || raw === 'New chat' || raw === 'Empty chat';
+}
+async function maybeSetConversationTitle(conversationId, organizationId, command, currentTitle) {
+    if (!isGenericConversationTitle(currentTitle))
+        return;
+    const nextTitle = deriveConversationTitleFromCommand(command);
+    if (!nextTitle)
+        return;
+    await supabase
+        .from('command_conversations')
+        .update({ title: nextTitle })
+        .eq('organization_id', organizationId)
+        .eq('id', conversationId);
 }
 function parseExecutionPlanSteps(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -258,16 +335,16 @@ function executionRunToTimelineState(executionRun) {
 function executionRunMessage(executionRun) {
     if (executionRun.status === 'planned') {
         return executionRun.summary?.trim().length
-            ? `Plan ready: ${executionRun.summary}`
-            : 'Plan ready. Waiting to begin worker execution.';
+            ? `I have a plan: ${executionRun.summary}`
+            : 'I have a plan and I am about to run it.';
     }
     if (executionRun.status === 'processing') {
-        const worker = executionRun.currentWorkerType ? `${executionRun.currentWorkerType} worker` : 'planner';
-        const step = executionRun.currentStepKey ? `Step: ${executionRun.currentStepKey}.` : 'Advancing the plan.';
-        return `Processing with ${worker}. ${step}`;
+        const worker = executionRun.currentWorkerType ? `${executionRun.currentWorkerType} specialist` : 'planner';
+        const step = executionRun.currentStepKey ? `Step ${executionRun.currentStepKey}.` : 'Advancing the plan.';
+        return `Working on it with ${worker}. ${step}`;
     }
     if (executionRun.status === 'completed') {
-        return 'Execution run completed. Finalizing task...';
+        return 'Almost done — finalizing your response...';
     }
     if (executionRun.status === 'blocked') {
         return executionRun.lastError?.trim().length
@@ -329,10 +406,14 @@ async function loadConversationMessages(conversationId) {
         .order('created_at', { ascending: true });
     if (error)
         return;
+    // Avoid overwriting the UI if user switched conversations mid-flight.
+    if (activeConversationId.value && activeConversationId.value !== conversationId)
+        return;
+    messagesLoadedConversationId = conversationId;
+    messageIdByEntryId.clear();
     const rows = data ?? [];
-    if (rows.length > 0) {
-        timeline.value = [];
-    }
+    timeline.value = rows.length > 0 ? [] : defaultTimeline();
+    persistTimeline();
     rows.forEach((row) => {
         const entry = normalizeMessageRow(row);
         messageIdByEntryId.set(entry.id, row.id);
@@ -358,6 +439,27 @@ async function loadExecutionRunsForTimeline(organizationId) {
         }
     });
 }
+async function loadConversations() {
+    const userStore = useUserStore();
+    const organizationId = userStore.profile?.organization_id;
+    const userId = userStore.profile?.id;
+    if (!organizationId || !userId) {
+        conversations.value = [];
+        return;
+    }
+    const { data, error } = await supabase
+        .from('command_conversations')
+        .select('id, title, created_at, updated_at')
+        .eq('organization_id', organizationId)
+        .eq('created_by', userId)
+        .eq('channel', 'web')
+        .order('updated_at', { ascending: false })
+        .limit(50);
+    if (error)
+        return;
+    const rows = (data ?? []);
+    conversations.value = rows.map(toConversationListItem);
+}
 async function ensureConversationId() {
     if (activeConversationId.value)
         return activeConversationId.value;
@@ -372,6 +474,16 @@ async function ensureConversationId() {
     if (cachedId) {
         activeConversationId.value = cachedId;
         return cachedId;
+    }
+    if (conversations.value.length > 0) {
+        const first = conversations.value[0]?.id ?? null;
+        if (first) {
+            activeConversationId.value = first;
+            if (typeof window !== 'undefined') {
+                window.localStorage.setItem(conversationStorageKey(organizationId, userId), first);
+            }
+            return first;
+        }
     }
     const existing = await supabase
         .from('command_conversations')
@@ -412,8 +524,11 @@ async function persistMessages(rows) {
     });
     return insertedByEntryId;
 }
-function isHighRiskCommand(command) {
-    return HIGH_RISK_PATTERNS.some((pattern) => pattern.test(command));
+function shouldMarkHighRiskClientSide() {
+    // Intentionally disabled.
+    // Risk/confirmation is enforced server-side after delegation (AssistantCommandProcessor)
+    // so we don't pause/surface warnings based on naive client-side keyword matches.
+    return false;
 }
 export function useCommandCenter() {
     initializeTimeline();
@@ -429,9 +544,54 @@ export function useCommandCenter() {
         });
         return withRuns[0] ?? null;
     });
+    async function switchConversation(conversationId) {
+        const organizationId = userStore.profile?.organization_id;
+        const userId = userStore.profile?.id;
+        if (!organizationId || !userId)
+            return;
+        if (stopMessageSubscription) {
+            stopMessageSubscription();
+            stopMessageSubscription = null;
+        }
+        messagesLoadedConversationId = null;
+        realtimeBootstrapNonce += 1;
+        activeConversationId.value = conversationId;
+        if (typeof window !== 'undefined') {
+            window.localStorage.setItem(conversationStorageKey(organizationId, userId), conversationId);
+        }
+        messageIdByEntryId.clear();
+        timeline.value = defaultTimeline();
+        restoreTimelineFromCache(organizationId, userId, conversationId);
+        persistTimeline();
+        await loadConversationMessages(conversationId);
+        await loadExecutionRunsForTimeline(organizationId);
+        // Resume message subscription with current activeConversationId filtering.
+        startRealtimeSync();
+    }
     function startRealtimeSync() {
         if (!userStore.profile?.organization_id)
             return;
+        const bootstrapNonce = (realtimeBootstrapNonce += 1);
+        if (!stopConversationSubscription) {
+            stopConversationSubscription = subscribeToTable('command_conversations', (payload) => {
+                if (payload.eventType !== 'INSERT' && payload.eventType !== 'UPDATE')
+                    return;
+                if (!payload.new || typeof payload.new !== 'object')
+                    return;
+                const row = payload.new;
+                if (row.channel !== 'web')
+                    return;
+                if (row.created_by !== userStore.profile?.id)
+                    return;
+                const nextItem = toConversationListItem(row);
+                const without = conversations.value.filter((existing) => existing.id !== nextItem.id);
+                conversations.value = [nextItem, ...without].sort((left, right) => {
+                    const leftTime = safeTimestamp(left.updatedAt ?? left.createdAt);
+                    const rightTime = safeTimestamp(right.updatedAt ?? right.createdAt);
+                    return rightTime - leftTime;
+                });
+            });
+        }
         if (!stopTaskSubscription) {
             stopTaskSubscription = subscribeToTable('tasks', (payload) => {
                 if (payload.eventType !== 'UPDATE' && payload.eventType !== 'INSERT')
@@ -459,11 +619,26 @@ export function useCommandCenter() {
             const organizationId = userStore.profile?.organization_id;
             if (!organizationId)
                 return;
+            if (bootstrapNonce !== realtimeBootstrapNonce)
+                return;
+            await loadConversations();
+            if (bootstrapNonce !== realtimeBootstrapNonce)
+                return;
             const conversationId = await ensureConversationId();
             if (!conversationId)
                 return;
-            await loadConversationMessages(conversationId);
-            await loadExecutionRunsForTimeline(organizationId);
+            if (bootstrapNonce !== realtimeBootstrapNonce)
+                return;
+            const userId = userStore.profile?.id;
+            if (typeof window !== 'undefined' && userId) {
+                restoreTimelineFromCache(organizationId, userId, conversationId);
+            }
+            if (messagesLoadedConversationId !== conversationId) {
+                await loadConversationMessages(conversationId);
+                await loadExecutionRunsForTimeline(organizationId);
+            }
+            if (bootstrapNonce !== realtimeBootstrapNonce)
+                return;
             if (stopMessageSubscription)
                 return;
             stopMessageSubscription = subscribeToTable('command_messages', (payload) => {
@@ -472,7 +647,10 @@ export function useCommandCenter() {
                 if (!payload.new || typeof payload.new !== 'object')
                     return;
                 const row = payload.new;
-                if (row.conversation_id !== conversationId)
+                const currentConversationId = activeConversationId.value;
+                if (!currentConversationId)
+                    return;
+                if (row.conversation_id !== currentConversationId)
                     return;
                 const entry = normalizeMessageRow(row);
                 messageIdByEntryId.set(entry.id, row.id);
@@ -481,6 +659,7 @@ export function useCommandCenter() {
         })();
     }
     function stopRealtimeSync() {
+        realtimeBootstrapNonce += 1;
         if (stopTaskSubscription) {
             stopTaskSubscription();
             stopTaskSubscription = null;
@@ -493,12 +672,21 @@ export function useCommandCenter() {
             stopExecutionRunSubscription();
             stopExecutionRunSubscription = null;
         }
+        if (stopConversationSubscription) {
+            stopConversationSubscription();
+            stopConversationSubscription = null;
+        }
     }
     async function startNewDiscussion() {
         const organizationId = userStore.profile?.organization_id;
         const userId = userStore.profile?.id;
-        stopRealtimeSync();
+        if (stopMessageSubscription) {
+            stopMessageSubscription();
+            stopMessageSubscription = null;
+        }
         activeConversationId.value = null;
+        messagesLoadedConversationId = null;
+        realtimeBootstrapNonce += 1;
         messageIdByEntryId.clear();
         timeline.value = defaultTimeline();
         persistTimeline();
@@ -506,7 +694,12 @@ export function useCommandCenter() {
             window.localStorage.removeItem(conversationStorageKey(organizationId, userId));
         }
         if (organizationId && userId) {
-            await createConversationId(organizationId, userId);
+            const nextConversationId = await createConversationId(organizationId, userId);
+            await loadConversations();
+            if (nextConversationId) {
+                await loadConversationMessages(nextConversationId);
+                await loadExecutionRunsForTimeline(organizationId);
+            }
         }
         startRealtimeSync();
     }
@@ -519,7 +712,7 @@ export function useCommandCenter() {
                 highRisk: false,
             };
         }
-        const highRisk = isHighRiskCommand(command);
+        const highRisk = shouldMarkHighRiskClientSide();
         const organizationId = userStore.profile?.organization_id ?? null;
         const userId = userStore.profile?.id ?? null;
         const priorContext = timeline.value.slice(-20).map((entry) => ({
@@ -535,6 +728,18 @@ export function useCommandCenter() {
         const userMessageId = nextId('command-user');
         const assistantMessageId = nextId('command-assistant');
         const conversationId = await ensureConversationId();
+        if (conversationId && organizationId) {
+            const existing = conversations.value.find((item) => item.id === conversationId);
+            void maybeSetConversationTitle(conversationId, organizationId, command, existing?.title);
+            const nextTitle = deriveConversationTitleFromCommand(command);
+            if (existing && isGenericConversationTitle(existing.title)) {
+                conversations.value = conversations.value.map((item) => {
+                    if (item.id !== conversationId)
+                        return item;
+                    return { ...item, title: nextTitle };
+                });
+            }
+        }
         appendEntries([
             {
                 id: userMessageId,
@@ -635,6 +840,10 @@ export function useCommandCenter() {
         activeExecutionRun,
         timeline,
         isSubmitting,
+        conversations,
+        activeConversationId,
+        loadConversations,
+        switchConversation,
         startRealtimeSync,
         startNewDiscussion,
         stopRealtimeSync,

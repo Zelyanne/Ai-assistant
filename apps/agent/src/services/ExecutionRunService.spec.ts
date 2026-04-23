@@ -151,4 +151,95 @@ describe('ExecutionRunService', () => {
 
     await expect(service.getByTaskId('123e4567-e89b-12d3-a456-426614174000')).resolves.toBeNull();
   });
+
+  it('revises remaining steps at checkpoint and records checkpoint_replan metadata', async () => {
+    const { ExecutionRunService } = await import('./ExecutionRunService.js');
+    const service = new ExecutionRunService();
+
+    const run = await service.createRun({
+      taskId: '123e4567-e89b-12d3-a456-426614174555',
+      organizationId: '123e4567-e89b-12d3-a456-426614174001',
+      toolPolicyVersion: 'workspace-v1.14.2',
+      plan: {
+        version: 'v1',
+        original_command: 'Do four steps',
+        summary: 'Checkpoint test',
+        ledger_entries: [],
+        replan_count: 0,
+        steps: [
+          {
+            key: 's1',
+            title: 'Step 1',
+            worker_type: 'gmail',
+            action: 'draft_email',
+            status: 'completed',
+            requested_tools: [],
+            input: {},
+            output: {},
+            attempt_count: 1,
+            idempotency_key: 'k1',
+            recoverable: false,
+          },
+          {
+            key: 's2',
+            title: 'Step 2',
+            worker_type: 'docs',
+            action: 'create_document',
+            status: 'completed',
+            requested_tools: [],
+            input: {},
+            output: {},
+            attempt_count: 1,
+            idempotency_key: 'k2',
+            recoverable: false,
+          },
+          {
+            key: 's3',
+            title: 'Step 3',
+            worker_type: 'calendar',
+            action: 'create_event',
+            status: 'pending',
+            requested_tools: [],
+            input: {},
+            output: {},
+            attempt_count: 0,
+            idempotency_key: 'k3',
+            recoverable: false,
+          },
+        ],
+      },
+    });
+
+    const revised = await service.reviseRemainingSteps(run, {
+      revisedSteps: [
+        {
+          key: 's3b',
+          title: 'Revised Step 3',
+          worker_type: 'drive',
+          action: 'read_drive_context',
+          input: {
+            file_id: 'file-123',
+          },
+          recoverable: true,
+        },
+      ],
+      note: 'Checkpoint adjusted remaining plan based on completed work.',
+    });
+
+    expect(revised.plan_json.replan_count).toBe(1);
+    expect(revised.plan_json.steps).toHaveLength(3);
+    expect(revised.plan_json.steps[0]?.status).toBe('completed');
+    expect(revised.plan_json.steps[1]?.status).toBe('completed');
+    expect(revised.plan_json.steps[2]).toMatchObject({
+      key: 's3b',
+      status: 'pending',
+      worker_type: 'drive',
+      action: 'read_drive_context',
+    });
+    expect(revised.current_step_key).toBe('s3b');
+    expect(revised.plan_json.ledger_entries.at(-1)).toMatchObject({
+      action: 'checkpoint_replan',
+      attempt_number: 1,
+    });
+  });
 });

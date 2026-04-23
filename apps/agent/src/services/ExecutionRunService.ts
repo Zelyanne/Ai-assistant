@@ -5,7 +5,6 @@ import {
   type ExecutionPlanStep,
   type ExecutionRun,
   type ExecutionRunStatus,
-  type IdempotencyState,
   type Json,
   ExecutionPlanSchema,
   ExecutionRunSchema,
@@ -455,6 +454,59 @@ export class ExecutionRunService {
         attempt_number: draft.plan_json.replan_count,
         timestamp: new Date().toISOString(),
       });
+    });
+  }
+
+  async reviseRemainingSteps(
+    run: ExecutionRun,
+    input: {
+      revisedSteps: Array<{
+        key: string;
+        title: string;
+        worker_type: ExecutionPlanStep["worker_type"];
+        action: string;
+        input: Record<string, unknown>;
+        recoverable?: boolean;
+      }>;
+      note: string;
+    },
+  ): Promise<ExecutionRun> {
+    return this.mutateRun(run, (draft) => {
+      const doneStatuses = new Set(["completed", "skipped", "failed", "blocked"]);
+      const completedSteps = draft.plan_json.steps.filter((step) => doneStatuses.has(step.status));
+
+      const revisedPendingSteps: ExecutionPlanStep[] = input.revisedSteps.map((step, index) => ({
+        key: step.key,
+        title: step.title,
+        worker_type: step.worker_type,
+        action: step.action,
+        status: "pending",
+        requested_tools: [],
+        input: toJson(step.input) as Record<string, Json | undefined>,
+        output: {},
+        attempt_count: 0,
+        idempotency_key: `${step.worker_type}-${step.action}-${index + 1}`,
+        recoverable: step.recoverable ?? false,
+      }));
+
+      draft.plan_json.steps = [...completedSteps, ...revisedPendingSteps];
+      draft.plan_json.replan_count += 1;
+      draft.plan_json.ledger_entries.push({
+        step_key: revisedPendingSteps[0]?.key ?? "checkpoint",
+        worker_type: "planner",
+        action: "checkpoint_replan",
+        input_summary: redactLedgerText("general_agent checkpoint review"),
+        outputs_summary: redactLedgerText(input.note),
+        next_worker_note: "Planner revised remaining steps at checkpoint.",
+        attempt_number: draft.plan_json.replan_count,
+        timestamp: new Date().toISOString(),
+      });
+
+      const pending = nextPendingStep(draft.plan_json);
+      draft.current_step_key = pending?.key ?? null;
+      draft.current_worker_type = pending?.worker_type ?? null;
+      draft.status = pending ? "processing" : "completed";
+      draft.last_error = null;
     });
   }
 

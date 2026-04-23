@@ -11,6 +11,10 @@ type ScheduleRow = {
   task_payload: Record<string, unknown>;
   cron_expression: string;
   timezone: string;
+  remaining_runs?: number | null;
+  run_count?: number;
+  end_at?: string | null;
+  topic?: string | null;
   is_active: boolean;
   next_run: string;
   last_run: string | null;
@@ -45,7 +49,7 @@ describe('ScheduleManageProcessor', () => {
         id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
         organization_id: '11111111-1111-4111-8111-111111111111',
         user_id: '22222222-2222-4222-8222-222222222222',
-        task_type: 'email.check',
+        task_type: 'assistant.command',
         task_payload: {},
         cron_expression: '0 * * * *',
         timezone: 'UTC',
@@ -110,6 +114,10 @@ describe('ScheduleManageProcessor', () => {
                   task_payload: (payload.task_payload as Record<string, unknown>) ?? {},
                   cron_expression: String(payload.cron_expression),
                   timezone: String(payload.timezone),
+                  remaining_runs: typeof payload.remaining_runs === 'number' ? payload.remaining_runs : null,
+                  run_count: typeof payload.run_count === 'number' ? payload.run_count : 0,
+                  end_at: typeof payload.end_at === 'string' ? payload.end_at : null,
+                  topic: typeof payload.topic === 'string' ? payload.topic : null,
                   is_active: Boolean(payload.is_active),
                   next_run: String(payload.next_run),
                   last_run: null,
@@ -159,8 +167,8 @@ describe('ScheduleManageProcessor', () => {
     const parse = vi.fn(async () => ({
       cronExpression: '0 9 * * 1',
       timezone: 'UTC',
-      taskType: 'reminder.send',
-      taskPayload: { text: 'Check priorities' },
+      taskType: 'assistant.command',
+      taskPayload: { command: 'Check priorities', command_text: 'Check priorities', message_text: 'Check priorities' },
       confirmationMessage: 'Confirmed.',
       source: 'rules' as const,
     }));
@@ -176,15 +184,143 @@ describe('ScheduleManageProcessor', () => {
     expect(parse).toHaveBeenCalledOnce();
     expect(result.outcome).toBe('created');
     expect(rows).toHaveLength(2);
-    expect(rows[1].task_type).toBe('reminder.send');
+    expect(rows[1].task_type).toBe('assistant.command');
+  });
+
+  it('preserves messaging context for scheduled channel sends', async () => {
+    const parse = vi.fn(async () => ({
+      cronExpression: '0 9 * * 1',
+      timezone: 'UTC',
+      taskType: 'assistant.command',
+      taskPayload: {
+        command: 'send a good morning text',
+        command_text: 'send a good morning text',
+        message_text: 'send a good morning text',
+      },
+      confirmationMessage: 'Confirmed.',
+      source: 'rules' as const,
+    }));
+
+    const processor = new ScheduleManageProcessor({
+      supabaseClient: createMockSupabase(),
+      scheduleParser: { parse },
+      channelRouterService: { enqueueOutbound },
+    });
+
+    const result = await processor.process(createTask('confirm schedule send a good morning text every monday at 9am for 3 weeks'));
+
+    expect(result.outcome).toBe('created');
+    expect(rows).toHaveLength(2);
+    expect(rows[1].task_type).toBe('channel.send');
+    expect(rows[1].task_payload).toMatchObject({
+      channel: 'telegram',
+      thread_id: 'thread-1',
+      message_text: 'good morning',
+      confirmed: true,
+      high_risk: true,
+    });
+    expect(rows[1].remaining_runs).toBe(3);
+    expect(rows[1].topic).toBe('Schedule');
+  });
+
+  it('strips one-off offset phrases from the stored command payload', async () => {
+    const processor = new ScheduleManageProcessor({
+      now: () => new Date('2026-03-20T10:00:00.000Z'),
+      supabaseClient: createMockSupabase(),
+      scheduleParser: {
+        parse: vi.fn(async () => {
+          throw new Error('not used');
+        }),
+      },
+      channelRouterService: { enqueueOutbound },
+    });
+
+    const task: Task = {
+      ...createTask('confirm schedule please in 2 hours remind me to send the update'),
+      payload: {
+        ...createTask('confirm schedule please in 2 hours remind me to send the update').payload,
+        channel: 'web',
+      },
+    };
+
+    const result = await processor.process(task);
+
+    expect(result.outcome).toBe('created');
+    expect(rows).toHaveLength(2);
+    expect(rows[1].task_type).toBe('assistant.command');
+    expect(rows[1].task_payload.command).toBe('please remind me to send the update');
+    expect(String(rows[1].task_payload.command)).not.toContain('in 2 hours');
+    expect(rows[1].remaining_runs).toBe(1);
+  });
+
+  it('creates a schedule directly from run_at_iso even when command has no scheduling keywords', async () => {
+    const parse = vi.fn(async () => {
+      throw new Error('not used');
+    });
+
+    const processor = new ScheduleManageProcessor({
+      now: () => new Date('2026-03-20T10:00:00.000Z'),
+      supabaseClient: createMockSupabase(),
+      scheduleParser: { parse },
+      channelRouterService: { enqueueOutbound },
+    });
+
+    const task: Task = {
+      ...createTask('envoie un mail a othily.g@gmail.com'),
+      payload: {
+        ...createTask('envoie un mail a othily.g@gmail.com').payload,
+        channel: 'web',
+        confirmed: true,
+        run_at_iso: '2026-03-20T10:10:00.000Z',
+      },
+    };
+
+    const result = await processor.process(task);
+
+    expect(result.outcome).toBe('created');
+    expect(parse).not.toHaveBeenCalled();
+    expect(rows).toHaveLength(2);
+    expect(rows[1].task_type).toBe('assistant.command');
+    expect(rows[1].next_run).toBe('2026-03-20T10:10:00.000Z');
+    expect(rows[1].remaining_runs).toBe(1);
+  });
+
+  it('strips French one-off timing words when run_at_iso is provided', async () => {
+    const parse = vi.fn(async () => {
+      throw new Error('not used');
+    });
+
+    const processor = new ScheduleManageProcessor({
+      now: () => new Date('2026-03-20T10:00:00.000Z'),
+      supabaseClient: createMockSupabase(),
+      scheduleParser: { parse },
+      channelRouterService: { enqueueOutbound },
+    });
+
+    const task: Task = {
+      ...createTask('dans 10 min envoie un mail a othily.g@gmail.com'),
+      payload: {
+        ...createTask('dans 10 min envoie un mail a othily.g@gmail.com').payload,
+        channel: 'web',
+        confirmed: true,
+        run_at_iso: '2026-03-20T10:10:00.000Z',
+      },
+    };
+
+    const result = await processor.process(task);
+
+    expect(result.outcome).toBe('created');
+    expect(parse).not.toHaveBeenCalled();
+    expect(rows[1].task_payload.command).toBe('envoie un mail a othily.g@gmail.com');
+    expect(String(rows[1].task_payload.command)).not.toContain('dans 10 min');
   });
 
   it('requests confirmation before creating a schedule from a messaging command', async () => {
     const parse = vi.fn(async () => ({
       cronExpression: '0 9 * * 1',
       timezone: 'UTC',
-      taskType: 'reminder.send',
-      taskPayload: { text: 'Check priorities' },
+      taskType: 'assistant.command',
+      taskPayload: { command: 'Check priorities', command_text: 'Check priorities', message_text: 'Check priorities' },
       confirmationMessage: 'Confirmed.',
       source: 'rules' as const,
     }));

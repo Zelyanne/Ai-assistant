@@ -45,17 +45,70 @@ const {
   mockCheckCapabilityReadiness,
   mockResolveToolName,
   mockExecuteWorkerTool,
+  createAgentMock,
   mockLoadStartupMemoryContext,
   mockLoadShortTermMemory,
   mockUpdateTaskState,
+  mockChannelEnqueueOutbound,
 } = vi.hoisted(() => ({
   mockCheckCapabilityReadiness: vi.fn(),
   mockResolveToolName: vi.fn(),
   mockExecuteWorkerTool: vi.fn(),
+  createAgentMock: vi.fn(),
   mockLoadStartupMemoryContext: vi.fn(),
   mockLoadShortTermMemory: vi.fn(),
   mockUpdateTaskState: vi.fn(),
+  mockChannelEnqueueOutbound: vi.fn(),
 }));
+
+vi.mock('langchain', () => ({
+  createAgent: (...args: unknown[]) => createAgentMock(...args),
+  modelCallLimitMiddleware: vi.fn(() => ({ name: 'modelCallLimitMiddleware' })),
+  toolStrategy: vi.fn((schema: unknown) => schema),
+}));
+
+const { mockChatMistralResponse } = vi.hoisted(() => ({
+  mockChatMistralResponse: {
+    current: {
+      confidence: 1.0,
+      needs_clarification: false,
+      interpretation: 'test',
+      summary: 'test plan',
+      reasoning: 'test',
+      steps: [
+        {
+          key: 'step-1',
+          title: 'Test step',
+          worker_type: 'gmail',
+          action: 'draft_email',
+          input: { recipient: 'test@test.com', subject: 'Test', body: 'Hello' },
+          requested_tools: ['draft_gmail_message'],
+          recoverable: false,
+        },
+      ],
+    } as Record<string, unknown>,
+  },
+}));
+
+const { mockScheduleManageProcess } = vi.hoisted(() => ({
+  mockScheduleManageProcess: vi.fn(),
+}));
+
+vi.mock('@langchain/mistralai', () => {
+  class ChatMistralAI {
+    constructor(..._args: unknown[]) {}
+    withStructuredOutput(_schema: unknown, _options?: unknown) {
+      return this;
+    }
+    async invoke(_input: unknown) {
+      return mockChatMistralResponse.current;
+    }
+  }
+
+  return {
+    ChatMistralAI,
+  };
+});
 
 vi.mock('../services/mcp.js', () => ({
   mcpService: {
@@ -63,6 +116,12 @@ vi.mock('../services/mcp.js', () => ({
     resolveToolName: mockResolveToolName,
     executeWorkerTool: mockExecuteWorkerTool,
     getLangChainTools: vi.fn().mockResolvedValue([]),
+  },
+}));
+
+vi.mock('../processors/ScheduleManageProcessor.js', () => ({
+  ScheduleManageProcessor: class MockScheduleManageProcessor {
+    process = mockScheduleManageProcess;
   },
 }));
 
@@ -75,6 +134,12 @@ vi.mock('../services/MemoryService.js', () => ({
     loadStartupMemoryContext: mockLoadStartupMemoryContext,
     loadShortTermMemory: mockLoadShortTermMemory,
     updateTaskState: mockUpdateTaskState,
+  },
+}));
+
+vi.mock('../services/channelRouter.js', () => ({
+  channelRouter: {
+    enqueueOutbound: mockChannelEnqueueOutbound,
   },
 }));
 
@@ -209,6 +274,116 @@ describe('Agent Controller Graph planner-worker flow', () => {
     db.execution_runs.clear();
     db.agent_activity_log.length = 0;
 
+    // Reset ChatMistralAI mock to default (high confidence, plan with steps)
+    mockChatMistralResponse.current = {
+      confidence: 1.0,
+      needs_clarification: false,
+      interpretation: 'test',
+      summary: 'test plan',
+      reasoning: 'test',
+      steps: [
+        {
+          key: 'step-1',
+          title: 'Test step',
+          worker_type: 'gmail',
+          action: 'draft_email',
+          input: { recipient: 'test@test.com', subject: 'Test', body: 'Hello' },
+          requested_tools: ['draft_gmail_message'],
+          recoverable: false,
+        },
+      ],
+    };
+
+    mockScheduleManageProcess.mockResolvedValue({
+      outcome: 'created',
+      schedule: {
+        id: 'schedule-1',
+        next_run: '2026-03-20T10:30:00.000Z',
+        cron_expression: '30 10 * * *',
+        timezone: 'UTC',
+        task_type: 'assistant.command',
+      },
+      summary: 'Schedule created with next run at 2026-03-20T10:30:00.000Z.',
+      confirmation_message: 'Confirmed.',
+    });
+
+    createAgentMock.mockImplementation(({
+      tools,
+      responseFormat,
+    }: {
+      tools: Array<{ name: string; invoke: (args: Record<string, unknown>) => Promise<unknown> }>;
+      responseFormat?: unknown;
+    }) => ({
+      invoke: async () => {
+        if (responseFormat) {
+          return {
+            structuredResponse: mockChatMistralResponse.current,
+            messages: [{ content: 'General agent completed.' }],
+          };
+        }
+
+        const toolNames = tools.map((tool) => tool.name);
+
+        if (toolNames.includes('get_drive_file_content')) {
+          await tools.find((tool) => tool.name === 'get_drive_file_content')?.invoke({ file_id: 'file-123' });
+          return { messages: [{ content: 'Drive context loaded.' }] };
+        }
+
+        if (toolNames.includes('create_doc')) {
+          await tools.find((tool) => tool.name === 'create_doc')?.invoke({
+            title: 'Generated doc',
+            content: 'Drive source loaded',
+          });
+          await tools.find((tool) => tool.name === 'modify_doc_text')?.invoke({
+            document_id: 'doc-1',
+            text: 'Drive source loaded',
+            start_index: 1,
+          });
+          return { messages: [{ content: 'Docs artifact created and populated.' }] };
+        }
+
+        if (toolNames.includes('send_gmail_message')) {
+          await tools.find((tool) => tool.name === 'send_gmail_message')?.invoke({
+            to: 'alexis@example.com',
+            subject: 'Status update',
+            body: 'Document ready.',
+          });
+          return { messages: [{ content: 'Gmail send completed.' }] };
+        }
+
+        if (toolNames.includes('draft_gmail_message')) {
+          await tools.find((tool) => tool.name === 'draft_gmail_message')?.invoke({
+            to: 'alexis@example.com',
+            subject: 'Status update',
+            body: 'Document ready.',
+          });
+          return { messages: [{ content: 'Gmail draft completed.' }] };
+        }
+
+        if (toolNames.includes('manage_event')) {
+          await tools.find((tool) => tool.name === 'manage_event')?.invoke({
+            action: 'create',
+            summary: 'Status sync',
+            start_time: '2026-03-21T10:00:00Z',
+            end_time: '2026-03-21T10:30:00Z',
+          });
+          return { messages: [{ content: 'Calendar event created.' }] };
+        }
+
+        if (toolNames.includes('create_spreadsheet')) {
+          await tools.find((tool) => tool.name === 'create_spreadsheet')?.invoke({ title: 'Generated sheet' });
+          return { messages: [{ content: 'Spreadsheet created.' }] };
+        }
+
+        if (toolNames.includes('create_presentation')) {
+          await tools.find((tool) => tool.name === 'create_presentation')?.invoke({ title: 'Generated deck' });
+          return { messages: [{ content: 'Presentation created.' }] };
+        }
+
+        return { messages: [{ content: 'Worker completed.' }] };
+      },
+    }));
+
     mockCheckCapabilityReadiness.mockResolvedValue({
       worker_type: 'gmail',
       ready: true,
@@ -223,15 +398,31 @@ describe('Agent Controller Graph planner-worker flow', () => {
     });
 
     mockResolveToolName.mockImplementation(async (_orgId: string, requestedTool: string) => {
-      const mapping: Record<string, string> = {
-        create_gmail_draft: 'draft_gmail_message',
-        send_gmail_message: 'send_gmail_message',
-      };
-
       return {
         requestedTool,
-        resolvedTool: mapping[requestedTool] ?? requestedTool,
-        availableTools: Object.values(mapping),
+        resolvedTool: requestedTool,
+        availableTools: [requestedTool],
+      };
+    });
+
+    mockExecuteWorkerTool.mockImplementation(async (_orgId: string, workerType: string, requestedTool: string) => {
+      if (workerType === 'calendar') {
+        return {
+          toolName: 'manage_event',
+          result: { structuredContent: { id: 'evt-1', htmlLink: 'https://calendar.google.com/event?id=evt-1' } },
+        };
+      }
+
+      if (workerType === 'docs') {
+        return {
+          toolName: 'create_doc',
+          result: { structuredContent: { id: 'doc-1', url: 'https://docs.google.com/document/d/doc-1' } },
+        };
+      }
+
+      return {
+        toolName: requestedTool,
+        result: { content: [{ type: 'text', text: 'Done' }] },
       };
     });
 
@@ -251,7 +442,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
       }
 
       return {
-        toolName: requestedTool === 'create_gmail_draft' ? 'draft_gmail_message' : requestedTool,
+        toolName: requestedTool,
         result: { content: [{ type: 'text', text: 'Done' }] },
       };
     });
@@ -279,6 +470,48 @@ describe('Agent Controller Graph planner-worker flow', () => {
   });
 
   it('creates and completes a persisted Drive -> Docs -> Gmail execution run', async () => {
+    // Configure mock to return the 3-step plan (Drive → Docs → Gmail)
+    mockChatMistralResponse.current = {
+      confidence: 1.0,
+      needs_clarification: false,
+      interpretation: 'Read source, create doc, draft email',
+      summary: 'Read the source, create a doc, then draft the email',
+      reasoning: 'Three-step workflow',
+      steps: [
+        {
+          key: 'drive-step',
+          title: 'Read Drive file',
+          worker_type: 'drive',
+          action: 'read_drive_context',
+          requested_tools: ['get_drive_file_content'],
+          input: { context_references: [{ url: 'https://docs.google.com/document/d/file-123/edit', file_id: 'file-123' }] },
+          recoverable: false,
+        },
+        {
+          key: 'doc-step',
+          title: 'Create doc',
+          worker_type: 'docs',
+          action: 'create_document',
+          requested_tools: ['create_doc'],
+          input: { source_step_key: 'drive-step' },
+          recoverable: false,
+        },
+        {
+          key: 'gmail-step',
+          title: 'Draft email',
+          worker_type: 'gmail',
+          action: 'draft_email',
+          requested_tools: ['draft_gmail_message'],
+          input: {
+            recipient: 'alexis@example.com',
+            subject: 'Status update',
+            source_step_key: 'doc-step',
+          },
+          recoverable: false,
+        },
+      ],
+    };
+
     const task = {
       ...baseTask,
       domain_action: 'assistant.command',
@@ -423,6 +656,38 @@ describe('Agent Controller Graph planner-worker flow', () => {
   });
 
   it('records one automatic re-plan and continues when a recoverable worker step fails', async () => {
+    // Configure mock to return the 2-step plan with recoverable first step
+    mockChatMistralResponse.current = {
+      confidence: 1.0,
+      needs_clarification: false,
+      interpretation: 'Create doc then draft email',
+      summary: 'Create a doc if possible, then draft the email',
+      reasoning: 'Two-step workflow with recoverable first step',
+      steps: [
+        {
+          key: 'doc-step',
+          title: 'Create doc',
+          worker_type: 'docs',
+          action: 'create_document',
+          requested_tools: ['create_doc'],
+          input: { title: 'Draft input' },
+          recoverable: true,
+        },
+        {
+          key: 'gmail-step',
+          title: 'Draft email',
+          worker_type: 'gmail',
+          action: 'draft_email',
+          requested_tools: ['draft_gmail_message'],
+          input: {
+            recipient: 'alexis@example.com',
+            subject: 'Status update',
+          },
+          recoverable: false,
+        },
+      ],
+    };
+
     const task = {
       ...baseTask,
       domain_action: 'assistant.command',
@@ -534,7 +799,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
     expect(mockExecuteWorkerTool).toHaveBeenCalledWith(
       task.organization_id,
       'gmail',
-      'create_gmail_draft',
+      'draft_gmail_message',
       expect.any(Object),
     );
   });
@@ -644,9 +909,68 @@ describe('Agent Controller Graph planner-worker flow', () => {
     expect(mockExecuteWorkerTool).toHaveBeenCalledWith(
       task.organization_id,
       'gmail',
-      'create_gmail_draft',
+      'draft_gmail_message',
       expect.any(Object),
     );
+  });
+
+  it('enqueues a user-facing webhook reply and never includes full draft body', async () => {
+    const task = {
+      ...baseTask,
+      domain_action: 'email.draft',
+      payload: {
+        recipient: 'alexis@example.com',
+        subject: 'Status',
+        body: 'This is the full draft body and should never be echoed back in chat.',
+        channel: 'telegram',
+        source: 'telegram-webhook',
+        user_initiated: true,
+        thread_id: 'tg-thread-1',
+        external_message_id: 'tg-inbound-1',
+        correlation_id: 'corr-1',
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+
+    await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]);
+
+    expect(mockChannelEnqueueOutbound).toHaveBeenCalledTimes(1);
+    const outbound = mockChannelEnqueueOutbound.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(outbound.channel).toBe('telegram');
+    expect(outbound.thread_id).toBe('tg-thread-1');
+    expect(String(outbound.message_text)).toContain('Brouillon prêt');
+    expect(String(outbound.message_text)).not.toContain('This is the full draft body');
+  });
+
+  it('keeps email draft error replies conversational without exposing draft content', async () => {
+    mockExecuteWorkerTool.mockRejectedValueOnce(
+      new Error('Failed to draft email body: This is the full draft body and should never be echoed back in chat.'),
+    );
+
+    const task = {
+      ...baseTask,
+      domain_action: 'email.draft',
+      payload: {
+        recipient: 'alexis@example.com',
+        subject: 'Status',
+        body: 'This is the full draft body and should never be echoed back in chat.',
+        channel: 'telegram',
+        source: 'telegram-webhook',
+        user_initiated: true,
+        thread_id: 'tg-thread-err-1',
+        external_message_id: 'tg-inbound-err-1',
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+
+    await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]);
+
+    expect(mockChannelEnqueueOutbound).toHaveBeenCalledTimes(1);
+    const outbound = mockChannelEnqueueOutbound.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(String(outbound.message_text)).toContain('Je n’ai pas pu finaliser le brouillon automatiquement');
+    expect(String(outbound.message_text)).not.toContain('This is the full draft body');
   });
 
   it('bypasses perimeter escalation for user-initiated social assistant commands', async () => {
@@ -687,6 +1011,88 @@ describe('Agent Controller Graph planner-worker flow', () => {
     expect(result.execution_run.status).toBe('completed');
   });
 
+  it('uses message_text fallback for user-initiated telegram assistant commands', async () => {
+    const task = {
+      ...baseTask,
+      domain_action: 'assistant.command',
+      payload: {
+        message_text: 'Draft an email update to alexis@example.com',
+        channel: 'telegram',
+        source: 'telegram-webhook',
+        user_initiated: true,
+        confirmed: true,
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(result.task.status).not.toBe('paused');
+    expect(result.execution_run.status).toBe('completed');
+  });
+
+  it('pauses through general agent when an existing run is escalated', async () => {
+    const task = {
+      ...baseTask,
+      topic: 'Command Center',
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'continue',
+        source: 'dashboard-command-center',
+        channel: 'web',
+        user_initiated: true,
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+    db.execution_runs.set(task.id, {
+      id: '123e4567-e89b-42d3-a456-426614174111',
+      task_id: task.id,
+      organization_id: task.organization_id,
+      status: 'escalated',
+      plan_json: {
+        version: 'v1',
+        original_command: 'continue',
+        summary: 'Escalated run',
+        ledger_entries: [],
+        replan_count: 0,
+        steps: [
+          {
+            key: 'step-1',
+            title: 'Draft email',
+            worker_type: 'gmail',
+            action: 'draft_email',
+            status: 'failed',
+            requested_tools: [],
+            input: { recipient: 'alexis@example.com' },
+            output: {},
+            attempt_count: 1,
+            idempotency_key: 'gmail-draft_email-1',
+            recoverable: false,
+            error_message: 'gmail tool failed',
+          },
+        ],
+      },
+      ledger_markdown: '# Execution Run Ledger',
+      current_step_key: 'step-1',
+      current_worker_type: 'gmail',
+      tool_policy_version: 'workspace-v1.14.2',
+      idempotency_state: {},
+      version: 1,
+      last_error: 'gmail tool failed body: This is the full draft body and should never be echoed back in chat.',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(result.execution_run.status).toBe('escalated');
+    expect(result.task.status).toBe('paused');
+    expect(result.task.result.prompt).toContain('masqué pour confidentialité');
+    expect(result.task.result.prompt).not.toContain('This is the full draft body');
+  });
+
   it('bypasses perimeter escalation for Command Center tasks even without explicit marker', async () => {
     const task = {
       ...baseTask,
@@ -723,6 +1129,17 @@ describe('Agent Controller Graph planner-worker flow', () => {
   });
 
   it('pauses ambiguous Command Center commands instead of escalating', async () => {
+    // Configure mock to return low confidence for ambiguous command
+    mockChatMistralResponse.current = {
+      confidence: 0.3,
+      needs_clarification: true,
+      clarification_prompt: 'Could you specify what kind of help you need?',
+      interpretation: 'Vague help request',
+      summary: 'Ambiguous help request',
+      reasoning: 'Command is too vague to interpret',
+      steps: [],
+    };
+
     const task = {
       ...baseTask,
       topic: 'Command Center',
@@ -743,7 +1160,39 @@ describe('Agent Controller Graph planner-worker flow', () => {
     expect(result.task.result.reason).toBe('Command is ambiguous');
   });
 
-  it('pauses trusted chat commands with a confirmation recap for high-risk sends', async () => {
+  it('pauses with a clarification prompt when assistant.command needs more details', async () => {
+    // Configure ChatMistralAI mock to return low confidence / clarification needed
+    mockChatMistralResponse.current = {
+      confidence: 0.3,
+      needs_clarification: true,
+      clarification_prompt: 'What title, start time, and end time should I use for this calendar event?',
+      interpretation: 'Calendar event request but missing details',
+      summary: 'Need calendar timing details',
+      reasoning: 'Missing required fields',
+      steps: [],
+    };
+
+    const task = {
+      ...baseTask,
+      topic: 'Command Center',
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'Put dinner with Sam on my calendar',
+        source: 'dashboard-command-center',
+        channel: 'web',
+        user_initiated: true,
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(result.task.status).toBe('paused');
+    expect(result.task.result.prompt).toBe('What title, start time, and end time should I use for this calendar event?');
+  });
+
+  it('pauses trusted chat email sends when explicit confirmation is missing', async () => {
     const task = {
       ...baseTask,
       topic: 'Command Center',
@@ -765,9 +1214,220 @@ describe('Agent Controller Graph planner-worker flow', () => {
     const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
 
     expect(result.task.status).toBe('paused');
+    expect(result.execution_run).toBeNull();
     expect(result.task.result.reason).toBe('High-risk command requires confirmation');
-    expect(result.task.result.prompt).toContain('Quick recap: you asked me to "send an email now"');
     expect(AgencyService.getTierForTopic).not.toHaveBeenCalled();
+  });
+
+  it('routes scheduled assistant commands through the General Agent scheduling tool', async () => {
+    const task = {
+      ...baseTask,
+      id: '123e4567-e89b-12d3-a456-426614174090',
+      topic: 'Command Center',
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'in 30 minutes please send an email to alexis@example.com',
+        source: 'dashboard-command-center',
+        channel: 'web',
+        user_initiated: true,
+      },
+    };
+
+    createAgentMock.mockImplementationOnce(({
+      tools,
+      responseFormat,
+    }: {
+      tools: Array<{ name: string; invoke: (args: Record<string, unknown>) => Promise<unknown> }>;
+      responseFormat?: unknown;
+    }) => ({
+      invoke: async () => {
+        expect(responseFormat).toBeTruthy();
+        await tools.find((tool) => tool.name === 'get_current_time')?.invoke({ timezone: 'UTC', format: 'iso' });
+        const scheduleRaw = await tools.find((tool) => tool.name === 'schedule_agent_request')?.invoke({
+          request: task.payload.command,
+          timezone: 'UTC',
+        });
+
+        return {
+          structuredResponse: {
+            outcome: 'schedule',
+            confidence: 1.0,
+            needs_clarification: false,
+            interpretation: 'The user wants an email request scheduled for later.',
+            summary: 'Scheduled the email request.',
+            reasoning: 'Future-oriented request should be scheduled instead of executed immediately.',
+            steps: [],
+            schedule_result: JSON.parse(String(scheduleRaw ?? '{}')),
+          },
+          messages: [{ content: 'Scheduled request created.' }],
+        };
+      },
+    }));
+
+    db.tasks.set(task.id, clone(task));
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(result.execution_run).toBeNull();
+    expect(result.task.result.outcome).toBe('schedule_created');
+    expect(result.task.result.schedule).toEqual(expect.objectContaining({
+      schedule_id: 'schedule-1',
+      task_type: 'assistant.command',
+    }));
+    expect(mockScheduleManageProcess).toHaveBeenCalledOnce();
+  });
+
+  it('passes run_at_iso to schedule_agent_request when timing was already resolved', async () => {
+    const task = {
+      ...baseTask,
+      id: '123e4567-e89b-12d3-a456-426614174092',
+      topic: 'Command Center',
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'dans 10 min envoie un mail a othily.g@gmail.com',
+        source: 'dashboard-command-center',
+        channel: 'web',
+        user_initiated: true,
+      },
+    };
+
+    createAgentMock.mockImplementationOnce(({
+      tools,
+      responseFormat,
+    }: {
+      tools: Array<{ name: string; invoke: (args: Record<string, unknown>) => Promise<unknown> }>;
+      responseFormat?: unknown;
+    }) => ({
+      invoke: async () => {
+        expect(responseFormat).toBeTruthy();
+        await tools.find((tool) => tool.name === 'get_current_time')?.invoke({ timezone: 'UTC', format: 'iso' });
+        const scheduleRaw = await tools.find((tool) => tool.name === 'schedule_agent_request')?.invoke({
+          request: 'envoie un mail a othily.g@gmail.com',
+          timezone: 'UTC',
+          run_at_iso: '2026-03-20T10:10:00.000Z',
+        });
+
+        return {
+          structuredResponse: {
+            outcome: 'schedule',
+            confidence: 1.0,
+            needs_clarification: false,
+            interpretation: 'The user wants this email sent in ten minutes.',
+            summary: 'Schedule the email in ten minutes.',
+            reasoning: 'Relative timing was resolved via get_current_time and passed as run_at_iso.',
+            steps: [],
+            schedule_result: JSON.parse(String(scheduleRaw ?? '{}')),
+          },
+          messages: [{ content: 'Scheduled request created with run_at_iso.' }],
+        };
+      },
+    }));
+
+    db.tasks.set(task.id, clone(task));
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(result.execution_run).toBeNull();
+    expect(result.task.result.outcome).toBe('schedule_created');
+    expect(mockScheduleManageProcess).toHaveBeenCalledOnce();
+
+    const scheduledTask = mockScheduleManageProcess.mock.calls[0]?.[0] as { payload?: Record<string, unknown> };
+    expect(scheduledTask.payload?.run_at_iso).toBe('2026-03-20T10:10:00.000Z');
+    expect(scheduledTask.payload?.message_text).toBe('envoie un mail a othily.g@gmail.com');
+  });
+
+  it('auto-falls back to backend scheduling when the model chooses schedule outcome without tool output', async () => {
+    const task = {
+      ...baseTask,
+      id: '123e4567-e89b-12d3-a456-426614174091',
+      topic: 'Command Center',
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'dans 10 min envoie un mail a othily.g@gmail.com',
+        source: 'dashboard-command-center',
+        channel: 'web',
+        user_initiated: true,
+      },
+    };
+
+    createAgentMock.mockImplementationOnce(({
+      responseFormat,
+    }: {
+      responseFormat?: unknown;
+    }) => ({
+      invoke: async () => {
+        expect(responseFormat).toBeTruthy();
+        return {
+          structuredResponse: {
+            outcome: 'schedule',
+            confidence: 1.0,
+            needs_clarification: false,
+            interpretation: 'The user wants this scheduled shortly in the future.',
+            summary: 'Schedule the request in 10 minutes.',
+            reasoning: 'Future-oriented request should be scheduled.',
+            steps: [],
+          },
+          messages: [{ content: 'Scheduled request should be created.' }],
+        };
+      },
+    }));
+
+    db.tasks.set(task.id, clone(task));
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(result.execution_run).toBeNull();
+    expect(result.task.result.outcome).toBe('schedule_created');
+    expect(String(result.task.result.summary)).toContain('Got it');
+    expect(mockScheduleManageProcess).toHaveBeenCalledOnce();
+  });
+
+  it('treats a bare confirm reply as confirmation using conversation context', async () => {
+    const riskyTask = {
+      ...baseTask,
+      id: '123e4567-e89b-12d3-a456-426614174100',
+      topic: 'Command Center',
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'send an email now',
+        source: 'dashboard-command-center',
+        channel: 'web',
+        user_initiated: true,
+        high_risk: true,
+      },
+    };
+
+    db.tasks.set(riskyTask.id, clone(riskyTask));
+
+    const paused = await graph.invoke({ task: riskyTask } as Parameters<typeof graph.invoke>[0]) as any;
+    expect(paused.task.status).toBe('paused');
+    expect(paused.task.result.reason).toBe('High-risk command requires confirmation');
+    const pausedPrompt = paused.task.result.prompt as string;
+    expect(typeof pausedPrompt).toBe('string');
+
+    const confirmTask = {
+      ...baseTask,
+      id: '123e4567-e89b-12d3-a456-426614174101',
+      topic: 'Command Center',
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'confirm',
+        source: 'dashboard-command-center',
+        channel: 'web',
+        user_initiated: true,
+        conversation_context: [
+          { role: 'user', content: 'send an email now', created_at: new Date().toISOString() },
+          { role: 'assistant', content: pausedPrompt, state: 'paused', created_at: new Date().toISOString() },
+        ],
+      },
+    };
+
+    db.tasks.set(confirmTask.id, clone(confirmTask));
+
+    const result = await graph.invoke({ task: confirmTask } as Parameters<typeof graph.invoke>[0]) as any;
+    // The confirmed command may still pause for missing details, but it should not
+    // re-pause due to missing high-risk confirmation.
+    expect(result.task.result.reason).not.toBe('High-risk command requires confirmation');
   });
 
   it('keeps automated thread actions eligible for perimeter escalation', async () => {

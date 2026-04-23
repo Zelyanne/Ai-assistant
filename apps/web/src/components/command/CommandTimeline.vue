@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import Button from 'primevue/button';
 
 import type { CommandState, CommandTimelineEntry } from './types';
 
@@ -55,6 +56,85 @@ const sortedItems = computed(() => {
   });
 });
 
+const scrollContainer = ref<HTMLElement | null>(null);
+const isNearBottom = ref(true);
+const showJumpToLatest = ref(false);
+
+const NEAR_BOTTOM_THRESHOLD_PX = 120;
+
+function distanceFromBottom(el: HTMLElement): number {
+  return el.scrollHeight - el.scrollTop - el.clientHeight;
+}
+
+function computeNearBottom(el: HTMLElement): boolean {
+  return distanceFromBottom(el) <= NEAR_BOTTOM_THRESHOLD_PX;
+}
+
+function updateScrollState(): void {
+  const el = scrollContainer.value;
+  if (!el) return;
+  isNearBottom.value = computeNearBottom(el);
+  if (isNearBottom.value) showJumpToLatest.value = false;
+}
+
+function scrollToBottom(): void {
+  const el = scrollContainer.value;
+  if (!el) return;
+  el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+  showJumpToLatest.value = false;
+}
+
+const lastItemSignature = computed(() => {
+  const last = sortedItems.value[sortedItems.value.length - 1];
+  if (!last) return '';
+  const run = last.executionRun;
+  return [
+    last.id,
+    last.content,
+    last.state ?? '',
+    run?.status ?? '',
+    run?.currentStepKey ?? '',
+    run?.updatedAt ?? '',
+    run?.completedSteps ?? '',
+    run?.totalSteps ?? '',
+  ].join('|');
+});
+
+watch(
+  () => sortedItems.value.length,
+  async (nextCount, prevCount) => {
+    if (nextCount <= prevCount) return;
+    await nextTick();
+
+    if (isNearBottom.value) {
+      scrollToBottom();
+    } else {
+      showJumpToLatest.value = true;
+    }
+  }
+);
+
+watch(
+  lastItemSignature,
+  async (next, prev) => {
+    if (!next || next === prev) return;
+    await nextTick();
+
+    if (isNearBottom.value) {
+      scrollToBottom();
+    } else {
+      showJumpToLatest.value = true;
+    }
+  }
+);
+
+onMounted(() => {
+  void nextTick().then(() => {
+    scrollToBottom();
+    updateScrollState();
+  });
+});
+
 function roleLabel(role: CommandTimelineEntry['role']): string {
   if (role === 'user') return 'You';
   if (role === 'assistant') return 'Assistant';
@@ -100,87 +180,135 @@ function executionStatusClass(status: string): string {
       No commands yet. Start with a message below.
     </div>
 
-    <ul
+    <div
       v-else
-      class="max-h-[58vh] space-y-3 overflow-y-auto px-3 py-4"
+      ref="scrollContainer"
+      class="relative max-h-[70vh] min-h-[18rem] overflow-y-auto px-3 py-4"
+      @scroll.passive="updateScrollState"
     >
-      <li
-        v-for="item in sortedItems"
-        :key="item.id"
-        class="flex"
-        :class="item.role === 'user' ? 'justify-end' : 'justify-start'"
+      <div
+        v-if="showJumpToLatest"
+        class="sticky bottom-4 z-10 flex justify-end"
       >
-        <article
-          class="max-w-[92%] rounded-xl border px-4 py-3 md:max-w-[72%]"
-          :class="item.role === 'user' ? 'border-sky-200 bg-sky-50' : 'border-slate-200 bg-white'"
+        <Button
+          label="Jump to Latest"
+          icon="pi pi-arrow-down"
+          severity="secondary"
+          size="small"
+          class="shadow-sm"
+          @click="scrollToBottom"
+        />
+      </div>
+
+      <TransitionGroup
+        tag="ul"
+        name="timeline"
+        class="space-y-3"
+      >
+        <li
+          v-for="item in sortedItems"
+          :key="item.id"
+          class="flex"
+          :class="item.role === 'user' ? 'justify-end' : 'justify-start'"
         >
-          <div class="mb-1 flex items-center gap-2 text-xs">
-            <span class="font-semibold text-slate-700">{{ roleLabel(item.role) }}</span>
-            <span
-              v-if="item.state"
-              class="rounded-full px-2 py-0.5 font-medium"
-              :class="stateBadgeClass[item.state]"
-            >
-              {{ stateLabel[item.state] }}
-            </span>
-          </div>
-
-          <p class="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
-            {{ item.content }}
-          </p>
-
-          <div
-            v-if="item.executionRun"
-            class="mt-3 space-y-3 border-t border-slate-100 pt-3"
+          <article
+            class="max-w-[92%] rounded-xl border px-4 py-3 md:max-w-[72%]"
+            :class="item.role === 'user' ? 'border-sky-200 bg-sky-50' : 'border-slate-200 bg-white'"
           >
-            <div class="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+            <div class="mb-1 flex items-center gap-2 text-xs">
+              <span class="font-semibold text-slate-700">{{ roleLabel(item.role) }}</span>
               <span
+                v-if="item.state"
                 class="rounded-full px-2 py-0.5 font-medium"
-                :class="executionStatusClass(item.executionRun.status)"
+                :class="stateBadgeClass[item.state]"
               >
-                {{ executionStatusText(item.executionRun.status) }}
+                {{ stateLabel[item.state] }}
               </span>
-              <span v-if="executionProgress(item)">{{ executionProgress(item) }}</span>
-              <span v-if="item.executionRun.replanCount">Re-plans: {{ item.executionRun.replanCount }}</span>
             </div>
 
-            <div class="grid gap-2 text-xs text-slate-600 md:grid-cols-2">
-              <div>
-                <span class="font-semibold text-slate-700">Worker:</span>
-                {{ formatWorkerType(item.executionRun.currentWorkerType) }}
+            <p class="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">
+              {{ item.content }}
+            </p>
+
+            <div
+              v-if="item.executionRun"
+              class="mt-3 space-y-3 border-t border-slate-100 pt-3"
+            >
+              <div class="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                <span
+                  class="rounded-full px-2 py-0.5 font-medium"
+                  :class="executionStatusClass(item.executionRun.status)"
+                >
+                  {{ executionStatusText(item.executionRun.status) }}
+                </span>
+                <span v-if="executionProgress(item)">{{ executionProgress(item) }}</span>
+                <span v-if="item.executionRun.replanCount">Re-plans: {{ item.executionRun.replanCount }}</span>
               </div>
-              <div v-if="item.executionRun.currentStepKey">
-                <span class="font-semibold text-slate-700">Current step:</span>
-                {{ item.executionRun.currentStepKey }}
+
+              <div class="grid gap-2 text-xs text-slate-600 md:grid-cols-2">
+                <div>
+                  <span class="font-semibold text-slate-700">Worker:</span>
+                  {{ formatWorkerType(item.executionRun.currentWorkerType) }}
+                </div>
+                <div v-if="item.executionRun.currentStepKey">
+                  <span class="font-semibold text-slate-700">Current step:</span>
+                  {{ item.executionRun.currentStepKey }}
+                </div>
               </div>
+
+              <p
+                v-if="item.executionRun.summary"
+                class="text-xs leading-relaxed text-slate-600"
+              >
+                {{ item.executionRun.summary }}
+              </p>
+
+              <p
+                v-if="item.executionRun.lastError"
+                class="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800"
+              >
+                {{ item.executionRun.lastError }}
+              </p>
+
+              <details
+                v-if="item.executionRun.ledgerMarkdown"
+                class="rounded-lg bg-slate-50 px-3 py-2"
+              >
+                <summary class="cursor-pointer text-xs font-semibold text-slate-700">
+                  View handoff ledger
+                </summary>
+                <pre class="mt-2 whitespace-pre-wrap break-words font-sans text-xs leading-relaxed text-slate-600">{{ item.executionRun.ledgerMarkdown }}</pre>
+              </details>
             </div>
-
-            <p
-              v-if="item.executionRun.summary"
-              class="text-xs leading-relaxed text-slate-600"
-            >
-              {{ item.executionRun.summary }}
-            </p>
-
-            <p
-              v-if="item.executionRun.lastError"
-              class="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800"
-            >
-              {{ item.executionRun.lastError }}
-            </p>
-
-            <details
-              v-if="item.executionRun.ledgerMarkdown"
-              class="rounded-lg bg-slate-50 px-3 py-2"
-            >
-              <summary class="cursor-pointer text-xs font-semibold text-slate-700">
-                View handoff ledger
-              </summary>
-              <pre class="mt-2 whitespace-pre-wrap break-words font-sans text-xs leading-relaxed text-slate-600">{{ item.executionRun.ledgerMarkdown }}</pre>
-            </details>
-          </div>
-        </article>
-      </li>
-    </ul>
+          </article>
+        </li>
+      </TransitionGroup>
+    </div>
   </section>
 </template>
+
+<style scoped>
+.timeline-enter-active,
+.timeline-leave-active {
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.timeline-enter-from,
+.timeline-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timeline-enter-active,
+  .timeline-leave-active {
+    transition: none;
+  }
+
+  .timeline-enter-from,
+  .timeline-leave-to {
+    opacity: 1;
+    transform: none;
+  }
+}
+</style>

@@ -3,8 +3,6 @@ import { Task } from '@ai-assistant/shared';
 import { mcpService } from '../services/mcp.js';
 import { PerimeterGuard } from '../guards/PerimeterGuard.js';
 
-type ToolCandidate = { name?: string };
-
 type CalendarMutationAction = 'create_requested' | 'reschedule_existing';
 
 interface CalendarConflictResolution {
@@ -20,25 +18,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     return null;
   }
   return value as Record<string, unknown>;
-}
-
-function extractToolNames(rawTools: unknown[]): string[] {
-  return rawTools
-    .map((tool) => {
-      const candidate = tool as ToolCandidate;
-      return typeof candidate.name === 'string' ? candidate.name : null;
-    })
-    .filter((name): name is string => Boolean(name && name.length > 0));
-}
-
-function findToolName(toolNames: string[], keywords: string[]): string | null {
-  for (const toolName of toolNames) {
-    const normalized = toolName.toLowerCase();
-    if (keywords.every((keyword) => normalized.includes(keyword))) {
-      return toolName;
-    }
-  }
-  return null;
 }
 
 function getConflictResolution(payload: Record<string, unknown>): CalendarConflictResolution {
@@ -109,10 +88,10 @@ export class CalendarCreateProcessor extends BaseProcessor {
     const conflictResolution = getConflictResolution(payload);
 
     const [freebusyResolution, createResolution, patchResolution, updateResolution] = await Promise.all([
-      mcpService.resolveToolName(task.organization_id, 'query_calendar_freebusy'),
-      mcpService.resolveToolName(task.organization_id, 'create_calendar_event'),
-      mcpService.resolveToolName(task.organization_id, 'patch_calendar_event'),
-      mcpService.resolveToolName(task.organization_id, 'update_calendar_event'),
+      mcpService.resolveToolName(task.organization_id, 'query_freebusy'),
+      mcpService.resolveToolName(task.organization_id, 'manage_event'),
+      mcpService.resolveToolName(task.organization_id, 'manage_event'),
+      mcpService.resolveToolName(task.organization_id, 'manage_event'),
     ]);
 
     const freebusyTool = freebusyResolution.resolvedTool;
@@ -136,14 +115,14 @@ export class CalendarCreateProcessor extends BaseProcessor {
 
       try {
         const mutationResult = mutationTool === 'manage_event'
-          ? await mcpService.executeWorkerTool(task.organization_id, 'calendar', 'patch_calendar_event', {
+          ? await mcpService.executeWorkerTool(task.organization_id, 'calendar', 'manage_event', {
               action: 'update',
               calendar_id: 'primary',
               event_id: eventExternalId,
               start_time: newStartTime,
               end_time: newEndTime,
             })
-          : await mcpService.executeWorkerTool(task.organization_id, 'calendar', 'patch_calendar_event', {
+          : await mcpService.executeWorkerTool(task.organization_id, 'calendar', 'manage_event', {
               calendarId: 'primary',
               calendar_id: 'primary',
               eventId: eventExternalId,
@@ -198,19 +177,12 @@ export class CalendarCreateProcessor extends BaseProcessor {
       const { result: freebusyResult } = await mcpService.executeWorkerTool(
         task.organization_id,
         'calendar',
-        'query_calendar_freebusy',
-        freebusyTool === 'query_freebusy'
-          ? {
-              time_min: startTime,
-              time_max: endTime,
-              calendar_ids: ['primary'],
-            }
-          : {
-              calendarId: 'primary',
-              calendar_id: 'primary',
-              timeMin: startTime,
-              timeMax: endTime,
-            },
+        'query_freebusy',
+        {
+          time_min: startTime,
+          time_max: endTime,
+          calendar_ids: ['primary'],
+        },
       );
 
       const calendars = asRecord(asRecord(freebusyResult)?.calendars);
@@ -234,27 +206,15 @@ export class CalendarCreateProcessor extends BaseProcessor {
     }
 
     try {
-      const created = createTool === 'manage_event'
-        ? await mcpService.executeWorkerTool(task.organization_id, 'calendar', 'create_calendar_event', {
-            action: 'create',
-            calendar_id: 'primary',
-            summary,
-            description,
-            start_time: startTime,
-            end_time: endTime,
-            location,
-          })
-        : await mcpService.executeWorkerTool(task.organization_id, 'calendar', 'create_calendar_event', {
-            calendarId: 'primary',
-            calendar_id: 'primary',
-            event: {
-              summary,
-              description,
-              start: { dateTime: startTime },
-              end: { dateTime: endTime },
-              location,
-            },
-          });
+      const created = await mcpService.executeWorkerTool(task.organization_id, 'calendar', 'manage_event', {
+        action: 'create',
+        calendar_id: 'primary',
+        summary,
+        description,
+        start_time: startTime,
+        end_time: endTime,
+        location,
+      });
 
       const result = created.result;
 

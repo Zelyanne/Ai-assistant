@@ -132,38 +132,24 @@ export class EmailSendProcessor extends BaseProcessor {
 
       const draftResolution = await mcpService.resolveToolName(
         task.organization_id,
-        'create_gmail_draft',
+        'draft_gmail_message',
       );
-      const draftToolName = draftResolution.resolvedTool ?? 'create_gmail_draft';
-      const draftArgs = draftToolName === 'draft_gmail_message'
-        ? {
-            to,
-            cc: payload.cc,
-            bcc: payload.bcc,
-            subject,
-            body,
-            body_format: normalizedBodyFormat,
-            thread_id: payload.thread_external_id,
-          }
-        : {
-            userId: 'me',
-            draft: {
-              message: {
-                raw: encodeRawEmail({
-                  to,
-                  cc: payload.cc,
-                  bcc: payload.bcc,
-                  subject,
-                  body,
-                }),
-              },
-            },
-          };
+      const draftToolName = draftResolution.resolvedTool ?? 'draft_gmail_message';
+      // Use MCP tool format (draft_gmail_message params)
+      const draftArgs = {
+        to,
+        cc: payload.cc,
+        bcc: payload.bcc,
+        subject,
+        body,
+        body_format: normalizedBodyFormat,
+        thread_id: payload.thread_external_id,
+      };
 
       const { toolName, result: draftResult } = await mcpService.executeWorkerTool(
         task.organization_id,
         'gmail',
-        'create_gmail_draft',
+        'draft_gmail_message',
         draftArgs,
       );
 

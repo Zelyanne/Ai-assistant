@@ -1,6 +1,7 @@
 type __VLS_Props = {
     disabled?: boolean;
     placeholder?: string;
+    variant?: 'default' | 'chat';
 };
 declare const _default: import("vue").DefineComponent<__VLS_Props, {}, {}, {}, {}, import("vue").ComponentOptionsMixin, import("vue").ComponentOptionsMixin, {
     submit: (message: string) => any;
@@ -8,6 +9,7 @@ declare const _default: import("vue").DefineComponent<__VLS_Props, {}, {}, {}, {
     onSubmit?: ((message: string) => any) | undefined;
 }>, {
     placeholder: string;
+    variant: "default" | "chat";
     disabled: boolean;
 }, {}, {}, {}, string, import("vue").ComponentProvideOptions, false, {}, any>;
 export default _default;

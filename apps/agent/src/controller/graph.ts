@@ -25,11 +25,14 @@ import { loadWorkspaceContext } from "./nodes/workspaceContext.js";
 import { escalateNode } from "./nodes/escalate.js";
 import { calendarConflictNode } from "./nodes/calendarConflict.js";
 import { plannerNode, workspaceWorkerNode } from "./nodes/planner.js";
+import { generalAgentNode } from "./nodes/generalAgent.js";
+import { routerNode } from "./nodes/router.js";
 import { AuditLogger } from "../services/AuditLogger.js";
 import { tracingService } from "../services/llm/tracing.js";
 import { LLMProviderFactory } from "../services/llm/factory.js";
 import { executionRunService } from "../services/ExecutionRunService.js";
 import { memoryService } from "../services/MemoryService.js";
+import { channelRouter } from "../services/channelRouter.js";
 import {
   getScheduledTaskContext,
   syncScheduledTaskCompletion,
@@ -147,6 +150,10 @@ export const AgentStateAnnotation = Annotation.Root({
     reducer: (_x, y) => y ?? null,
     default: () => null,
   }),
+  router_completed_step_key: Annotation<string | null>({
+    reducer: (_x, y) => y ?? null,
+    default: () => null,
+  }),
 });
 
 export type AgentState = typeof AgentStateAnnotation.State;
@@ -219,6 +226,100 @@ function getUserInitiatedCommandChannel(task: Task): UserInitiatedChannel | null
   }
 
   return null;
+}
+
+function isUserInitiatedConversationTask(task: Task): boolean {
+  const payload = asRecord(task.payload);
+  const channel = payload.channel;
+  const source = payload.source;
+  const hasThreadId = typeof payload.thread_id === "string" && payload.thread_id.trim().length > 0;
+  const hasExternalMessageId = typeof payload.external_message_id === "string" && payload.external_message_id.trim().length > 0;
+
+  if (channel !== "web" && channel !== "telegram" && channel !== "whatsapp") {
+    return false;
+  }
+
+  if (source === "dashboard-command-center") {
+    return true;
+  }
+
+  if (typeof source === "string" && source.endsWith("-webhook")) {
+    return hasThreadId && hasExternalMessageId;
+  }
+
+  return payload.user_initiated === true;
+}
+
+function buildUserFacingReplyMessage(
+  task: Task,
+  status: Task["status"],
+  stateError: string | null,
+): string {
+  const payload = asRecord(task.payload);
+  const resultRecord = asRecord(task.result);
+  const isEmailDraft = task.domain_action === "email.draft";
+
+  const summary = typeof resultRecord.summary === "string" ? resultRecord.summary.trim() : "";
+  const reason = typeof resultRecord.reason === "string" ? resultRecord.reason.trim() : "";
+  const prompt = typeof resultRecord.prompt === "string" ? resultRecord.prompt.trim() : "";
+
+  const isInternalRunSummary = (value: string): boolean => {
+    const lower = value.toLowerCase();
+    return lower.startsWith("execution run completed with") || lower.startsWith("execution run ");
+  };
+
+  if (isEmailDraft && status === "paused") {
+    return "J’ai besoin d’une précision pour finaliser ce brouillon.\n\nDonne-moi l’ajustement exact (destinataire, sujet ou ton) et je continue.";
+  }
+
+  if (isEmailDraft && (status === "escalation" || status === "error")) {
+    return "Je n’ai pas pu finaliser le brouillon automatiquement.\n\nDonne-moi la correction souhaitée et je repars tout de suite.";
+  }
+
+  if (status === "paused") {
+    const detail = prompt || reason || stateError || "Peux-tu préciser ta demande pour que je continue ?";
+    return `J’ai besoin d’une précision pour continuer.\n\n${detail}`;
+  }
+
+  if (status === "escalation" || status === "error") {
+    const detail = prompt || reason || stateError || `La tâche s’est terminée avec le statut ${status}.`;
+    return `Je n’ai pas pu terminer automatiquement.\n\n${detail}`;
+  }
+
+  const lines: string[] = [];
+  const preferredSummary = summary && !isInternalRunSummary(summary) ? summary : "";
+  lines.push(isEmailDraft ? "✅ Brouillon prêt." : preferredSummary ? `✅ ${preferredSummary}` : "✅ C’est fait.");
+
+  if (isEmailDraft) {
+    const recipient = typeof payload.recipient === "string" ? payload.recipient : null;
+    const subject = typeof payload.subject === "string" ? payload.subject : null;
+
+    lines.push("", "Détails:");
+    if (recipient) lines.push(`- Destinataire: ${recipient}`);
+    if (subject) lines.push(`- Sujet: ${subject}`);
+    lines.push("- Contenu complet du brouillon conservé hors du chat.");
+    return lines.join("\n");
+  }
+
+  if (task.domain_action === "email.send") {
+    const to = typeof payload.to === "string" ? payload.to : null;
+    const subject = typeof payload.subject === "string" ? payload.subject : null;
+
+    lines.push("", "Détails:");
+    if (to) lines.push(`- Destinataire: ${to}`);
+    if (subject) lines.push(`- Sujet: ${subject}`);
+    return lines.join("\n");
+  }
+
+  const executionRun = asRecord(resultRecord.execution_run);
+  const completedSteps = Array.isArray(executionRun.completed_steps)
+    ? executionRun.completed_steps.length
+    : null;
+  if (completedSteps && completedSteps > 0) {
+    lines.push("", `Détails: ${completedSteps} étape(s) terminée(s).`);
+  }
+
+  return lines.join("\n");
 }
 
 function isHighRiskPayload(payload: unknown): boolean {
@@ -834,180 +935,7 @@ async function processRelancingNudge(state: AgentState) {
 async function processStatusReport(state: AgentState) {
   return executeProcessor(state);
 }
-async function processAssistantCommand(
-  state: AgentState,
-): Promise<Partial<AgentState>> {
-  if (state.error) return {};
 
-  const processor = ProcessorRegistry.getProcessor("assistant.command");
-  if (!processor) {
-    const step = AuditLogger.createStep(
-      "Assistant Command",
-      "Unsupported domain.action: assistant.command",
-    );
-    return {
-      error: "Unsupported domain.action: assistant.command",
-      trace: [step],
-    };
-  }
-
-  try {
-    const result = await processor.process(state.task);
-    const resultWithMeta = result as {
-      planner_intent?: unknown;
-      delegated_domain_action?: unknown;
-      delegated_payload?: unknown;
-      summary?: unknown;
-      trace?: ReasoningStep[];
-      citations?: Citation[];
-    };
-
-    const plannerIntent =
-      resultWithMeta.planner_intent &&
-      typeof resultWithMeta.planner_intent === "object" &&
-      !Array.isArray(resultWithMeta.planner_intent)
-        ? (resultWithMeta.planner_intent as AssistantCommandIntent)
-        : null;
-
-    if (plannerIntent) {
-      const plannedTask: Task = {
-        ...state.task,
-        result: {
-          command_center: {
-            original_domain_action: "assistant.command",
-            delegated_domain_action: "planner",
-            summary:
-              typeof resultWithMeta.summary === "string"
-                ? resultWithMeta.summary
-                : "Planned workspace capability execution",
-          },
-        },
-      };
-
-      return {
-        task: plannedTask,
-        planner_intent: plannerIntent,
-        result,
-        trace: resultWithMeta.trace ?? [],
-        citations: resultWithMeta.citations ?? [],
-      };
-    }
-
-    const delegatedDomainAction =
-      typeof resultWithMeta.delegated_domain_action === "string"
-        ? resultWithMeta.delegated_domain_action
-        : null;
-
-    if (!delegatedDomainAction) {
-      const userInitiatedChannel = getUserInitiatedCommandChannel(state.task);
-      const step = AuditLogger.createStep(
-        "Assistant Command",
-        userInitiatedChannel
-          ? `Paused: command delegation failed for user-initiated ${userInitiatedChannel} command`
-          : "Escalated: command delegation failed",
-        {
-          confidence_score: 0,
-          confidence_threshold: CONFIDENCE_THRESHOLD,
-          ambiguity_detected: true,
-          escalation_trigger: "ambiguity_detected",
-        },
-      );
-
-      const escalationResult = buildEscalationPayload({
-        reason: "Command delegation failed",
-        prompt: "Please rephrase your request with explicit action details.",
-        confidenceScore: 0,
-        trigger: "ambiguity_detected",
-      });
-
-      return {
-        task: {
-          ...state.task,
-          status: userInitiatedChannel ? "paused" : "escalation",
-          result: escalationResult,
-        },
-        error: "Command delegation failed",
-        trace: [step],
-      };
-    }
-
-    const delegatedPayload =
-      resultWithMeta.delegated_payload &&
-      typeof resultWithMeta.delegated_payload === "object" &&
-      !Array.isArray(resultWithMeta.delegated_payload)
-        ? (resultWithMeta.delegated_payload as Record<string, unknown>)
-        : {};
-    const delegatedTask: Task = {
-      ...state.task,
-      domain_action: delegatedDomainAction,
-      payload: delegatedPayload,
-      result: {
-        command_center: {
-          original_domain_action: "assistant.command",
-          delegated_domain_action: delegatedDomainAction,
-          summary:
-            typeof resultWithMeta.summary === "string"
-              ? resultWithMeta.summary
-              : `Delegated to ${delegatedDomainAction}`,
-        },
-      },
-    };
-
-    return {
-      task: delegatedTask,
-      result,
-      trace: resultWithMeta.trace ?? [],
-      citations: resultWithMeta.citations ?? [],
-    };
-  } catch (err: unknown) {
-    const userInitiatedChannel = getUserInitiatedCommandChannel(state.task);
-    const safeMessage = redactErrorMessage(err);
-    const confirmationPrompt = safeMessage.startsWith("CONFIRMATION_REQUIRED:")
-      ? safeMessage.slice("CONFIRMATION_REQUIRED:".length).trim()
-      : null;
-    const reason = safeMessage.startsWith("CONFIRMATION_REQUIRED")
-      ? "High-risk command requires confirmation"
-      : safeMessage.startsWith("COMMAND_AMBIGUOUS")
-          ? "Command is ambiguous"
-          : safeMessage.startsWith("COMMAND_INVALID")
-          ? "Command is invalid"
-          : "Command processing failed";
-
-    const step = AuditLogger.createStep(
-      "Assistant Command",
-      userInitiatedChannel
-        ? `Paused: ${reason}`
-        : `Escalated: ${reason}`,
-      {
-        confidence_score: 0,
-        confidence_threshold: CONFIDENCE_THRESHOLD,
-        ambiguity_detected: true,
-        escalation_trigger: "ambiguity_detected",
-        output_summary: safeMessage,
-      },
-    );
-
-    const escalationResult = buildEscalationPayload({
-      reason,
-      prompt:
-        reason === "High-risk command requires confirmation"
-          ? confirmationPrompt ?? "Confirm this high-risk command before queueing execution."
-          : "Please provide explicit command details and retry.",
-      confidenceScore: 0,
-      trigger: "ambiguity_detected",
-    });
-
-    return {
-      task: {
-        ...state.task,
-        status: userInitiatedChannel ? "paused" : "escalation",
-        result: escalationResult,
-      },
-      error: reason,
-      trace: [step],
-    };
-  }
-}
 async function processRelancingUpdate(
   state: AgentState,
 ): Promise<Partial<AgentState>> {
@@ -1779,6 +1707,61 @@ async function finalizeTask(
     // 3. Flush Tracing
     await tracingService.flush();
 
+    // 4. Best-effort conversational reply for user-initiated channels.
+    // Keeps chat UX fluid on web/telegram/whatsapp without exposing internal logs.
+    try {
+      if (
+        !scheduledTaskContext &&
+        state.task.domain_action !== "channel.send" &&
+        isUserInitiatedConversationTask(state.task)
+      ) {
+        const responseChannel = extractChannelContext(state.task.payload);
+        const channel = responseChannel.channel;
+        const threadId = responseChannel.threadId;
+
+        if ((channel === "web" || channel === "telegram" || channel === "whatsapp") && threadId) {
+          const replyExternalMessageId = `reply-${state.task.id}`;
+          const { data: existingReply, error: existingReplyError } = await supabase
+            .from("tasks")
+            .select("id")
+            .eq("organization_id", state.task.organization_id)
+            .eq("domain_action", "channel.send")
+            .eq("payload->>external_message_id", replyExternalMessageId)
+            .maybeSingle();
+
+          if (!existingReplyError && !existingReply?.id) {
+            const taskForReply: Task = {
+              ...state.task,
+              status,
+              result: persistedResult as unknown as Task["result"],
+            };
+            const messageText = buildUserFacingReplyMessage(
+              taskForReply,
+              status,
+              state.error ?? null,
+            );
+
+            await channelRouter.enqueueOutbound({
+              channel,
+              organization_id: state.task.organization_id,
+              user_id: state.task.user_id ?? null,
+              task_id: state.task.id,
+              external_message_id: replyExternalMessageId,
+              thread_id: threadId,
+              message_text: messageText,
+              channel_metadata: {},
+              correlation_id: responseChannel.correlationId,
+            });
+          }
+        }
+      }
+    } catch (channelReplyError: unknown) {
+      const safeMessage = redactErrorMessage(channelReplyError);
+      console.error(
+        `[Graph][${state.task.id}] User-facing channel reply failed: ${safeMessage}`,
+      );
+    }
+
     if (state.task.user_id) {
       await memoryService.updateTaskState(
         state.task.organization_id,
@@ -1864,8 +1847,13 @@ function routeAfterWorkspaceContext(state: AgentState) {
 
   const domainAction = state.task.domain_action;
 
-  if (domainAction === "assistant.command" && state.execution_run) {
-    return "planner";
+  // All assistant commands go straight to the General Agent.
+  // The General Agent is responsible for deciding whether the request should:
+  // - create an execution plan,
+  // - create a schedule,
+  // - or ask for clarification.
+  if (domainAction === "assistant.command") {
+    return "general_agent";
   }
 
   if (domainAction === "system.analyze") {
@@ -1888,16 +1876,20 @@ function routeAfterWorkspaceContext(state: AgentState) {
   return "unsupported_domain";
 }
 
-function routeAfterAssistantCommand(state: AgentState) {
-  if (state.error || state.task.status === "escalation") {
+/**
+ * Route after General Agent: if an execution run was created, go to router.
+ * Otherwise finalize (escalation was set by the agent itself).
+ */
+function routeAfterGeneralAgent(state: AgentState) {
+  if (state.error || state.task.status === "escalation" || state.task.status === "paused") {
     return "finalize";
   }
 
-  if (state.planner_intent || state.execution_run) {
-    return "planner";
+  if (state.execution_run) {
+    return "router";
   }
 
-  return "check_perimeter";
+  return "finalize";
 }
 
 function routeAfterPlanner(state: AgentState) {
@@ -1905,9 +1897,59 @@ function routeAfterPlanner(state: AgentState) {
     return "finalize";
   }
 
-  return "workspace_worker";
+  return "router";
 }
 
+function routeAfterRouter(state: AgentState) {
+  if (
+    state.error ||
+    state.task.status === "escalation" ||
+    state.task.status === "paused"
+  ) {
+    return "finalize";
+  }
+
+  const runStatus = state.execution_run?.status;
+  if (runStatus === "failed" || runStatus === "escalated" || runStatus === "blocked") {
+    return "general_agent";
+  }
+
+  if (runStatus === "completed") {
+    return "finalize";
+  }
+
+  if (shouldRouteToGeneralAgentCheckpoint(state)) {
+    return "general_agent";
+  }
+
+  // Loop back to router for next step
+  return "router";
+}
+
+export function shouldRouteToGeneralAgentCheckpoint(state: AgentState): boolean {
+  const run = state.execution_run;
+  const completedStepKey = state.router_completed_step_key;
+  if (!run || !completedStepKey) {
+    return false;
+  }
+
+  const totalSteps = run.plan_json.steps.length;
+  const hasPendingSteps = run.plan_json.steps.some(
+    (step) => step.status === "pending" || step.status === "in_progress",
+  );
+  const doneStepCount = run.plan_json.steps.filter((step) =>
+    step.status === "completed" ||
+    step.status === "skipped" ||
+    step.status === "failed" ||
+    step.status === "blocked",
+  ).length;
+
+  return totalSteps > 3 && hasPendingSteps && doneStepCount > 0 && doneStepCount % 3 === 0;
+}
+
+/**
+ * @deprecated Use routeAfterRouter instead. Kept for backward compatibility.
+ */
 function routeAfterWorkspaceWorker(state: AgentState) {
   if (state.error || state.task.status === "escalation") {
     return "finalize";
@@ -2023,14 +2065,16 @@ const workflow = new StateGraph(AgentStateAnnotation)
     withTaskStateTracking("relancing_update", processRelancingUpdate),
   )
   .addNode(
-    "assistant_command",
-    withTaskStateTracking("assistant_command", processAssistantCommand),
-  )
-  .addNode(
     "schedule_manage",
     withTaskStateTracking("schedule_manage", executeProcessor),
   )
+  .addNode(
+    "skills_manage",
+    withTaskStateTracking("skills_manage", executeProcessor),
+  )
   .addNode("planner", withTaskStateTracking("planner", plannerNode))
+  .addNode("general_agent", withTaskStateTracking("general_agent", generalAgentNode))
+  .addNode("router", withTaskStateTracking("router", routerNode))
   .addNode(
     "workspace_worker",
     withTaskStateTracking("workspace_worker", workspaceWorkerNode),
@@ -2057,8 +2101,9 @@ const workflow = new StateGraph(AgentStateAnnotation)
   .addConditionalEdges("check_perimeter", routeAfterPerimeter)
   .addConditionalEdges("load_workspace_context", routeAfterWorkspaceContext)
   .addConditionalEdges("calendar_conflict", routeAfterCalendarConflict)
-  .addConditionalEdges("assistant_command", routeAfterAssistantCommand)
+  .addConditionalEdges("general_agent", routeAfterGeneralAgent)
   .addConditionalEdges("planner", routeAfterPlanner)
+  .addConditionalEdges("router", routeAfterRouter)
   .addConditionalEdges("workspace_worker", routeAfterWorkspaceWorker)
   .addConditionalEdges("reasoning", routeAfterReasoning)
 
@@ -2077,6 +2122,7 @@ const workflow = new StateGraph(AgentStateAnnotation)
   .addEdge("eod_memory_rotate", "finalize")
   .addEdge("relancing_update", "finalize")
   .addEdge("schedule_manage", "finalize")
+  .addEdge("skills_manage", "finalize")
   .addEdge("system_optimize_protocol", "finalize")
   .addEdge("thread_action", "finalize")
   .addEdge("unsupported_domain", "finalize")

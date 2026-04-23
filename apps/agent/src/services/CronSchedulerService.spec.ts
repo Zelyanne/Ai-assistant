@@ -17,6 +17,10 @@ type ScheduleRow = {
   last_run: string | null;
   failure_count: number;
   last_error: string | null;
+  remaining_runs?: number | null;
+  run_count?: number;
+  end_at?: string | null;
+  topic?: string | null;
 };
 
 type DispatchRow = {
@@ -34,7 +38,44 @@ type MockState = {
   tasks: Array<Record<string, unknown>>;
 };
 
-function createMockSupabase(state: MockState, options?: { failTaskInsert?: boolean }) {
+function sanitizeScheduledTaskPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = { ...payload };
+
+  delete sanitized.scheduled;
+  delete sanitized.schedule_id;
+  delete sanitized.schedule_dispatch_id;
+  delete sanitized.cron_expression;
+  delete sanitized.timezone;
+  delete sanitized.trigger_time;
+  delete sanitized.topic;
+  delete sanitized.organization_id;
+  delete sanitized.user_id;
+  delete sanitized.status;
+
+  return sanitized;
+}
+
+function asNonEmptyTrimmedString(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function createMockSupabase(
+  state: MockState,
+  options?: {
+    failTaskInsert?: boolean;
+    rpcErrorMessage?: string;
+  },
+) {
+  const existingDispatchKey = (scheduleId: string, dispatchWindowStart: string) => `${scheduleId}:${dispatchWindowStart}`;
+  const existingDispatches = new Set<string>(
+    state.dispatches.map((row) => existingDispatchKey(row.schedule_id, row.dispatch_window_start)),
+  );
+
   return {
     from: (table: string) => {
       if (table === 'user_schedules') {
@@ -139,6 +180,190 @@ function createMockSupabase(state: MockState, options?: { failTaskInsert?: boole
       }
 
       throw new Error(`Unhandled table ${table}`);
+    },
+
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      if (fn !== 'claim_schedule_dispatch') {
+        throw new Error(`Unhandled rpc ${fn}`);
+      }
+
+      if (options?.rpcErrorMessage) {
+        return { data: null, error: { message: options.rpcErrorMessage } };
+      }
+
+      if (options?.failTaskInsert) {
+        return { data: null, error: { message: 'insert failed' } };
+      }
+
+      const scheduleId = String(args.schedule_id);
+      const dispatchWindowStart = String(args.dispatch_window_start);
+      const dispatchWindowEnd = String(args.dispatch_window_end);
+
+      const schedule = state.schedules.find((row) => row.id === scheduleId);
+      if (!schedule) {
+        return {
+          data: [{
+            should_dispatch: false,
+            reason: 'not_found',
+            dispatch_id: null,
+            task_id: null,
+            remaining_runs_after: null,
+            is_active_after: null,
+          }],
+          error: null,
+        };
+      }
+
+      if (schedule.is_active !== true) {
+        return {
+          data: [{
+            should_dispatch: false,
+            reason: 'inactive',
+            dispatch_id: null,
+            task_id: null,
+            remaining_runs_after: schedule.remaining_runs ?? null,
+            is_active_after: schedule.is_active,
+          }],
+          error: null,
+        };
+      }
+
+      const endAt = schedule.end_at ?? null;
+      if (endAt && new Date(dispatchWindowStart).getTime() >= new Date(endAt).getTime()) {
+        schedule.is_active = false;
+        return {
+          data: [{
+            should_dispatch: false,
+            reason: 'ended',
+            dispatch_id: null,
+            task_id: null,
+            remaining_runs_after: schedule.remaining_runs ?? null,
+            is_active_after: false,
+          }],
+          error: null,
+        };
+      }
+
+      if (typeof schedule.remaining_runs === 'number' && schedule.remaining_runs <= 0) {
+        schedule.is_active = false;
+        return {
+          data: [{
+            should_dispatch: false,
+            reason: 'exhausted',
+            dispatch_id: null,
+            task_id: null,
+            remaining_runs_after: schedule.remaining_runs,
+            is_active_after: false,
+          }],
+          error: null,
+        };
+      }
+
+      const key = existingDispatchKey(scheduleId, dispatchWindowStart);
+      if (existingDispatches.has(key)) {
+        return {
+          data: [{
+            should_dispatch: false,
+            reason: 'already_claimed',
+            dispatch_id: null,
+            task_id: null,
+            remaining_runs_after: schedule.remaining_runs ?? null,
+            is_active_after: schedule.is_active,
+          }],
+          error: null,
+        };
+      }
+
+      const dispatchId = crypto.randomUUID();
+      const taskId = crypto.randomUUID();
+
+      const sanitizedPayload = sanitizeScheduledTaskPayload(schedule.task_payload);
+      let effectivePayload: Record<string, unknown> = {
+        ...sanitizedPayload,
+        schedule_id: schedule.id,
+        schedule_dispatch_id: dispatchId,
+        cron_expression: schedule.cron_expression,
+        timezone: schedule.timezone,
+        scheduled: true,
+        trigger_time: dispatchWindowStart,
+      };
+
+      if (schedule.task_type === 'assistant.command') {
+        const commandValue =
+          asNonEmptyTrimmedString(sanitizedPayload.command)
+          ?? asNonEmptyTrimmedString(sanitizedPayload.command_text)
+          ?? asNonEmptyTrimmedString(sanitizedPayload.message_text);
+
+        if (!commandValue) {
+          schedule.is_active = false;
+          schedule.last_error = 'Invalid schedule payload: assistant.command requires task_payload.command';
+          return {
+            data: [{
+              should_dispatch: false,
+              reason: 'invalid_payload',
+              dispatch_id: null,
+              task_id: null,
+              remaining_runs_after: schedule.remaining_runs ?? null,
+              is_active_after: false,
+            }],
+            error: null,
+          };
+        }
+
+        const commandText = asNonEmptyTrimmedString(sanitizedPayload.command_text) ?? commandValue;
+        const messageText = asNonEmptyTrimmedString(sanitizedPayload.message_text) ?? commandValue;
+
+        effectivePayload = {
+          ...effectivePayload,
+          command: commandValue,
+          command_text: commandText,
+          message_text: messageText,
+          confirmed: true,
+          high_risk: true,
+        };
+      }
+
+      existingDispatches.add(key);
+
+      state.dispatches.push({
+        id: dispatchId,
+        organization_id: schedule.organization_id,
+        schedule_id: schedule.id,
+        dispatch_window_start: dispatchWindowStart,
+        dispatch_window_end: dispatchWindowEnd,
+        task_id: taskId,
+      });
+
+      state.tasks.push({
+        id: taskId,
+        organization_id: schedule.organization_id,
+        user_id: schedule.user_id,
+        domain_action: schedule.task_type,
+        topic: schedule.topic ?? 'Schedule',
+        status: 'queued',
+        payload: effectivePayload,
+      });
+
+      schedule.run_count = (schedule.run_count ?? 0) + 1;
+      if (typeof schedule.remaining_runs === 'number') {
+        schedule.remaining_runs -= 1;
+        if (schedule.remaining_runs <= 0) {
+          schedule.remaining_runs = 0;
+          schedule.is_active = false;
+        }
+      }
+
+      return {
+        data: [{
+          should_dispatch: true,
+          reason: 'dispatched',
+          dispatch_id: dispatchId,
+          task_id: taskId,
+          remaining_runs_after: schedule.remaining_runs ?? null,
+          is_active_after: schedule.is_active,
+        }],
+        error: null,
+      };
     },
   };
 }
@@ -301,6 +526,79 @@ describe('CronSchedulerService', () => {
     expect(state.schedules[0].is_active).toBe(false);
     expect(state.schedules[0].last_error).toContain('insert failed');
     expect(state.dispatches).toHaveLength(0);
+  });
+
+  it('persists RPC error message when claim_schedule_dispatch fails', async () => {
+    state.schedules.push({
+      id: '11111111-1111-4111-8111-111111111111',
+      organization_id: '22222222-2222-4222-8222-222222222222',
+      user_id: '33333333-3333-4333-8333-333333333333',
+      task_type: 'email.check',
+      task_payload: {},
+      cron_expression: '0 * * * *',
+      timezone: 'UTC',
+      is_active: true,
+      next_run: '2026-03-20T09:59:00.000Z',
+      last_run: null,
+      failure_count: 2,
+      last_error: null,
+    });
+
+    const scheduler = new CronSchedulerService({
+      now: () => now,
+      supabaseClient: createMockSupabase(state, {
+        rpcErrorMessage: 'column reference "schedule_id" is ambiguous',
+      }),
+      auditLogger: {
+        flush: vi.fn(async () => undefined),
+      },
+      maxFailures: 3,
+    });
+
+    await scheduler.runCycle();
+
+    expect(state.schedules[0].failure_count).toBe(3);
+    expect(state.schedules[0].is_active).toBe(false);
+    expect(state.schedules[0].last_error).toContain('column reference "schedule_id" is ambiguous');
+    expect(state.dispatches).toHaveLength(0);
+    expect(state.tasks).toHaveLength(0);
+  });
+
+  it('respects remaining_runs by stopping after exhaustion', async () => {
+    const catchUpNow = new Date('2026-03-20T10:30:00.000Z');
+
+    state.schedules.push({
+      id: '11111111-1111-4111-8111-111111111111',
+      organization_id: '22222222-2222-4222-8222-222222222222',
+      user_id: '33333333-3333-4333-8333-333333333333',
+      task_type: 'assistant.command',
+      task_payload: { command: 'Ping' },
+      cron_expression: '0 * * * *',
+      timezone: 'UTC',
+      is_active: true,
+      next_run: '2026-03-20T08:00:00.000Z',
+      last_run: null,
+      failure_count: 0,
+      last_error: null,
+      remaining_runs: 2,
+      run_count: 0,
+    });
+
+    const scheduler = new CronSchedulerService({
+      now: () => catchUpNow,
+      supabaseClient: createMockSupabase(state),
+      auditLogger: {
+        flush: vi.fn(async () => undefined),
+      },
+      maxFailures: 3,
+    });
+
+    await scheduler.runCycle();
+
+    expect(state.tasks).toHaveLength(2);
+    expect(state.schedules[0].remaining_runs).toBe(0);
+    expect(state.schedules[0].is_active).toBe(false);
+    expect(state.dispatches).toHaveLength(2);
   });
 
   it('computes next run in UTC for a basic hourly cron', () => {

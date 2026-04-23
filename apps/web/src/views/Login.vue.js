@@ -20,10 +20,10 @@ const handleLogin = async () => {
         });
         if (error)
             throw error;
-        router.push('/dashboard');
+        await router.push('/dashboard/command-center');
     }
     catch (error) {
-        errorMessage.value = error.message || 'Failed to sign in';
+        errorMessage.value = error instanceof Error ? error.message : 'Failed to sign in';
     }
     finally {
         loading.value = false;
@@ -37,6 +37,8 @@ const handleGoogleLogin = async () => {
     }
     catch (error) {
         errorMessage.value = error instanceof Error ? error.message : 'Failed to sign in with Google';
+    }
+    finally {
         loading.value = false;
     }
 };
@@ -79,10 +81,12 @@ if (__VLS_ctx.errorMessage) {
     const __VLS_1 = __VLS_asFunctionalComponent(__VLS_0, new __VLS_0({
         severity: "error",
         variant: "simple",
+        'aria-live': "polite",
     }));
     const __VLS_2 = __VLS_1({
         severity: "error",
         variant: "simple",
+        'aria-live': "polite",
     }, ...__VLS_functionalComponentArgsRest(__VLS_1));
     __VLS_3.slots.default;
     (__VLS_ctx.errorMessage);
@@ -102,7 +106,9 @@ const __VLS_5 = __VLS_asFunctionalComponent(__VLS_4, new __VLS_4({
     id: "email",
     modelValue: (__VLS_ctx.email),
     type: "email",
-    placeholder: "name@company.com",
+    name: "email",
+    autocomplete: "email",
+    spellcheck: "false",
     required: true,
     ...{ class: "w-full font-technical" },
     disabled: (__VLS_ctx.loading),
@@ -111,7 +117,9 @@ const __VLS_6 = __VLS_5({
     id: "email",
     modelValue: (__VLS_ctx.email),
     type: "email",
-    placeholder: "name@company.com",
+    name: "email",
+    autocomplete: "email",
+    spellcheck: "false",
     required: true,
     ...{ class: "w-full font-technical" },
     disabled: (__VLS_ctx.loading),
@@ -127,9 +135,10 @@ const __VLS_8 = {}.Password;
 /** @type {[typeof __VLS_components.Password, ]} */ ;
 // @ts-ignore
 const __VLS_9 = __VLS_asFunctionalComponent(__VLS_8, new __VLS_8({
-    id: "password",
     modelValue: (__VLS_ctx.password),
-    placeholder: "••••••••",
+    inputId: "password",
+    name: "password",
+    autocomplete: "current-password",
     feedback: (false),
     toggleMask: true,
     required: true,
@@ -138,9 +147,10 @@ const __VLS_9 = __VLS_asFunctionalComponent(__VLS_8, new __VLS_8({
     disabled: (__VLS_ctx.loading),
 }));
 const __VLS_10 = __VLS_9({
-    id: "password",
     modelValue: (__VLS_ctx.password),
-    placeholder: "••••••••",
+    inputId: "password",
+    name: "password",
+    autocomplete: "current-password",
     feedback: (false),
     toggleMask: true,
     required: true,

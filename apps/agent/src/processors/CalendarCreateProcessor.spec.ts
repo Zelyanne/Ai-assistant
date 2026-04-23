@@ -32,10 +32,8 @@ describe('CalendarCreateProcessor', () => {
 
     mockResolveToolName.mockImplementation(async (_orgId: string, requestedTool: string) => {
       const mapping: Record<string, string | null> = {
-        query_calendar_freebusy: 'query_freebusy',
-        create_calendar_event: 'manage_event',
-        patch_calendar_event: 'manage_event',
-        update_calendar_event: 'manage_event',
+        query_freebusy: 'query_freebusy',
+        manage_event: 'manage_event',
       };
 
       return {
@@ -46,7 +44,7 @@ describe('CalendarCreateProcessor', () => {
     });
 
     mockExecuteWorkerTool.mockImplementation(async (_orgId: string, _workerType: string, requestedTool: string) => {
-      if (requestedTool === 'query_calendar_freebusy') {
+      if (requestedTool === 'query_freebusy') {
         return {
           toolName: 'query_freebusy',
           result: { calendars: { primary: { busy: [] } } },
@@ -77,7 +75,7 @@ describe('CalendarCreateProcessor', () => {
     expect(mockExecuteWorkerTool).toHaveBeenCalledWith(
       'org-1',
       'calendar',
-      'create_calendar_event',
+      'manage_event',
       expect.objectContaining({
         action: 'create',
         summary: 'Meeting',
@@ -101,7 +99,7 @@ describe('CalendarCreateProcessor', () => {
   it('returns setup_required when create calendar tool is unavailable', async () => {
     mockResolveToolName.mockImplementation(async (_orgId: string, requestedTool: string) => ({
       requestedTool,
-      resolvedTool: requestedTool === 'create_calendar_event' ? null : 'query_freebusy',
+      resolvedTool: requestedTool === 'manage_event' ? null : 'query_freebusy',
       availableTools: ['query_freebusy'],
     }));
 
@@ -121,7 +119,7 @@ describe('CalendarCreateProcessor', () => {
 
   it('returns conflict_detected when freebusy reports overlaps', async () => {
     mockExecuteWorkerTool.mockImplementation(async (_orgId: string, _workerType: string, requestedTool: string) => {
-      if (requestedTool === 'query_calendar_freebusy') {
+      if (requestedTool === 'query_freebusy') {
         return {
           toolName: 'query_freebusy',
           result: {
@@ -175,7 +173,7 @@ describe('CalendarCreateProcessor', () => {
     expect(mockExecuteWorkerTool).toHaveBeenCalledWith(
       'org-1',
       'calendar',
-      'patch_calendar_event',
+      'manage_event',
       expect.objectContaining({
         action: 'update',
         event_id: 'evt-123',

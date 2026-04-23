@@ -1115,6 +1115,63 @@ export type Database = {
           },
         ]
       }
+      user_skills: {
+        Row: {
+          content_markdown: string
+          created_at: string
+          description: string | null
+          id: string
+          is_active: boolean
+          name: string
+          organization_id: string
+          tags: string[]
+          triggers: string[]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          content_markdown: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          organization_id: string
+          tags?: string[]
+          triggers?: string[]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          content_markdown?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          organization_id?: string
+          tags?: string[]
+          triggers?: string[]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_skills_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_skills_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       watch_topics: {
         Row: {
           created_at: string

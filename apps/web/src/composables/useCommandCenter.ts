@@ -1,4 +1,5 @@
 import { computed, ref } from 'vue';
+import type { ComputedRef } from 'vue';
 import type { Task, Database } from '@ai-assistant/shared';
 
 import { useAgent } from './useAgent';
@@ -24,24 +25,20 @@ interface SubmitCommandResult {
 const STORAGE_KEY_BASE = 'command-center-timeline-v1';
 const CONVERSATION_STORAGE_KEY_BASE = 'command-center-conversation-id-v1';
 
-const HIGH_RISK_PATTERNS = [
-  /\bsend\b/i,
-  /\bemail\b/i,
-  /\bforward\b/i,
-  /\breply\b/i,
-  /\bmessage\b/i,
-  /\bnotify\b/i,
-];
 
 const timeline = ref<CommandTimelineEntry[]>([]);
 const isSubmitting = ref(false);
 const activeConversationId = ref<string | null>(null);
+const conversations = ref<ConversationListItem[]>([]);
 
 let initialized = false;
 let idCounter = 0;
 let stopTaskSubscription: (() => void) | null = null;
 let stopMessageSubscription: (() => void) | null = null;
 let stopExecutionRunSubscription: (() => void) | null = null;
+let stopConversationSubscription: (() => void) | null = null;
+let messagesLoadedConversationId: string | null = null;
+let realtimeBootstrapNonce = 0;
 const messageIdByEntryId = new Map<string, string>();
 
 function nextId(prefix: string): string {
@@ -61,9 +58,8 @@ function defaultTimeline(): CommandTimelineEntry[] {
   ];
 }
 
-function timelineStorageKey(organizationId: string | null, userId: string | null): string {
-  if (!organizationId || !userId) return STORAGE_KEY_BASE;
-  return `${STORAGE_KEY_BASE}:${organizationId}:${userId}`;
+function timelineStorageKey(organizationId: string, userId: string, conversationId: string): string {
+  return `${STORAGE_KEY_BASE}:${organizationId}:${userId}:${conversationId}`;
 }
 
 function conversationStorageKey(organizationId: string, userId: string): string {
@@ -97,45 +93,32 @@ function persistTimeline(): void {
   if (typeof window === 'undefined') return;
 
   const userStore = useUserStore();
-  const organizationId = userStore.profile?.organization_id ?? null;
-  const userId = userStore.profile?.id ?? null;
-  window.localStorage.setItem(timelineStorageKey(organizationId, userId), JSON.stringify(timeline.value));
+  const organizationId = userStore.profile?.organization_id;
+  const userId = userStore.profile?.id;
+  const conversationId = activeConversationId.value;
+  if (!organizationId || !userId || !conversationId) return;
+  window.localStorage.setItem(timelineStorageKey(organizationId, userId, conversationId), JSON.stringify(timeline.value));
+}
+
+function restoreTimelineFromCache(organizationId: string, userId: string, conversationId: string): void {
+  if (typeof window === 'undefined') return;
+
+  const raw = window.localStorage.getItem(timelineStorageKey(organizationId, userId, conversationId));
+  if (!raw) return;
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      timeline.value = parsed as CommandTimelineEntry[];
+    }
+  } catch {
+    // Ignore bad cache
+  }
 }
 
 function initializeTimeline(): void {
   if (initialized) return;
-
-  if (typeof window === 'undefined') {
-    timeline.value = defaultTimeline();
-    initialized = true;
-    return;
-  }
-
-  const userStore = useUserStore();
-  const organizationId = userStore.profile?.organization_id ?? null;
-  const userId = userStore.profile?.id ?? null;
-
-  const raw = window.localStorage.getItem(timelineStorageKey(organizationId, userId));
-  if (!raw) {
-    timeline.value = defaultTimeline();
-    persistTimeline();
-    initialized = true;
-    return;
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as CommandTimelineEntry[];
-    if (Array.isArray(parsed) && parsed.length > 0) {
-      timeline.value = parsed;
-    } else {
-      timeline.value = defaultTimeline();
-      persistTimeline();
-    }
-  } catch {
-    timeline.value = defaultTimeline();
-    persistTimeline();
-  }
-
+  timeline.value = defaultTimeline();
   initialized = true;
 }
 
@@ -167,7 +150,69 @@ function statusToTimelineState(status: Task['status']): CommandTimelineEntry['st
 function taskResultSummary(result: unknown, fallback: string): string {
   if (!result || typeof result !== 'object' || Array.isArray(result)) return fallback;
   const summary = (result as { summary?: unknown }).summary;
-  return typeof summary === 'string' && summary.trim().length > 0 ? summary : fallback;
+  if (typeof summary === 'string' && summary.trim().length > 0) {
+    return summary.trim();
+  }
+
+  const prompt = (result as { prompt?: unknown }).prompt;
+  if (typeof prompt === 'string' && prompt.trim().length > 0) {
+    return prompt.trim();
+  }
+
+  const reason = (result as { reason?: unknown }).reason;
+  if (typeof reason === 'string' && reason.trim().length > 0) {
+    return reason.trim();
+  }
+
+  return fallback;
+}
+
+function asResultRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function isInternalExecutionSummary(text: string): boolean {
+  const lower = text.toLowerCase();
+  return lower.startsWith('execution run completed with') || lower.startsWith('execution run ');
+}
+
+function buildScheduleCreatedMessage(result: Record<string, unknown>): string | null {
+  if (result.outcome !== 'schedule_created') return null;
+
+  const schedule = asResultRecord(result.schedule);
+  const nextRun = typeof schedule.next_run === 'string' && schedule.next_run.trim().length > 0
+    ? schedule.next_run.trim()
+    : null;
+
+  if (nextRun) {
+    return `Got it — I scheduled this. First run: ${nextRun}.`;
+  }
+
+  return 'Got it — your schedule is created.';
+}
+
+function doneAssistantMessage(task: Task, executionRun?: CommandExecutionRunSummary): string {
+  const result = asResultRecord(task.result);
+
+  const scheduleMessage = buildScheduleCreatedMessage(result);
+  if (scheduleMessage) return scheduleMessage;
+
+  const summary = typeof result.summary === 'string' ? result.summary.trim() : '';
+  if (summary && !isInternalExecutionSummary(summary)) {
+    return summary;
+  }
+
+  if (executionRun?.summary && executionRun.summary.trim().length > 0) {
+    return `Done — ${executionRun.summary.trim()}`;
+  }
+
+  if (typeof executionRun?.completedSteps === 'number' && executionRun.completedSteps > 0) {
+    const plural = executionRun.completedSteps > 1 ? 's' : '';
+    return `Done — I completed ${executionRun.completedSteps} step${plural}.`;
+  }
+
+  return 'Done.';
 }
 
 function toCommandRole(value: string): CommandRole {
@@ -186,7 +231,7 @@ function toCommandState(value: string | null): CommandState | undefined {
 function taskStatusMessage(task: Task, executionRun?: CommandExecutionRunSummary): string {
   if (task.status === 'queued') return 'Queued for asynchronous execution.';
   if (task.status === 'processing') return executionRun ? executionRunMessage(executionRun) : 'Processing command...';
-  if (task.status === 'done') return taskResultSummary(task.result, 'Command completed.');
+  if (task.status === 'done') return doneAssistantMessage(task, executionRun);
   if (task.status === 'escalation') return taskResultSummary(task.result, 'Command escalated for review.');
   if (task.status === 'paused') return taskResultSummary(task.result, 'Command paused by safety controls.');
   return taskResultSummary(task.result, 'Command execution failed.');
@@ -241,7 +286,67 @@ function applyExecutionRunUpdate(row: ExecutionRunRow): void {
 
 type CommandMessageRow = Database['public']['Tables']['command_messages']['Row'];
 type CommandMessageInsert = Database['public']['Tables']['command_messages']['Insert'];
+type CommandConversationRow = Database['public']['Tables']['command_conversations']['Row'];
 type ExecutionRunRow = Database['public']['Tables']['execution_runs']['Row'];
+
+export type ConversationListItem = {
+  id: string;
+  title: string | null;
+  updatedAt: string | null;
+  createdAt: string;
+};
+
+type CommandConversationRowLike = Pick<CommandConversationRow, 'id' | 'title' | 'created_at' | 'updated_at'>;
+
+function toConversationListItem(row: CommandConversationRowLike): ConversationListItem {
+  return {
+    id: row.id,
+    title: row.title,
+    updatedAt: row.updated_at,
+    createdAt: row.created_at,
+  };
+}
+
+function safeTimestamp(value: string | null | undefined): number {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function deriveConversationTitleFromCommand(command: string): string {
+  const firstLine = command
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line.length > 0) ?? command.trim();
+
+  const compact = firstLine.replace(/\s+/g, ' ').trim();
+  if (compact.length <= 64) return compact;
+  return `${compact.slice(0, 61)}…`;
+}
+
+function isGenericConversationTitle(title: string | null | undefined): boolean {
+  const raw = title?.trim();
+  if (!raw) return true;
+  return raw === 'Command Center' || raw === 'New chat' || raw === 'Empty chat';
+}
+
+async function maybeSetConversationTitle(
+  conversationId: string,
+  organizationId: string,
+  command: string,
+  currentTitle?: string | null,
+): Promise<void> {
+  if (!isGenericConversationTitle(currentTitle)) return;
+
+  const nextTitle = deriveConversationTitleFromCommand(command);
+  if (!nextTitle) return;
+
+  await supabase
+    .from('command_conversations')
+    .update({ title: nextTitle })
+    .eq('organization_id', organizationId)
+    .eq('id', conversationId);
+}
 
 type ExecutionPlanStepLike = {
   status?: unknown;
@@ -311,18 +416,18 @@ function executionRunToTimelineState(executionRun: CommandExecutionRunSummary): 
 function executionRunMessage(executionRun: CommandExecutionRunSummary): string {
   if (executionRun.status === 'planned') {
     return executionRun.summary?.trim().length
-      ? `Plan ready: ${executionRun.summary}`
-      : 'Plan ready. Waiting to begin worker execution.';
+      ? `I have a plan: ${executionRun.summary}`
+      : 'I have a plan and I am about to run it.';
   }
 
   if (executionRun.status === 'processing') {
-    const worker = executionRun.currentWorkerType ? `${executionRun.currentWorkerType} worker` : 'planner';
-    const step = executionRun.currentStepKey ? `Step: ${executionRun.currentStepKey}.` : 'Advancing the plan.';
-    return `Processing with ${worker}. ${step}`;
+    const worker = executionRun.currentWorkerType ? `${executionRun.currentWorkerType} specialist` : 'planner';
+    const step = executionRun.currentStepKey ? `Step ${executionRun.currentStepKey}.` : 'Advancing the plan.';
+    return `Working on it with ${worker}. ${step}`;
   }
 
   if (executionRun.status === 'completed') {
-    return 'Execution run completed. Finalizing task...';
+    return 'Almost done — finalizing your response...';
   }
 
   if (executionRun.status === 'blocked') {
@@ -394,10 +499,16 @@ async function loadConversationMessages(conversationId: string): Promise<void> {
 
   if (error) return;
 
+  // Avoid overwriting the UI if user switched conversations mid-flight.
+  if (activeConversationId.value && activeConversationId.value !== conversationId) return;
+
+  messagesLoadedConversationId = conversationId;
+
+  messageIdByEntryId.clear();
+
   const rows = data ?? [];
-  if (rows.length > 0) {
-    timeline.value = [];
-  }
+  timeline.value = rows.length > 0 ? [] : defaultTimeline();
+  persistTimeline();
 
   rows.forEach((row) => {
     const entry = normalizeMessageRow(row as CommandMessageRow);
@@ -415,7 +526,7 @@ async function loadExecutionRunsForTimeline(organizationId: string): Promise<voi
 
   if (taskIds.length === 0) return;
 
-  const { data, error } = await (supabase as any)
+  const { data, error } = await supabase
     .from('execution_runs')
     .select('*')
     .eq('organization_id', organizationId)
@@ -428,6 +539,30 @@ async function loadExecutionRunsForTimeline(organizationId: string): Promise<voi
       applyExecutionRunUpdate(row as ExecutionRunRow);
     }
   });
+}
+
+async function loadConversations(): Promise<void> {
+  const userStore = useUserStore();
+  const organizationId = userStore.profile?.organization_id;
+  const userId = userStore.profile?.id;
+  if (!organizationId || !userId) {
+    conversations.value = [];
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from('command_conversations')
+    .select('id, title, created_at, updated_at')
+    .eq('organization_id', organizationId)
+    .eq('created_by', userId)
+    .eq('channel', 'web')
+    .order('updated_at', { ascending: false })
+    .limit(50);
+
+  if (error) return;
+
+  const rows = (data ?? []) as unknown as CommandConversationRowLike[];
+  conversations.value = rows.map(toConversationListItem);
 }
 
 async function ensureConversationId(): Promise<string | null> {
@@ -444,6 +579,17 @@ async function ensureConversationId(): Promise<string | null> {
   if (cachedId) {
     activeConversationId.value = cachedId;
     return cachedId;
+  }
+
+  if (conversations.value.length > 0) {
+    const first = conversations.value[0]?.id ?? null;
+    if (first) {
+      activeConversationId.value = first;
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(conversationStorageKey(organizationId, userId), first);
+      }
+      return first;
+    }
   }
 
   const existing = await supabase
@@ -492,11 +638,28 @@ async function persistMessages(rows: CommandMessageInsert[]): Promise<Map<string
   return insertedByEntryId;
 }
 
-function isHighRiskCommand(command: string): boolean {
-  return HIGH_RISK_PATTERNS.some((pattern) => pattern.test(command));
+function shouldMarkHighRiskClientSide(): boolean {
+  // Intentionally disabled.
+  // Risk/confirmation is enforced server-side after delegation (AssistantCommandProcessor)
+  // so we don't pause/surface warnings based on naive client-side keyword matches.
+  return false;
 }
 
-export function useCommandCenter() {
+export type UseCommandCenterApi = {
+  activeExecutionRun: ComputedRef<CommandTimelineEntry | null>;
+  timeline: typeof timeline;
+  isSubmitting: typeof isSubmitting;
+  conversations: typeof conversations;
+  activeConversationId: typeof activeConversationId;
+  loadConversations: () => Promise<void>;
+  switchConversation: (conversationId: string) => Promise<void>;
+  startRealtimeSync: () => void;
+  startNewDiscussion: () => Promise<void>;
+  stopRealtimeSync: () => void;
+  submitCommand: (message: string, _options?: SubmitCommandOptions) => Promise<SubmitCommandResult>;
+};
+
+export function useCommandCenter(): UseCommandCenterApi {
   initializeTimeline();
 
   const { submitTask, subscribeToTable } = useAgent();
@@ -513,8 +676,59 @@ export function useCommandCenter() {
     return withRuns[0] ?? null;
   });
 
+  async function switchConversation(conversationId: string): Promise<void> {
+    const organizationId = userStore.profile?.organization_id;
+    const userId = userStore.profile?.id;
+    if (!organizationId || !userId) return;
+
+    if (stopMessageSubscription) {
+      stopMessageSubscription();
+      stopMessageSubscription = null;
+    }
+
+    messagesLoadedConversationId = null;
+    realtimeBootstrapNonce += 1;
+
+    activeConversationId.value = conversationId;
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(conversationStorageKey(organizationId, userId), conversationId);
+    }
+
+    messageIdByEntryId.clear();
+    timeline.value = defaultTimeline();
+    restoreTimelineFromCache(organizationId, userId, conversationId);
+    persistTimeline();
+
+    await loadConversationMessages(conversationId);
+    await loadExecutionRunsForTimeline(organizationId);
+
+    // Resume message subscription with current activeConversationId filtering.
+    startRealtimeSync();
+  }
+
   function startRealtimeSync(): void {
     if (!userStore.profile?.organization_id) return;
+
+    const bootstrapNonce = (realtimeBootstrapNonce += 1);
+
+    if (!stopConversationSubscription) {
+      stopConversationSubscription = subscribeToTable('command_conversations', (payload: { new?: unknown; eventType?: string }) => {
+        if (payload.eventType !== 'INSERT' && payload.eventType !== 'UPDATE') return;
+        if (!payload.new || typeof payload.new !== 'object') return;
+
+        const row = payload.new as CommandConversationRow;
+        if (row.channel !== 'web') return;
+        if (row.created_by !== userStore.profile?.id) return;
+
+        const nextItem = toConversationListItem(row);
+        const without = conversations.value.filter((existing) => existing.id !== nextItem.id);
+        conversations.value = [nextItem, ...without].sort((left, right) => {
+          const leftTime = safeTimestamp(left.updatedAt ?? left.createdAt);
+          const rightTime = safeTimestamp(right.updatedAt ?? right.createdAt);
+          return rightTime - leftTime;
+        });
+      });
+    }
     if (!stopTaskSubscription) {
       stopTaskSubscription = subscribeToTable('tasks', (payload: { new?: unknown; eventType?: string }) => {
         if (payload.eventType !== 'UPDATE' && payload.eventType !== 'INSERT') return;
@@ -539,11 +753,28 @@ export function useCommandCenter() {
       const organizationId = userStore.profile?.organization_id;
       if (!organizationId) return;
 
+      if (bootstrapNonce !== realtimeBootstrapNonce) return;
+
+      await loadConversations();
+
+      if (bootstrapNonce !== realtimeBootstrapNonce) return;
+
       const conversationId = await ensureConversationId();
       if (!conversationId) return;
 
-      await loadConversationMessages(conversationId);
-      await loadExecutionRunsForTimeline(organizationId);
+      if (bootstrapNonce !== realtimeBootstrapNonce) return;
+
+      const userId = userStore.profile?.id;
+      if (typeof window !== 'undefined' && userId) {
+        restoreTimelineFromCache(organizationId, userId, conversationId);
+      }
+
+      if (messagesLoadedConversationId !== conversationId) {
+        await loadConversationMessages(conversationId);
+        await loadExecutionRunsForTimeline(organizationId);
+      }
+
+      if (bootstrapNonce !== realtimeBootstrapNonce) return;
 
       if (stopMessageSubscription) return;
       stopMessageSubscription = subscribeToTable('command_messages', (payload: { new?: unknown; eventType?: string }) => {
@@ -551,7 +782,9 @@ export function useCommandCenter() {
         if (!payload.new || typeof payload.new !== 'object') return;
 
         const row = payload.new as CommandMessageRow;
-        if (row.conversation_id !== conversationId) return;
+        const currentConversationId = activeConversationId.value;
+        if (!currentConversationId) return;
+        if (row.conversation_id !== currentConversationId) return;
 
         const entry = normalizeMessageRow(row);
         messageIdByEntryId.set(entry.id, row.id);
@@ -561,6 +794,7 @@ export function useCommandCenter() {
   }
 
   function stopRealtimeSync(): void {
+    realtimeBootstrapNonce += 1;
     if (stopTaskSubscription) {
       stopTaskSubscription();
       stopTaskSubscription = null;
@@ -575,14 +809,25 @@ export function useCommandCenter() {
       stopExecutionRunSubscription();
       stopExecutionRunSubscription = null;
     }
+
+    if (stopConversationSubscription) {
+      stopConversationSubscription();
+      stopConversationSubscription = null;
+    }
   }
 
   async function startNewDiscussion(): Promise<void> {
     const organizationId = userStore.profile?.organization_id;
     const userId = userStore.profile?.id;
 
-    stopRealtimeSync();
+    if (stopMessageSubscription) {
+      stopMessageSubscription();
+      stopMessageSubscription = null;
+    }
+
     activeConversationId.value = null;
+    messagesLoadedConversationId = null;
+    realtimeBootstrapNonce += 1;
     messageIdByEntryId.clear();
     timeline.value = defaultTimeline();
     persistTimeline();
@@ -592,7 +837,12 @@ export function useCommandCenter() {
     }
 
     if (organizationId && userId) {
-      await createConversationId(organizationId, userId);
+      const nextConversationId = await createConversationId(organizationId, userId);
+      await loadConversations();
+      if (nextConversationId) {
+        await loadConversationMessages(nextConversationId);
+        await loadExecutionRunsForTimeline(organizationId);
+      }
     }
 
     startRealtimeSync();
@@ -611,7 +861,7 @@ export function useCommandCenter() {
       };
     }
 
-    const highRisk = isHighRiskCommand(command);
+    const highRisk = shouldMarkHighRiskClientSide();
 
     const organizationId = userStore.profile?.organization_id ?? null;
     const userId = userStore.profile?.id ?? null;
@@ -629,6 +879,19 @@ export function useCommandCenter() {
     const userMessageId = nextId('command-user');
     const assistantMessageId = nextId('command-assistant');
     const conversationId = await ensureConversationId();
+
+    if (conversationId && organizationId) {
+      const existing = conversations.value.find((item) => item.id === conversationId);
+      void maybeSetConversationTitle(conversationId, organizationId, command, existing?.title);
+
+      const nextTitle = deriveConversationTitleFromCommand(command);
+      if (existing && isGenericConversationTitle(existing.title)) {
+        conversations.value = conversations.value.map((item) => {
+          if (item.id !== conversationId) return item;
+          return { ...item, title: nextTitle };
+        });
+      }
+    }
 
     appendEntries([
       {
@@ -746,6 +1009,10 @@ export function useCommandCenter() {
     activeExecutionRun,
     timeline,
     isSubmitting,
+    conversations,
+    activeConversationId,
+    loadConversations,
+    switchConversation,
     startRealtimeSync,
     startNewDiscussion,
     stopRealtimeSync,

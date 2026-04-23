@@ -189,8 +189,8 @@ describe('reasoningNode', () => {
   it('filters unsafe tools and escalates when no safe tools are available', async () => {
     getLangChainToolsMock.mockResolvedValueOnce([
       {
-        name: 'create_calendar_event',
-        description: 'Creates calendar event',
+        name: 'manage_event',
+        description: 'Manages calendar events',
         schema: z.object({}),
         invoke: vi.fn(),
       },
@@ -221,7 +221,7 @@ describe('reasoningNode', () => {
         invoke: vi.fn().mockResolvedValue({ ok: true }),
       },
       {
-        name: 'create_gmail_draft',
+        name: 'draft_gmail_message',
         description: 'Creates a draft (unsafe)',
         schema: z.object({}),
         invoke: vi.fn(),
