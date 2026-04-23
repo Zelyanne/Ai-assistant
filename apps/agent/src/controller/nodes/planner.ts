@@ -4,7 +4,6 @@ import {
   type ExecutionPlanStep,
   type Json,
 } from '@ai-assistant/shared';
-import { CapabilityWorkerRegistry } from '../../workers/CapabilityWorkerRegistry.js';
 import { AuditLogger } from '../../services/AuditLogger.js';
 import { executionRunService } from '../../services/ExecutionRunService.js';
 import { mcpService } from '../../services/mcp.js';
@@ -14,6 +13,13 @@ import {
 } from '../../services/WorkerToolPolicyService.js';
 import { buildEscalationPayload } from '../escalation.js';
 import type { AgentState } from '../graph.js';
+import { getTimeDateTools } from '../../tools/timeDateTool.js';
+import { config } from '../../config/index.js';
+import { ChatMistralAI } from '@langchain/mistralai';
+import { createAgent, modelCallLimitMiddleware } from 'langchain';
+import { tracingService } from '../../services/llm/tracing.js';
+// @deprecated — kept for fallback compatibility with router.ts
+import { CapabilityWorkerRegistry } from '../../workers/CapabilityWorkerRegistry.js';
 
 function buildExecutionPlan(intent: AssistantCommandIntent): ExecutionPlan {
   return {
@@ -250,6 +256,10 @@ export async function plannerNode(state: AgentState): Promise<Partial<AgentState
   }
 }
 
+/**
+ * @deprecated Use `routerNode` instead. Kept for backward compatibility as fallback target.
+ * @see ADR-005: Fallback Compatibility Pattern
+ */
 export async function workspaceWorkerNode(
   state: AgentState,
 ): Promise<Partial<AgentState>> {

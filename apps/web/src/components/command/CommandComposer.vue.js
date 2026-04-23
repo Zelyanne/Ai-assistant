@@ -3,7 +3,8 @@ import Button from 'primevue/button';
 import Textarea from 'primevue/textarea';
 const props = withDefaults(defineProps(), {
     disabled: false,
-    placeholder: 'Type a command...'
+    placeholder: 'Type a command…',
+    variant: 'default',
 });
 const emit = defineEmits();
 const draft = ref('');
@@ -26,13 +27,17 @@ function onComposerKeydown(event) {
 debugger; /* PartiallyEnd: #3632/scriptSetup.vue */
 const __VLS_withDefaultsArg = (function (t) { return t; })({
     disabled: false,
-    placeholder: 'Type a command...'
+    placeholder: 'Type a command…',
+    variant: 'default',
 });
 const __VLS_ctx = {};
 let __VLS_components;
 let __VLS_directives;
 __VLS_asFunctionalElement(__VLS_intrinsicElements.section, __VLS_intrinsicElements.section)({
-    ...{ class: "rounded-executive border border-slate-200 bg-white p-4 shadow-sm" },
+    ...{ class: "border border-slate-200 bg-white shadow-sm" },
+    ...{ class: (props.variant === 'chat'
+            ? 'rounded-[1.25rem] p-3 md:p-4'
+            : 'rounded-executive p-4') },
 });
 __VLS_asFunctionalElement(__VLS_intrinsicElements.label, __VLS_intrinsicElements.label)({
     for: (__VLS_ctx.composerInputId),
@@ -50,6 +55,8 @@ const __VLS_1 = __VLS_asFunctionalComponent(__VLS_0, new __VLS_0({
     modelValue: (__VLS_ctx.draft),
     disabled: (__VLS_ctx.disabled),
     placeholder: (__VLS_ctx.placeholder),
+    name: "command",
+    autocomplete: "off",
     rows: "3",
     autoResize: true,
     ...{ class: "w-full" },
@@ -60,6 +67,8 @@ const __VLS_2 = __VLS_1({
     modelValue: (__VLS_ctx.draft),
     disabled: (__VLS_ctx.disabled),
     placeholder: (__VLS_ctx.placeholder),
+    name: "command",
+    autocomplete: "off",
     rows: "3",
     autoResize: true,
     ...{ class: "w-full" },
@@ -95,14 +104,14 @@ const __VLS_15 = {
     onClick: (__VLS_ctx.submitDraft)
 };
 var __VLS_11;
-__VLS_asFunctionalElement(__VLS_intrinsicElements.p, __VLS_intrinsicElements.p)({
-    ...{ class: "mt-2 text-xs text-slate-500" },
-});
-/** @type {__VLS_StyleScopedClasses['rounded-executive']} */ ;
+if (props.variant !== 'chat') {
+    __VLS_asFunctionalElement(__VLS_intrinsicElements.p, __VLS_intrinsicElements.p)({
+        ...{ class: "mt-2 text-xs text-slate-500" },
+    });
+}
 /** @type {__VLS_StyleScopedClasses['border']} */ ;
 /** @type {__VLS_StyleScopedClasses['border-slate-200']} */ ;
 /** @type {__VLS_StyleScopedClasses['bg-white']} */ ;
-/** @type {__VLS_StyleScopedClasses['p-4']} */ ;
 /** @type {__VLS_StyleScopedClasses['shadow-sm']} */ ;
 /** @type {__VLS_StyleScopedClasses['mb-2']} */ ;
 /** @type {__VLS_StyleScopedClasses['block']} */ ;

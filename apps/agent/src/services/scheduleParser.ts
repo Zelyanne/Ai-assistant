@@ -27,6 +27,7 @@ type LlmScheduleParseResult = {
   taskType: string;
   taskPayload: Record<string, unknown>;
   confirmationMessage: string;
+  commandText?: string;
 };
 
 type ScheduleParserDeps = {
@@ -46,6 +47,10 @@ const WEEKDAY_BY_NAME: Record<string, number> = {
 
 function normalizeWhitespace(value: string): string {
   return value.trim().replace(/\s+/g, ' ');
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function parseClockToken(value: string): ParsedTime | null {
@@ -92,25 +97,11 @@ function parseClockToken(value: string): ParsedTime | null {
 }
 
 function inferTaskType(input: string): string {
-  const normalized = input.toLowerCase();
-
-  if (normalized.includes('email') || normalized.includes('mail')) {
-    return 'email.check';
-  }
-
-  if (normalized.includes('calendar') || normalized.includes('meeting')) {
-    return 'calendar.check';
-  }
-
-  if (normalized.includes('status report') || normalized.includes('report')) {
-    return 'report.send';
-  }
-
-  if (normalized.includes('remind') || normalized.includes('reminder')) {
-    return 'reminder.send';
-  }
-
-  return 'schedule.execute';
+  // Scheduled execution must use a task_type supported by the agent graph.
+  // Default to assistant.command so the General Agent can route appropriately.
+  // (Direct task types like channel.send are supported, but require fully specified payload.)
+  void input;
+  return 'assistant.command';
 }
 
 function isValidCronExpression(value: string): boolean {
@@ -119,8 +110,42 @@ function isValidCronExpression(value: string): boolean {
     return false;
   }
 
-  const validField = /^\*$|^\*\/\d+$|^\d+$/;
-  return fields.every((field) => validField.test(field));
+  const constraints = [
+    { minExact: 0, maxExact: 59, maxStep: 59 }, // minute
+    { minExact: 0, maxExact: 23, maxStep: 23 }, // hour
+    { minExact: 1, maxExact: 31, maxStep: 31 }, // day of month
+    { minExact: 1, maxExact: 12, maxStep: 12 }, // month
+    { minExact: 0, maxExact: 6, maxStep: 7 }, // weekday (step 7 = Sundays only in our modulo matcher)
+  ] as const;
+
+  for (let i = 0; i < fields.length; i += 1) {
+    const field = fields[i]!.trim();
+    if (field === '*') continue;
+
+    const stepMatch = field.match(/^\*\/(\d+)$/);
+    if (stepMatch) {
+      const step = Number(stepMatch[1]);
+      const maxStep = constraints[i]!.maxStep;
+      if (!Number.isInteger(step) || step < 1 || step > maxStep) {
+        return false;
+      }
+      continue;
+    }
+
+    const exactMatch = field.match(/^\d+$/);
+    if (exactMatch) {
+      const exact = Number(field);
+      const { minExact, maxExact } = constraints[i]!;
+      if (!Number.isInteger(exact) || exact < minExact || exact > maxExact) {
+        return false;
+      }
+      continue;
+    }
+
+    return false;
+  }
+
+  return true;
 }
 
 function buildRuleResult(input: {
@@ -128,12 +153,17 @@ function buildRuleResult(input: {
   taskType: string;
   timezone: string;
   originalInput: string;
+  commandText: string;
 }): ParsedRuleResult {
+  const command = normalizeWhitespace(input.commandText);
   return {
     cronExpression: input.cronExpression,
     taskType: input.taskType,
     taskPayload: {
       original_input: input.originalInput,
+      command,
+      command_text: command,
+      message_text: command,
     },
     confirmationMessage: `Confirmed: ${input.taskType} on cron ${input.cronExpression} (${input.timezone}).`,
   };
@@ -144,11 +174,13 @@ function parseWithRules(input: string, timezone: string): ParsedRuleResult | nul
   const taskType = inferTaskType(normalized);
 
   if (/\bevery\s+hour\b/.test(normalized)) {
+    const commandText = normalizeWhitespace(input.replace(/\bevery\s+hour\b/i, '')) || input;
     return buildRuleResult({
       cronExpression: '0 * * * *',
       taskType,
       timezone,
       originalInput: input,
+      commandText,
     });
   }
 
@@ -156,11 +188,13 @@ function parseWithRules(input: string, timezone: string): ParsedRuleResult | nul
   if (everyMinutes) {
     const interval = Number(everyMinutes[1]);
     if (interval >= 1 && interval <= 59) {
+      const commandText = normalizeWhitespace(input.replace(new RegExp(escapeRegExp(everyMinutes[0]), 'i'), '')) || input;
       return buildRuleResult({
         cronExpression: `*/${interval} * * * *`,
         taskType,
         timezone,
         originalInput: input,
+        commandText,
       });
     }
   }
@@ -169,11 +203,13 @@ function parseWithRules(input: string, timezone: string): ParsedRuleResult | nul
   if (everyHours) {
     const interval = Number(everyHours[1]);
     if (interval >= 1 && interval <= 23) {
+      const commandText = normalizeWhitespace(input.replace(new RegExp(escapeRegExp(everyHours[0]), 'i'), '')) || input;
       return buildRuleResult({
         cronExpression: `0 */${interval} * * *`,
         taskType,
         timezone,
         originalInput: input,
+        commandText,
       });
     }
   }
@@ -186,11 +222,13 @@ function parseWithRules(input: string, timezone: string): ParsedRuleResult | nul
     const weekday = WEEKDAY_BY_NAME[weekdayAtTime[1]];
     const time = parseClockToken(weekdayAtTime[2]);
     if (typeof weekday === 'number' && time) {
+      const commandText = normalizeWhitespace(input.replace(new RegExp(escapeRegExp(weekdayAtTime[0]), 'i'), '')) || input;
       return buildRuleResult({
         cronExpression: `${time.minute} ${time.hour} * * ${weekday}`,
         taskType,
         timezone,
         originalInput: input,
+        commandText,
       });
     }
   }
@@ -203,11 +241,13 @@ function parseWithRules(input: string, timezone: string): ParsedRuleResult | nul
     const time = parseClockToken(atTimeWeekday[1]);
     const weekday = WEEKDAY_BY_NAME[atTimeWeekday[2]];
     if (time && typeof weekday === 'number') {
+      const commandText = normalizeWhitespace(input.replace(new RegExp(escapeRegExp(atTimeWeekday[0]), 'i'), '')) || input;
       return buildRuleResult({
         cronExpression: `${time.minute} ${time.hour} * * ${weekday}`,
         taskType,
         timezone,
         originalInput: input,
+        commandText,
       });
     }
   }
@@ -216,11 +256,13 @@ function parseWithRules(input: string, timezone: string): ParsedRuleResult | nul
   if (dailyAt) {
     const time = parseClockToken(dailyAt[1]);
     if (time) {
+      const commandText = normalizeWhitespace(input.replace(new RegExp(escapeRegExp(dailyAt[0]), 'i'), '')) || input;
       return buildRuleResult({
         cronExpression: `${time.minute} ${time.hour} * * *`,
         taskType,
         timezone,
         originalInput: input,
+        commandText,
       });
     }
   }
@@ -229,11 +271,13 @@ function parseWithRules(input: string, timezone: string): ParsedRuleResult | nul
   if (atTimeDaily) {
     const time = parseClockToken(atTimeDaily[1]);
     if (time) {
+      const commandText = normalizeWhitespace(input.replace(new RegExp(escapeRegExp(atTimeDaily[0]), 'i'), '')) || input;
       return buildRuleResult({
         cronExpression: `${time.minute} ${time.hour} * * *`,
         taskType,
         timezone,
         originalInput: input,
+        commandText,
       });
     }
   }
@@ -295,12 +339,31 @@ export class ScheduleParser {
       throw new Error('Unable to parse schedule expression. Please provide a clearer cadence.');
     }
 
+     const requestedType = typeof llmResult.taskType === 'string' ? llmResult.taskType.trim() : '';
+     const taskType = requestedType === 'channel.send' ? 'channel.send' : 'assistant.command';
+
+     const commandText = typeof llmResult.commandText === 'string' && llmResult.commandText.trim().length > 0
+       ? llmResult.commandText.trim()
+       : normalizedInput;
+
+     const basePayload = llmResult.taskPayload && typeof llmResult.taskPayload === 'object' && !Array.isArray(llmResult.taskPayload)
+       ? llmResult.taskPayload
+       : {};
+
     return {
       cronExpression: llmResult.cronExpression,
       timezone,
-      taskType: llmResult.taskType,
-      taskPayload: llmResult.taskPayload,
-      confirmationMessage: llmResult.confirmationMessage,
+      taskType,
+      taskPayload: {
+        ...basePayload,
+        original_input: input,
+        command: commandText,
+        command_text: commandText,
+        message_text: commandText,
+      },
+      confirmationMessage: llmResult.confirmationMessage?.trim().length
+        ? llmResult.confirmationMessage
+        : `Confirmed: ${taskType} on cron ${llmResult.cronExpression} (${timezone}).`,
       source: 'llm',
     };
   }
@@ -317,8 +380,10 @@ export class ScheduleParser {
 
     const prompt = [
       'Convert natural language schedule text into a strict cron expression.',
-      'Return JSON only with keys: cronExpression, taskType, taskPayload, confirmationMessage.',
+      'Return JSON only with keys: cronExpression, taskType, taskPayload, confirmationMessage, commandText.',
       'Use 5-field cron format: minute hour day month weekday.',
+      'Only use field forms supported by our scheduler: "*", "*/N", or an exact integer value. No ranges, no lists, no names.',
+      'weekday must be a number 0-6 (0=Sunday).',
       `Timezone: ${timezone}.`,
       `Input: ${input}`,
     ].join('\n');
@@ -340,21 +405,38 @@ export class ScheduleParser {
         taskType?: unknown;
         taskPayload?: unknown;
         confirmationMessage?: unknown;
+        commandText?: unknown;
       };
 
       if (typeof parsed.cronExpression !== 'string' || typeof parsed.taskType !== 'string') {
         return null;
       }
 
+      const taskType = parsed.taskType.trim() || 'assistant.command';
+      const normalizedTaskType = taskType === 'channel.send' ? 'channel.send' : 'assistant.command';
+
+      const commandText = typeof parsed.commandText === 'string' && parsed.commandText.trim().length > 0
+        ? parsed.commandText.trim()
+        : input;
+
+      const basePayload = parsed.taskPayload && typeof parsed.taskPayload === 'object' && !Array.isArray(parsed.taskPayload)
+        ? parsed.taskPayload as Record<string, unknown>
+        : { original_input: input };
+
       return {
         cronExpression: parsed.cronExpression.trim(),
-        taskType: parsed.taskType.trim(),
-        taskPayload: parsed.taskPayload && typeof parsed.taskPayload === 'object' && !Array.isArray(parsed.taskPayload)
-          ? parsed.taskPayload as Record<string, unknown>
-          : { original_input: input },
+        taskType: normalizedTaskType,
+        taskPayload: {
+          ...basePayload,
+          original_input: input,
+          command: commandText,
+          command_text: commandText,
+          message_text: commandText,
+        },
         confirmationMessage: typeof parsed.confirmationMessage === 'string' && parsed.confirmationMessage.trim().length > 0
           ? parsed.confirmationMessage.trim()
-          : `Confirmed: ${parsed.taskType} on cron ${parsed.cronExpression} (${timezone}).`,
+          : `Confirmed: ${normalizedTaskType} on cron ${parsed.cronExpression} (${timezone}).`,
+        commandText,
       };
     } catch {
       return null;

@@ -52,10 +52,11 @@ defineEmits(['toggle-menu']);
         class="md:hidden !p-2" 
         severity="secondary" 
         text 
+        aria-label="Open navigation"
         @click="$emit('toggle-menu')"
       />
       <router-link
-        to="/dashboard"
+        to="/dashboard/command-center"
         class="flex items-center gap-2 no-underline"
       >
         <span class="text-xl font-bold text-executive-primary tracking-tight">AI Assistant</span>
@@ -73,7 +74,7 @@ defineEmits(['toggle-menu']);
             v-if="safetyControls.emergencyBrakeEnabled"
             class="flex items-center gap-2 text-rose-700 font-semibold"
           >
-            <span class="h-2 w-2 rounded-full bg-rose-600 animate-pulse" />
+            <span class="h-2 w-2 rounded-full bg-rose-600 motion-safe:animate-pulse" />
             <span>Brake Engaged</span>
           </div>
           <div

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { AssistantCommandProcessor } from './AssistantCommandProcessor.js';
 import type { Task } from '@ai-assistant/shared';
 
@@ -12,6 +12,10 @@ const baseTask: Task = {
 };
 
 describe('AssistantCommandProcessor', () => {
+  afterEach(() => {
+    AssistantCommandProcessor.setPlannerForTests(null);
+  });
+
   it('builds a planner intent for explicit email draft commands', async () => {
     const processor = new AssistantCommandProcessor();
 
@@ -76,10 +80,18 @@ describe('AssistantCommandProcessor', () => {
 
     expect(result.planner_intent).toBeDefined();
     expect(result.planner_intent.mode).toBe('multi_step');
+    expect(result.planner_intent.requested_steps).toHaveLength(3);
     expect(result.planner_intent.requested_steps.map((step: { key: string }) => step.key)).toEqual([
       'drive-step',
       'doc-step',
       'gmail-step',
+    ]);
+    expect(
+      result.planner_intent.requested_steps.map((step: { worker_type: string; action: string }) => `${step.worker_type}:${step.action}`),
+    ).toEqual([
+      'drive:read_drive_context',
+      'docs:create_document',
+      'gmail:draft_email',
     ]);
   });
 
@@ -101,7 +113,7 @@ describe('AssistantCommandProcessor', () => {
     ).rejects.toThrow('CONFIRMATION_REQUIRED');
   });
 
-  it('requires recap confirmation for Command Center web send commands', async () => {
+  it('requires confirmation for trusted Command Center web send commands', async () => {
     const processor = new AssistantCommandProcessor();
 
     await expect(processor.process({
@@ -116,7 +128,7 @@ describe('AssistantCommandProcessor', () => {
         subject: 'Status',
         body: 'Ship it',
       },
-    })).rejects.toThrow('Quick recap: you asked me to "send an email now". Reply YES to confirm or reply with changes.');
+    })).rejects.toThrow('CONFIRMATION_REQUIRED');
   });
 
   it('requires recap confirmation for trusted WhatsApp send commands', async () => {
@@ -134,10 +146,10 @@ describe('AssistantCommandProcessor', () => {
     })).rejects.toThrow('Quick recap: you want me to send a whatsapp message. Message: "Hello from the assistant". Reply YES to confirm or reply with changes.');
   });
 
-  it('parses a French send-email command from Command Center after explicit confirmation', async () => {
+  it('requires confirmation for French send-email commands from Command Center', async () => {
     const processor = new AssistantCommandProcessor();
 
-    const result = await processor.process({
+    await expect(processor.process({
       ...baseTask,
       topic: 'Command Center',
       payload: {
@@ -145,21 +157,41 @@ describe('AssistantCommandProcessor', () => {
         source: 'dashboard-command-center',
         channel: 'web',
         user_initiated: true,
-        confirmed: true,
       },
-    });
+    })).rejects.toThrow('CONFIRMATION_REQUIRED');
+  });
 
-    expect(result.planner_intent).toBeDefined();
-    expect(result.planner_intent.requested_steps[0]).toMatchObject({
-      worker_type: 'gmail',
-      action: 'send_email',
-      input: expect.objectContaining({
-        recipient: 'othily.g@gmail.com',
-        to: 'othily.g@gmail.com',
-        subject: 'Planner update',
-        body: 'bonjour pti gars',
-      }),
-    });
+  it('requires confirmation for trusted multi-step doc plus email commands that include send_email', async () => {
+    const processor = new AssistantCommandProcessor();
+
+    await expect(processor.process({
+      ...baseTask,
+      topic: 'Command Center',
+      payload: {
+        command: 'Bonjour s il te plait envoie crée moi un doc qui s appelle "danse avec les star" puis envoie le par mail à othily.g@gmail.com en lui disant que c est pour qu il aie des idées',
+        source: 'dashboard-command-center',
+        channel: 'web',
+        user_initiated: true,
+        high_risk: true,
+      },
+    })).rejects.toThrow('CONFIRMATION_REQUIRED');
+  });
+
+  it('does not trust spoofed web channel commands outside Command Center context', async () => {
+    const processor = new AssistantCommandProcessor();
+
+    await expect(processor.process({
+      ...baseTask,
+      topic: 'General',
+      payload: {
+        command: 'send this message now',
+        channel: 'web',
+        source: 'dashboard-command-center',
+        user_initiated: true,
+        high_risk: true,
+        message_text: 'Hello team',
+      },
+    })).rejects.toThrow('CONFIRMATION_REQUIRED');
   });
 
   it('derives approval metadata for confirmed email send plans', async () => {
@@ -251,5 +283,126 @@ describe('AssistantCommandProcessor', () => {
     });
 
     expect(result.delegated_domain_action).toBe('schedule.manage');
+  });
+
+  it('maps skill-save commands to skills.manage delegation', async () => {
+    const processor = new AssistantCommandProcessor();
+
+    const result = await processor.process({
+      ...baseTask,
+      payload: {
+        command: 'save this as a skill: cover-letter-style',
+        source: 'dashboard-command-center',
+        channel: 'web',
+        user_initiated: true,
+      },
+    });
+
+    expect(result.delegated_domain_action).toBe('skills.manage');
+    expect(result.delegated_payload).toMatchObject({
+      operation: 'upsert',
+      skill_name: 'cover-letter-style',
+      user_initiated: true,
+    });
+  });
+
+  it('supports explicit skills.manage target action', async () => {
+    const processor = new AssistantCommandProcessor();
+
+    const result = await processor.process({
+      ...baseTask,
+      payload: {
+        command: 'list my skills',
+        target_domain_action: 'skills.manage',
+        target_payload: {
+          operation: 'list',
+        },
+      },
+    });
+
+    expect(result.delegated_domain_action).toBe('skills.manage');
+    expect(result.delegated_payload).toMatchObject({
+      operation: 'list',
+    });
+  });
+
+  it('asks for clarification when the agentic planner needs missing calendar details', async () => {
+    AssistantCommandProcessor.setPlannerForTests(async () => ({
+      decision: 'clarify',
+      summary: 'Need calendar timing details',
+      clarification_prompt: 'What title, start time, and end time should I use for this calendar event?',
+      steps: [],
+    }));
+
+    const processor = new AssistantCommandProcessor();
+
+    await expect(processor.process({
+      ...baseTask,
+      topic: 'Command Center',
+      payload: {
+        command: 'Put dinner with Sam on my calendar',
+        source: 'dashboard-command-center',
+        channel: 'web',
+        user_initiated: true,
+      },
+    })).rejects.toThrow('COMMAND_CLARIFICATION_REQUIRED: What title, start time, and end time should I use for this calendar event?');
+  });
+
+  it('accepts agentic multi-step workspace plans', async () => {
+    AssistantCommandProcessor.setPlannerForTests(async () => ({
+      decision: 'plan',
+      summary: 'Plan a document plus email follow-up',
+      steps: [
+        {
+          title: 'Create Google Doc artifact',
+          worker_type: 'docs',
+          action: 'create_document',
+          input: {
+            title: 'Launch notes',
+            content: 'Initial launch notes',
+          },
+          requested_tools: ['create_doc', 'modify_doc_text'],
+          recoverable: true,
+        },
+        {
+          title: 'Send Gmail message',
+          worker_type: 'gmail',
+          action: 'send_email',
+          input: {
+            recipient: 'alexis@example.com',
+            subject: 'Launch notes ready',
+            body: 'I drafted the launch notes for review.',
+          },
+          requested_tools: ['send_gmail_message'],
+          recoverable: true,
+        },
+      ],
+    }));
+
+    const processor = new AssistantCommandProcessor();
+
+    const result = await processor.process({
+      ...baseTask,
+      topic: 'Command Center',
+      payload: {
+        command: 'Create launch notes in a doc and send them to Alexis',
+        source: 'dashboard-command-center',
+        channel: 'web',
+        user_initiated: true,
+        confirmed: true,
+      },
+    });
+
+    expect(result.planner_intent).toBeDefined();
+    expect(result.planner_intent.requested_steps.map((step: { worker_type: string; action: string }) => `${step.worker_type}:${step.action}`)).toEqual([
+      'docs:create_document',
+      'gmail:send_email',
+    ]);
+    expect(result.planner_intent.requested_steps[1].input).toMatchObject({
+      recipient: 'alexis@example.com',
+      to: 'alexis@example.com',
+      approved_by: baseTask.user_id,
+      source_task_id: baseTask.id,
+    });
   });
 });

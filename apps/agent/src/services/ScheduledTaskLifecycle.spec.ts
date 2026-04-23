@@ -122,4 +122,30 @@ describe('syncScheduledTaskCompletion', () => {
     expect(row.last_error).toBe('processor execution failed');
     expect(row.next_run).toBe('2026-03-20T10:00:00.000Z');
   });
+
+  it('does not reactivate schedules that were already inactive', async () => {
+    const row: ScheduleRow = {
+      id: 'schedule-1',
+      organization_id: 'org-1',
+      failure_count: 0,
+      is_active: false,
+      last_run: '2026-03-20T08:00:00.000Z',
+      next_run: '2026-03-20T09:00:00.000Z',
+      last_error: null,
+    };
+
+    await syncScheduledTaskCompletion(
+      createScheduledTask('2026-03-20T09:00:00.000Z'),
+      'done',
+      null,
+      {
+        now: () => new Date('2026-03-20T09:05:00.000Z'),
+        supabaseClient: createMockSupabase(row),
+      },
+    );
+
+    expect(row.is_active).toBe(false);
+    expect(row.last_run).toBe('2026-03-20T09:00:00.000Z');
+    expect(row.next_run).toBe('2026-03-20T10:00:00.000Z');
+  });
 });

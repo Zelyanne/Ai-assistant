@@ -4,7 +4,6 @@ import { ChatMistralAI } from '@langchain/mistralai';
 import { StructuredTool } from '@langchain/core/tools';
 import { config } from '../config/index.js';
 import { tracingService } from '../services/llm/tracing.js';
-import { supabase } from '../services/supabase.js';
 import { AuditLogger } from '../services/AuditLogger.js';
 
 export interface ProcessorResult {

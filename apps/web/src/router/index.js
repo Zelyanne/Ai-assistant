@@ -52,7 +52,7 @@ const routes = [
                 path: 'command-center',
                 name: 'command-center',
                 component: () => import('../views/CommandCenter.vue'),
-                meta: { requiresAuth: true }
+                meta: { requiresAuth: true, layoutWidth: 'wide' }
             },
             {
                 path: 'audit-log',
@@ -115,7 +115,7 @@ router.beforeEach(async (to, _from, next) => {
         return;
     }
     if (isAuthenticated && to.name === 'login') {
-        next({ name: 'dashboard' });
+        next({ name: 'command-center' });
         return;
     }
     // Ensure profile is loaded if authenticated
@@ -129,7 +129,7 @@ router.beforeEach(async (to, _from, next) => {
     }
     // Redirect away from onboarding if organization already exists
     if (isAuthenticated && userStore.hasOrganization && to.name === 'onboarding') {
-        next({ name: 'dashboard' });
+        next({ name: 'command-center' });
         return;
     }
     if (to.meta.requiresCEO && !userStore.isCEO) {

@@ -10,9 +10,10 @@ describe('ScheduleParser', () => {
     });
 
     expect(parsed.cronExpression).toBe('0 * * * *');
-    expect(parsed.taskType).toBe('email.check');
+    expect(parsed.taskType).toBe('assistant.command');
     expect(parsed.source).toBe('rules');
-    expect(parsed.confirmationMessage).toContain('email.check');
+    expect(parsed.taskPayload.command).toBe('Check my emails');
+    expect(parsed.confirmationMessage).toContain('assistant.command');
   });
 
   it('parses weekly schedule with day and meridiem time', async () => {
@@ -21,8 +22,9 @@ describe('ScheduleParser', () => {
     const parsed = await parser.parse('Remind me every Monday at 9am');
 
     expect(parsed.cronExpression).toBe('0 9 * * 1');
-    expect(parsed.taskType).toBe('reminder.send');
+    expect(parsed.taskType).toBe('assistant.command');
     expect(parsed.source).toBe('rules');
+    expect(parsed.taskPayload.command).toBe('Remind me');
   });
 
   it('parses minute interval cadence', async () => {
@@ -48,8 +50,9 @@ describe('ScheduleParser', () => {
 
     expect(llmParse).toHaveBeenCalledOnce();
     expect(parsed.cronExpression).toBe('0 17 * * 5');
-    expect(parsed.taskType).toBe('report.send');
+    expect(parsed.taskType).toBe('assistant.command');
     expect(parsed.source).toBe('llm');
+    expect(typeof parsed.taskPayload.command).toBe('string');
   });
 
   it('throws when no parsing strategy can resolve a cron expression', async () => {

@@ -72,7 +72,25 @@ const { supabaseFromMock, resetSupabaseMock } = vi.hoisted(() => {
       }
 
       if (currentTable === 'command_conversations' && action === 'select') {
-        return Promise.resolve(resolve({ data: null, error: null }));
+        return Promise.resolve(resolve({
+          data: [
+            {
+              id: 'conv-existing-1',
+              organization_id: '123e4567-e89b-12d3-a456-426614174001',
+              created_by: '123e4567-e89b-12d3-a456-426614174002',
+              channel: 'web',
+              title: 'Command Center',
+              metadata: {},
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+          ],
+          error: null,
+        }));
+      }
+
+      if (currentTable === 'command_conversations' && action === 'update') {
+        return Promise.resolve(resolve({ data: updatePatch ?? null, error: null }));
       }
 
       return Promise.resolve(resolve({ data: null, error: null }));
@@ -163,7 +181,7 @@ describe('useCommandCenter', () => {
     );
   });
 
-  it('queues high-risk command immediately without confirmation', async () => {
+  it('queues send command without client-side high_risk heuristics', async () => {
     submitTaskMock.mockResolvedValue({ id: 'task-high-risk-1' });
     const center = useCommandCenter();
 
@@ -176,7 +194,7 @@ describe('useCommandCenter', () => {
       expect.objectContaining({
         channel: 'web',
         user_initiated: true,
-        high_risk: true,
+        high_risk: false,
       }),
       'Command Center'
     );
@@ -236,6 +254,7 @@ describe('useCommandCenter', () => {
 
     await waitFor(() => {
       expect(subscribeToTableMock).toHaveBeenCalledWith('tasks', expect.any(Function));
+      expect(subscribeToTableMock).toHaveBeenCalledWith('command_conversations', expect.any(Function));
       expect(subscribeToTableMock).toHaveBeenCalledWith('command_messages', expect.any(Function));
       expect(subscribeToTableMock).toHaveBeenCalledWith('execution_runs', expect.any(Function));
     });
@@ -263,6 +282,139 @@ describe('useCommandCenter', () => {
     expect(unsubs.get('tasks')).toHaveBeenCalledTimes(1);
     expect(unsubs.get('command_messages')).toHaveBeenCalledTimes(1);
     expect(unsubs.get('execution_runs')).toHaveBeenCalledTimes(1);
+  });
+
+  it('filters realtime message updates by active conversation id', async () => {
+    submitTaskMock.mockResolvedValue({ id: 'task-realtime-2' });
+    const center = useCommandCenter();
+
+    const { useUserStore } = await import('../stores/user');
+    const userStore = useUserStore();
+    userStore.profile = {
+      id: '123e4567-e89b-12d3-a456-426614174002',
+      organization_id: '123e4567-e89b-12d3-a456-426614174001',
+    } as Profile;
+
+    center.startRealtimeSync();
+
+    await waitFor(() => {
+      expect(subscribeToTableMock).toHaveBeenCalledWith('command_messages', expect.any(Function));
+      expect(center.activeConversationId.value).toBeTruthy();
+    });
+
+    const activeId = center.activeConversationId.value;
+    expect(activeId).toBe('conv-existing-1');
+
+    const messageCallback = subscriptions.get('command_messages');
+    expect(messageCallback).toBeDefined();
+
+    const beforeCount = center.timeline.value.length;
+
+    messageCallback?.({
+      eventType: 'INSERT',
+      new: {
+        id: 'msg-ignore-1',
+        organization_id: userStore.profile.organization_id,
+        conversation_id: 'conv-other',
+        role: 'assistant',
+        content: 'Should not appear',
+        state: 'done',
+        source_task_id: null,
+        correlation_id: null,
+        metadata: {},
+        created_at: new Date().toISOString(),
+      },
+    });
+
+    messageCallback?.({
+      eventType: 'INSERT',
+      new: {
+        id: 'msg-accept-1',
+        organization_id: userStore.profile.organization_id,
+        conversation_id: activeId,
+        role: 'assistant',
+        content: 'Should appear',
+        state: 'done',
+        source_task_id: null,
+        correlation_id: null,
+        metadata: {},
+        created_at: new Date().toISOString(),
+      },
+    });
+
+    await waitFor(() => {
+      expect(center.timeline.value.length).toBeGreaterThan(beforeCount);
+      expect(center.timeline.value.some((entry) => entry.content === 'Should appear')).toBe(true);
+      expect(center.timeline.value.some((entry) => entry.content === 'Should not appear')).toBe(false);
+    });
+  });
+
+  it('rebinds message subscription filtering after switching conversations', async () => {
+    submitTaskMock.mockResolvedValue({ id: 'task-switch-1' });
+    const center = useCommandCenter();
+
+    const { useUserStore } = await import('../stores/user');
+    const userStore = useUserStore();
+    userStore.profile = {
+      id: '123e4567-e89b-12d3-a456-426614174002',
+      organization_id: '123e4567-e89b-12d3-a456-426614174001',
+    } as Profile;
+
+    center.startRealtimeSync();
+
+    await waitFor(() => {
+      expect(subscribeToTableMock).toHaveBeenCalledWith('command_messages', expect.any(Function));
+      expect(center.activeConversationId.value).toBe('conv-existing-1');
+    });
+
+    const initialCalls = subscribeToTableMock.mock.calls.length;
+
+    await center.switchConversation('conv-2');
+
+    await waitFor(() => {
+      expect(center.activeConversationId.value).toBe('conv-2');
+      expect(subscribeToTableMock.mock.calls.length).toBeGreaterThan(initialCalls);
+    });
+
+    const messageCallback = subscriptions.get('command_messages');
+    expect(messageCallback).toBeDefined();
+
+    messageCallback?.({
+      eventType: 'INSERT',
+      new: {
+        id: 'msg-old-conv',
+        organization_id: userStore.profile.organization_id,
+        conversation_id: 'conv-existing-1',
+        role: 'assistant',
+        content: 'Old conversation',
+        state: 'done',
+        source_task_id: null,
+        correlation_id: null,
+        metadata: {},
+        created_at: new Date().toISOString(),
+      },
+    });
+
+    messageCallback?.({
+      eventType: 'INSERT',
+      new: {
+        id: 'msg-new-conv',
+        organization_id: userStore.profile.organization_id,
+        conversation_id: 'conv-2',
+        role: 'assistant',
+        content: 'New conversation',
+        state: 'done',
+        source_task_id: null,
+        correlation_id: null,
+        metadata: {},
+        created_at: new Date().toISOString(),
+      },
+    });
+
+    await waitFor(() => {
+      expect(center.timeline.value.some((entry) => entry.content === 'Old conversation')).toBe(false);
+      expect(center.timeline.value.some((entry) => entry.content === 'New conversation')).toBe(true);
+    });
   });
 
   it('supports submit -> queued -> processing -> done timeline progression', async () => {
@@ -368,8 +520,87 @@ describe('useCommandCenter', () => {
         completedSteps: 1,
         totalSteps: 2,
       });
-      expect(assistantEntry?.content).toContain('Processing with gmail worker');
+      expect(assistantEntry?.content).toContain('Working on it with gmail specialist');
       expect(center.activeExecutionRun.value?.executionRun?.id).toBe('run-1');
+    });
+  });
+
+  it('replaces internal execution-run completion summaries with conversational text', async () => {
+    submitTaskMock.mockResolvedValue({ id: 'task-run-done-1' });
+    const center = useCommandCenter();
+
+    const { useUserStore } = await import('../stores/user');
+    const userStore = useUserStore();
+    userStore.profile = {
+      id: '123e4567-e89b-12d3-a456-426614174002',
+      organization_id: '123e4567-e89b-12d3-a456-426614174001',
+    } as Profile;
+
+    center.startRealtimeSync();
+
+    await waitFor(() => {
+      expect(subscribeToTableMock).toHaveBeenCalledWith('tasks', expect.any(Function));
+      expect(subscribeToTableMock).toHaveBeenCalledWith('execution_runs', expect.any(Function));
+    });
+
+    await center.submitCommand('Quelle schedule a ete creee ?');
+
+    const runCallback = subscriptions.get('execution_runs');
+    runCallback?.({
+      eventType: 'UPDATE',
+      new: {
+        id: 'run-done-1',
+        task_id: 'task-run-done-1',
+        organization_id: '123e4567-e89b-12d3-a456-426614174001',
+        status: 'completed',
+        current_step_key: null,
+        current_worker_type: null,
+        ledger_markdown: '# Execution Run Ledger',
+        last_error: null,
+        updated_at: new Date().toISOString(),
+        plan_json: {
+          summary: 'Checked the created schedule details',
+          replan_count: 0,
+          steps: [
+            { worker_type: 'calendar', status: 'completed' },
+          ],
+        },
+      },
+    });
+
+    const taskCallback = subscriptions.get('tasks');
+    taskCallback?.({
+      eventType: 'UPDATE',
+      new: {
+        id: 'task-run-done-1',
+        status: 'done',
+        result: {
+          summary: 'Execution run completed with 1 worker steps.',
+          execution_run: {
+            id: 'run-done-1',
+            status: 'completed',
+            current_step_key: null,
+            current_worker_type: null,
+            plan_json: {
+              summary: 'Checked the created schedule details',
+              replan_count: 0,
+              steps: [
+                { worker_type: 'calendar', status: 'completed' },
+              ],
+            },
+            ledger_markdown: '# Execution Run Ledger',
+            last_error: null,
+            updated_at: new Date().toISOString(),
+          },
+        },
+      },
+    });
+
+    await waitFor(() => {
+      const assistantEntry = center.timeline.value.find((entry) => entry.taskId === 'task-run-done-1');
+      expect(assistantEntry?.state).toBe('done');
+      expect(assistantEntry?.content).toContain('Done — Checked the created schedule details');
+      expect(assistantEntry?.content).not.toContain('Execution run completed with 1 worker steps');
     });
   });
 });

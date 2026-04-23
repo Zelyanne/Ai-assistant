@@ -13,7 +13,7 @@ const password = ref('');
 const loading = ref(false);
 const errorMessage = ref('');
 
-const handleLogin = async () => {
+const handleLogin = async (): Promise<void> => {
   loading.value = true;
   errorMessage.value = '';
   
@@ -25,21 +25,22 @@ const handleLogin = async () => {
 
     if (error) throw error;
     
-    router.push('/dashboard');
-  } catch (error: any) {
-    errorMessage.value = error.message || 'Failed to sign in';
+    await router.push('/dashboard/command-center');
+  } catch (error: unknown) {
+    errorMessage.value = error instanceof Error ? error.message : 'Failed to sign in';
   } finally {
     loading.value = false;
   }
 };
 
-const handleGoogleLogin = async () => {
+const handleGoogleLogin = async (): Promise<void> => {
   loading.value = true;
   errorMessage.value = '';
   try {
     await signInWithGoogle();
   } catch (error: unknown) {
     errorMessage.value = error instanceof Error ? error.message : 'Failed to sign in with Google';
+  } finally {
     loading.value = false;
   }
 };
@@ -69,6 +70,7 @@ const handleGoogleLogin = async () => {
             v-if="errorMessage"
             severity="error"
             variant="simple"
+            aria-live="polite"
           >
             {{ errorMessage }}
           </Message>
@@ -82,7 +84,9 @@ const handleGoogleLogin = async () => {
               id="email" 
               v-model="email" 
               type="email" 
-              placeholder="name@company.com" 
+              name="email"
+              autocomplete="email"
+              spellcheck="false"
               required 
               class="w-full font-technical"
               :disabled="loading"
@@ -95,9 +99,10 @@ const handleGoogleLogin = async () => {
               class="text-xs font-semibold uppercase tracking-wider text-slate-500 font-technical"
             >Password</label>
             <Password 
-              id="password" 
-              v-model="password" 
-              placeholder="••••••••" 
+              v-model="password"
+              input-id="password" 
+              name="password"
+              autocomplete="current-password"
               :feedback="false" 
               toggle-mask 
               required 

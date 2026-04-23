@@ -10,11 +10,11 @@ import { RelancingNudgeProcessor } from "./RelancingNudgeProcessor.js";
 import { ChannelSendProcessor } from "./ChannelSendProcessor.js";
 import { RelancingUpdateProcessor } from "./RelancingUpdateProcessor.js";
 import { StatusReportProcessor } from "./StatusReportProcessor.js";
-import { AssistantCommandProcessor } from "./AssistantCommandProcessor.js";
 import { ProtocolUpdateProcessor } from "./ProtocolUpdateProcessor.js";
 import { ProtocolOptimizationProcessor } from "./ProtocolOptimizationProcessor.js";
 import { EODMemoryProcessor } from "./EODMemoryProcessor.js";
 import { ScheduleManageProcessor } from "./ScheduleManageProcessor.js";
+import { SkillsManageProcessor } from "./SkillsManageProcessor.js";
 
 export class ProcessorRegistry {
   private static processors: Map<string, BaseProcessor> = new Map();
@@ -32,8 +32,8 @@ export class ProcessorRegistry {
     this.processors.set("relancing.update", new RelancingUpdateProcessor());
     this.processors.set("status.report", new StatusReportProcessor());
     this.processors.set("channel.send", new ChannelSendProcessor());
-    this.processors.set("assistant.command", new AssistantCommandProcessor());
     this.processors.set("schedule.manage", new ScheduleManageProcessor());
+    this.processors.set("skills.manage", new SkillsManageProcessor());
     this.processors.set(
       "system.optimize_protocol",
       new ProtocolOptimizationProcessor(),

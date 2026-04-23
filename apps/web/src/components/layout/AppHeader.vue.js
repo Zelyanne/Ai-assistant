@@ -54,6 +54,7 @@ const __VLS_1 = __VLS_asFunctionalComponent(__VLS_0, new __VLS_0({
     ...{ class: "md:hidden !p-2" },
     severity: "secondary",
     text: true,
+    'aria-label': "Open navigation",
 }));
 const __VLS_2 = __VLS_1({
     ...{ 'onClick': {} },
@@ -61,6 +62,7 @@ const __VLS_2 = __VLS_1({
     ...{ class: "md:hidden !p-2" },
     severity: "secondary",
     text: true,
+    'aria-label': "Open navigation",
 }, ...__VLS_functionalComponentArgsRest(__VLS_1));
 let __VLS_4;
 let __VLS_5;
@@ -75,11 +77,11 @@ const __VLS_8 = {}.RouterLink;
 /** @type {[typeof __VLS_components.RouterLink, typeof __VLS_components.routerLink, typeof __VLS_components.RouterLink, typeof __VLS_components.routerLink, ]} */ ;
 // @ts-ignore
 const __VLS_9 = __VLS_asFunctionalComponent(__VLS_8, new __VLS_8({
-    to: "/dashboard",
+    to: "/dashboard/command-center",
     ...{ class: "flex items-center gap-2 no-underline" },
 }));
 const __VLS_10 = __VLS_9({
-    to: "/dashboard",
+    to: "/dashboard/command-center",
     ...{ class: "flex items-center gap-2 no-underline" },
 }, ...__VLS_functionalComponentArgsRest(__VLS_9));
 __VLS_11.slots.default;
@@ -104,7 +106,7 @@ if (__VLS_ctx.safetyControls.emergencyBrakeEnabled) {
         ...{ class: "flex items-center gap-2 text-rose-700 font-semibold" },
     });
     __VLS_asFunctionalElement(__VLS_intrinsicElements.span)({
-        ...{ class: "h-2 w-2 rounded-full bg-rose-600 animate-pulse" },
+        ...{ class: "h-2 w-2 rounded-full bg-rose-600 motion-safe:animate-pulse" },
     });
     __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({});
 }
@@ -199,7 +201,7 @@ __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.d
 /** @type {__VLS_StyleScopedClasses['w-2']} */ ;
 /** @type {__VLS_StyleScopedClasses['rounded-full']} */ ;
 /** @type {__VLS_StyleScopedClasses['bg-rose-600']} */ ;
-/** @type {__VLS_StyleScopedClasses['animate-pulse']} */ ;
+/** @type {__VLS_StyleScopedClasses['motion-safe:animate-pulse']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-slate-500']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
 /** @type {__VLS_StyleScopedClasses['h-8']} */ ;

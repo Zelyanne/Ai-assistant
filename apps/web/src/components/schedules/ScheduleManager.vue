@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import Button from 'primevue/button';
+import Dropdown from 'primevue/dropdown';
 import InputText from 'primevue/inputtext';
 import Message from 'primevue/message';
+import Textarea from 'primevue/textarea';
 import { type UserScheduleRecord, useSchedules } from '../../composables/useSchedules';
 
 const {
@@ -19,16 +21,115 @@ const {
 const schedules = ref<UserScheduleRecord[]>([]);
 const creating = ref(false);
 const editingId = ref<string | null>(null);
+const formError = ref<string | null>(null);
+const editError = ref<string | null>(null);
+
+const TASK_TYPE_OPTIONS = ['assistant.command', 'channel.send'] as const;
+const CHANNEL_OPTIONS = ['web', 'telegram', 'whatsapp'] as const;
+type ScheduleTaskType = typeof TASK_TYPE_OPTIONS[number];
+type ScheduleChannel = typeof CHANNEL_OPTIONS[number];
+
 const form = ref({
-  task_type: 'schedule.execute',
+  task_type: 'assistant.command',
   cron_expression: '0 9 * * 1',
   timezone: 'UTC',
+  command: '',
+  channel: 'web',
+  thread_id: '',
+  message_text: '',
 });
 const editForm = ref({
   task_type: '',
   cron_expression: '',
   timezone: 'UTC',
+  command: '',
+  channel: 'web',
+  thread_id: '',
+  message_text: '',
 });
+
+type ScheduleFormState = {
+  task_type: string;
+  cron_expression: string;
+  timezone: string;
+  command: string;
+  channel: string;
+  thread_id: string;
+  message_text: string;
+};
+
+function isSupportedTaskType(taskType: string): taskType is ScheduleTaskType {
+  return (TASK_TYPE_OPTIONS as readonly string[]).includes(taskType);
+}
+
+function isSupportedChannel(channel: string): channel is ScheduleChannel {
+  return (CHANNEL_OPTIONS as readonly string[]).includes(channel);
+}
+
+function buildTaskPayload(input: ScheduleFormState): { payload: Record<string, unknown> | null; error: string | null } {
+  if (!isSupportedTaskType(input.task_type)) {
+    return {
+      payload: null,
+      error: 'Unsupported task type. Choose assistant.command or channel.send.',
+    };
+  }
+
+  if (input.task_type === 'assistant.command') {
+    const command = input.command.trim();
+    if (!command) {
+      return {
+        payload: null,
+        error: 'Command is required for assistant.command schedules.',
+      };
+    }
+
+    return {
+      payload: {
+        command,
+        command_text: command,
+        message_text: command,
+        confirmed: true,
+        high_risk: true,
+      },
+      error: null,
+    };
+  }
+
+  if (!isSupportedChannel(input.channel)) {
+    return {
+      payload: null,
+      error: 'Unsupported channel. Choose web, telegram, or whatsapp.',
+    };
+  }
+
+  const threadId = input.thread_id.trim();
+  const messageText = input.message_text.trim();
+
+  if (!threadId) {
+    return {
+      payload: null,
+      error: 'thread_id is required for channel.send schedules.',
+    };
+  }
+
+  if (!messageText) {
+    return {
+      payload: null,
+      error: 'message_text is required for channel.send schedules.',
+    };
+  }
+
+  return {
+    payload: {
+      channel: input.channel,
+      thread_id: threadId,
+      message_text: messageText,
+      confirmed: true,
+      high_risk: true,
+    },
+    error: null,
+  };
+}
 
 async function refresh(): Promise<void> {
   schedules.value = await listSchedules();
@@ -36,20 +137,33 @@ async function refresh(): Promise<void> {
 
 async function submit(): Promise<void> {
   creating.value = true;
+  formError.value = null;
+
+  const { payload: taskPayload, error: validationError } = buildTaskPayload(form.value);
+  if (!taskPayload) {
+    formError.value = validationError;
+    creating.value = false;
+    return;
+  }
+
   const created = await createSchedule({
     task_type: form.value.task_type,
     cron_expression: form.value.cron_expression,
     timezone: form.value.timezone,
-    task_payload: {},
+    task_payload: taskPayload,
     is_active: true,
   });
 
   creating.value = false;
   if (created) {
     form.value = {
-      task_type: 'schedule.execute',
+      task_type: 'assistant.command',
       cron_expression: '0 9 * * 1',
       timezone: 'UTC',
+      command: '',
+      channel: 'web',
+      thread_id: '',
+      message_text: '',
     };
     await refresh();
   }
@@ -57,27 +171,46 @@ async function submit(): Promise<void> {
 
 function startEdit(schedule: UserScheduleRecord): void {
   editingId.value = schedule.id;
+  editError.value = null;
+  const payload = schedule.task_payload ?? {};
+  const command = typeof payload.command === 'string'
+    ? payload.command
+    : (typeof payload.command_text === 'string' ? payload.command_text : '');
   editForm.value = {
     task_type: schedule.task_type,
     cron_expression: schedule.cron_expression,
     timezone: schedule.timezone ?? 'UTC',
+    command,
+    channel: typeof payload.channel === 'string' ? payload.channel : 'web',
+    thread_id: typeof payload.thread_id === 'string' ? payload.thread_id : '',
+    message_text: typeof payload.message_text === 'string' ? payload.message_text : '',
   };
 }
 
 function cancelEdit(): void {
   editingId.value = null;
+  editError.value = null;
 }
 
 async function saveEdit(schedule: UserScheduleRecord): Promise<void> {
+  editError.value = null;
+
+  const { payload: taskPayload, error: validationError } = buildTaskPayload(editForm.value);
+  if (!taskPayload) {
+    editError.value = validationError;
+    return;
+  }
+
   const updated = await updateSchedule(schedule.id, {
     task_type: editForm.value.task_type,
     cron_expression: editForm.value.cron_expression,
     timezone: editForm.value.timezone,
-    task_payload: schedule.task_payload ?? {},
+    task_payload: taskPayload,
     is_active: schedule.is_active,
   });
 
   if (updated) {
+    editError.value = null;
     editingId.value = null;
     await refresh();
   }
@@ -105,26 +238,92 @@ onMounted(() => {
 
 <template>
   <div class="space-y-5">
-    <Message v-if="error" severity="error" :closable="false">
+    <Message
+      v-if="error"
+      severity="error"
+      :closable="false"
+    >
       {{ error }}
     </Message>
 
     <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
-      <h3 class="mb-3 text-sm font-semibold text-slate-800">Create Schedule</h3>
+      <h3 class="mb-3 text-sm font-semibold text-slate-800">
+        Create Schedule
+      </h3>
+      <Message
+        v-if="formError"
+        severity="error"
+        :closable="false"
+        class="mb-3"
+      >
+        {{ formError }}
+      </Message>
       <div class="grid gap-3 md:grid-cols-3">
-        <InputText v-model="form.task_type" placeholder="task type (domain.action)" />
-        <InputText v-model="form.cron_expression" placeholder="cron expression" />
-        <InputText v-model="form.timezone" placeholder="timezone (e.g. UTC)" />
+        <Dropdown
+          v-model="form.task_type"
+          :options="TASK_TYPE_OPTIONS"
+          placeholder="task type"
+          fluid
+        />
+        <InputText
+          v-model="form.cron_expression"
+          placeholder="cron expression"
+        />
+        <InputText
+          v-model="form.timezone"
+          placeholder="timezone (e.g. UTC)"
+        />
+      </div>
+
+      <div class="mt-3 grid gap-3 md:grid-cols-3">
+        <template v-if="form.task_type === 'assistant.command'">
+          <Textarea
+            v-model="form.command"
+            auto-resize
+            rows="2"
+            class="md:col-span-3"
+            placeholder="Command to run at each scheduled time"
+          />
+        </template>
+        <template v-else>
+          <Dropdown
+            v-model="form.channel"
+            :options="CHANNEL_OPTIONS"
+            placeholder="channel"
+            fluid
+          />
+          <InputText
+            v-model="form.thread_id"
+            placeholder="thread_id"
+          />
+          <InputText
+            v-model="form.message_text"
+            placeholder="message_text"
+          />
+        </template>
       </div>
       <div class="mt-3 flex justify-end">
-        <Button label="Create" icon="pi pi-plus" :loading="creating" @click="submit" />
+        <Button
+          label="Create"
+          icon="pi pi-plus"
+          :loading="creating"
+          @click="submit"
+        />
       </div>
     </div>
 
     <div class="space-y-3">
       <div class="flex items-center justify-between">
-        <h3 class="text-sm font-semibold text-slate-800">Schedules</h3>
-        <Button label="Refresh" text icon="pi pi-refresh" :loading="loading" @click="refresh" />
+        <h3 class="text-sm font-semibold text-slate-800">
+          Schedules
+        </h3>
+        <Button
+          label="Refresh"
+          text
+          icon="pi pi-refresh"
+          :loading="loading"
+          @click="refresh"
+        />
       </div>
 
       <div
@@ -142,26 +341,96 @@ onMounted(() => {
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div class="min-w-0 flex-1">
             <template v-if="editingId === item.id">
+              <Message
+                v-if="editError"
+                severity="error"
+                :closable="false"
+                class="mb-3"
+              >
+                {{ editError }}
+              </Message>
               <div class="grid gap-3 md:grid-cols-3">
-                <InputText v-model="editForm.task_type" placeholder="task type" />
-                <InputText v-model="editForm.cron_expression" placeholder="cron expression" />
-                <InputText v-model="editForm.timezone" placeholder="timezone" />
+                <Dropdown
+                  v-model="editForm.task_type"
+                  :options="TASK_TYPE_OPTIONS"
+                  placeholder="task type"
+                  fluid
+                />
+                <InputText
+                  v-model="editForm.cron_expression"
+                  placeholder="cron expression"
+                />
+                <InputText
+                  v-model="editForm.timezone"
+                  placeholder="timezone"
+                />
+              </div>
+
+              <div class="mt-3 grid gap-3 md:grid-cols-3">
+                <template v-if="editForm.task_type === 'assistant.command'">
+                  <Textarea
+                    v-model="editForm.command"
+                    auto-resize
+                    rows="2"
+                    class="md:col-span-3"
+                    placeholder="Command"
+                  />
+                </template>
+                <template v-else>
+                  <Dropdown
+                    v-model="editForm.channel"
+                    :options="CHANNEL_OPTIONS"
+                    placeholder="channel"
+                    fluid
+                  />
+                  <InputText
+                    v-model="editForm.thread_id"
+                    placeholder="thread_id"
+                  />
+                  <InputText
+                    v-model="editForm.message_text"
+                    placeholder="message_text"
+                  />
+                </template>
               </div>
             </template>
             <template v-else>
-              <p class="text-sm font-semibold text-slate-900">{{ item.task_type }}</p>
-              <p class="text-xs text-slate-500">{{ item.cron_expression }} · {{ item.timezone }}</p>
-              <p class="mt-1 text-xs text-slate-400">Next run: {{ new Date(item.next_run).toLocaleString() }}</p>
+              <p class="text-sm font-semibold text-slate-900">
+                {{ item.task_type }}
+              </p>
+              <p class="text-xs text-slate-500">
+                {{ item.cron_expression }} · {{ item.timezone }}
+              </p>
+              <p class="mt-1 text-xs text-slate-400">
+                Next run: {{ new Date(item.next_run).toLocaleString() }}
+              </p>
             </template>
           </div>
 
           <div class="flex flex-wrap gap-2">
             <template v-if="editingId === item.id">
-              <Button label="Save" icon="pi pi-check" size="small" @click="saveEdit(item)" />
-              <Button label="Cancel" icon="pi pi-times" size="small" severity="secondary" @click="cancelEdit" />
+              <Button
+                label="Save"
+                icon="pi pi-check"
+                size="small"
+                @click="saveEdit(item)"
+              />
+              <Button
+                label="Cancel"
+                icon="pi pi-times"
+                size="small"
+                severity="secondary"
+                @click="cancelEdit"
+              />
             </template>
             <template v-else>
-              <Button label="Edit" icon="pi pi-pencil" size="small" severity="secondary" @click="startEdit(item)" />
+              <Button
+                label="Edit"
+                icon="pi pi-pencil"
+                size="small"
+                severity="secondary"
+                @click="startEdit(item)"
+              />
               <Button
                 :label="item.is_active ? 'Pause' : 'Resume'"
                 :icon="item.is_active ? 'pi pi-pause' : 'pi pi-play'"
@@ -169,7 +438,13 @@ onMounted(() => {
                 severity="secondary"
                 @click="toggle(item)"
               />
-              <Button label="Delete" icon="pi pi-trash" size="small" severity="danger" @click="remove(item)" />
+              <Button
+                label="Delete"
+                icon="pi pi-trash"
+                size="small"
+                severity="danger"
+                @click="remove(item)"
+              />
             </template>
           </div>
         </div>

@@ -40,7 +40,7 @@ describe('Router Auth Guards', () => {
     expect(router.currentRoute.value.name).toBe('login');
   });
 
-  it('redirects to dashboard when accessing login page while authenticated', async () => {
+  it('redirects to command center when accessing login page while authenticated', async () => {
     vi.mocked(supabase.auth.getSession).mockResolvedValue({ data: { session: { user: { id: '123' } } } } as GetSessionResult);
     // Mock profile fetch
     const userStore = useUserStore();
@@ -51,6 +51,27 @@ describe('Router Auth Guards', () => {
     await router.push('/dashboard/settings'); 
 
     await router.push('/login');
+    expect(router.currentRoute.value.name).toBe('command-center');
+  });
+
+  it('redirects away from onboarding to command center when organization already exists', async () => {
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({ data: { session: { user: { id: '123' } } } } as GetSessionResult);
+    const userStore = useUserStore();
+    vi.spyOn(userStore, 'fetchProfile').mockResolvedValue();
+    userStore.profile = { id: '123', role: 'CEO', organization_id: 'org-123' } as unknown as typeof userStore.profile;
+
+    await router.push('/onboarding');
+
+    expect(router.currentRoute.value.name).toBe('command-center');
+  });
+
+  it('still allows navigating to /dashboard for the dashboard view', async () => {
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({ data: { session: { user: { id: '123' } } } } as GetSessionResult);
+    const userStore = useUserStore();
+    vi.spyOn(userStore, 'fetchProfile').mockResolvedValue();
+    userStore.profile = { id: '123', role: 'CEO', organization_id: 'org-123' } as unknown as typeof userStore.profile;
+
+    await router.push('/dashboard');
     expect(router.currentRoute.value.name).toBe('dashboard');
   });
 

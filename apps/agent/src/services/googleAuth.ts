@@ -16,6 +16,12 @@ type TokenExchangeResult = {
 export const GOOGLE_WORKSPACE_SCOPES = {
   gmail: ['https://www.googleapis.com/auth/gmail.modify'],
   calendar: ['https://www.googleapis.com/auth/calendar'],
+  contacts: [
+    // Google People API (Contacts)
+    // Needed for searching contacts (read) and saving clarified recipients (write).
+    'https://www.googleapis.com/auth/contacts.readonly',
+    'https://www.googleapis.com/auth/contacts',
+  ],
   drive: [
     'https://www.googleapis.com/auth/drive.readonly',
     'https://www.googleapis.com/auth/drive.file',
@@ -49,6 +55,9 @@ export class GoogleAuthService {
     return this.oauth2Client.generateAuthUrl({
       access_type: 'offline',
       prompt: 'consent',
+      // Allow incremental authorization when we add new capabilities/scopes.
+      // This reduces the chances of users needing to fully revoke/reconnect.
+      include_granted_scopes: true,
       scope: GOOGLE_WORKSPACE_OAUTH_SCOPES,
       state, // organization_id passed via state
     });

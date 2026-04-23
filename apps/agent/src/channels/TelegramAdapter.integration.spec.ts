@@ -1,8 +1,32 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Request, Response } from 'express';
 import { TelegramAdapter } from './TelegramAdapter.js';
 import { ChannelRouterService } from '../services/channelRouter.js';
 import { ChannelAdapterRegistry } from './ChannelAdapterRegistry.js';
 import { AuditLogger } from '../services/AuditLogger.js';
+import { handleTelegramWebhook } from '../routes/webhooks/telegram.js';
+
+interface MockResponse {
+  statusCode: number;
+  body: unknown;
+  status: (code: number) => MockResponse;
+  json: (payload: unknown) => MockResponse;
+}
+
+function createMockResponse(): MockResponse {
+  return {
+    statusCode: 200,
+    body: null,
+    status(code: number) {
+      this.statusCode = code;
+      return this;
+    },
+    json(payload: unknown) {
+      this.body = payload;
+      return this;
+    },
+  };
+}
 
 describe('Telegram Integration', () => {
   const mockSupabase = {
@@ -77,5 +101,51 @@ describe('Telegram Integration', () => {
     );
 
     vi.unstubAllGlobals();
+  });
+
+  it('accepts a valid Telegram webhook and enqueues assistant.command task', async () => {
+    const body = {
+      update_id: 500,
+      message: {
+        message_id: 1200,
+        text: 'summarize today',
+        chat: { id: 12345 },
+        from: { id: 999, username: 'sandbox-user' },
+      },
+      organization_id: '11111111-1111-1111-1111-111111111111',
+      user_id: '22222222-2222-4222-8222-222222222222',
+    };
+
+    const req = {
+      protocol: 'https',
+      originalUrl: '/webhooks/telegram',
+      headers: {
+        'x-telegram-bot-api-secret-token': 'secret',
+      },
+      body,
+      query: {},
+      get: () => 'agent.example.com',
+      header: (name: string) => {
+        const key = name.toLowerCase();
+        if (key === 'x-correlation-id') {
+          return undefined;
+        }
+        return undefined;
+      },
+    } as unknown as Request;
+    const res = createMockResponse();
+
+    await handleTelegramWebhook(req, res as unknown as Response, {
+      registry,
+      routerService,
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(res.body).toEqual(
+      expect.objectContaining({
+        accepted: true,
+      }),
+    );
+    expect(mockSupabase.from).toHaveBeenCalledWith('tasks');
   });
 });

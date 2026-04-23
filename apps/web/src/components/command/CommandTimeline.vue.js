@@ -1,4 +1,5 @@
-import { computed } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import Button from 'primevue/button';
 const props = withDefaults(defineProps(), {
     items: () => []
 });
@@ -43,6 +44,75 @@ const sortedItems = computed(() => {
         return left - right;
     });
 });
+const scrollContainer = ref(null);
+const isNearBottom = ref(true);
+const showJumpToLatest = ref(false);
+const NEAR_BOTTOM_THRESHOLD_PX = 120;
+function distanceFromBottom(el) {
+    return el.scrollHeight - el.scrollTop - el.clientHeight;
+}
+function computeNearBottom(el) {
+    return distanceFromBottom(el) <= NEAR_BOTTOM_THRESHOLD_PX;
+}
+function updateScrollState() {
+    const el = scrollContainer.value;
+    if (!el)
+        return;
+    isNearBottom.value = computeNearBottom(el);
+    if (isNearBottom.value)
+        showJumpToLatest.value = false;
+}
+function scrollToBottom() {
+    const el = scrollContainer.value;
+    if (!el)
+        return;
+    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    showJumpToLatest.value = false;
+}
+const lastItemSignature = computed(() => {
+    const last = sortedItems.value[sortedItems.value.length - 1];
+    if (!last)
+        return '';
+    const run = last.executionRun;
+    return [
+        last.id,
+        last.content,
+        last.state ?? '',
+        run?.status ?? '',
+        run?.currentStepKey ?? '',
+        run?.updatedAt ?? '',
+        run?.completedSteps ?? '',
+        run?.totalSteps ?? '',
+    ].join('|');
+});
+watch(() => sortedItems.value.length, async (nextCount, prevCount) => {
+    if (nextCount <= prevCount)
+        return;
+    await nextTick();
+    if (isNearBottom.value) {
+        scrollToBottom();
+    }
+    else {
+        showJumpToLatest.value = true;
+    }
+});
+watch(lastItemSignature, async (next, prev) => {
+    if (!next || next === prev)
+        return;
+    await nextTick();
+    if (isNearBottom.value) {
+        scrollToBottom();
+    }
+    else {
+        showJumpToLatest.value = true;
+    }
+});
+onMounted(() => {
+    void nextTick().then(() => {
+        scrollToBottom();
+        updateScrollState();
+    });
+});
 function roleLabel(role) {
     if (role === 'user')
         return 'You';
@@ -76,6 +146,12 @@ const __VLS_withDefaultsArg = (function (t) { return t; })({
 const __VLS_ctx = {};
 let __VLS_components;
 let __VLS_directives;
+/** @type {__VLS_StyleScopedClasses['timeline-enter-active']} */ ;
+/** @type {__VLS_StyleScopedClasses['timeline-leave-active']} */ ;
+/** @type {__VLS_StyleScopedClasses['timeline-enter-from']} */ ;
+/** @type {__VLS_StyleScopedClasses['timeline-leave-to']} */ ;
+// CSS variable injection 
+// CSS variable injection end 
 __VLS_asFunctionalElement(__VLS_intrinsicElements.section, __VLS_intrinsicElements.section)({
     ...{ class: "rounded-executive border border-slate-200 bg-white shadow-sm" },
     'aria-label': "Command timeline",
@@ -92,9 +168,57 @@ if (__VLS_ctx.sortedItems.length === 0) {
     });
 }
 else {
-    __VLS_asFunctionalElement(__VLS_intrinsicElements.ul, __VLS_intrinsicElements.ul)({
-        ...{ class: "max-h-[58vh] space-y-3 overflow-y-auto px-3 py-4" },
+    __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+        ...{ onScroll: (__VLS_ctx.updateScrollState) },
+        ref: "scrollContainer",
+        ...{ class: "relative max-h-[70vh] min-h-[18rem] overflow-y-auto px-3 py-4" },
     });
+    /** @type {typeof __VLS_ctx.scrollContainer} */ ;
+    if (__VLS_ctx.showJumpToLatest) {
+        __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+            ...{ class: "sticky bottom-4 z-10 flex justify-end" },
+        });
+        const __VLS_0 = {}.Button;
+        /** @type {[typeof __VLS_components.Button, ]} */ ;
+        // @ts-ignore
+        const __VLS_1 = __VLS_asFunctionalComponent(__VLS_0, new __VLS_0({
+            ...{ 'onClick': {} },
+            label: "Jump to Latest",
+            icon: "pi pi-arrow-down",
+            severity: "secondary",
+            size: "small",
+            ...{ class: "shadow-sm" },
+        }));
+        const __VLS_2 = __VLS_1({
+            ...{ 'onClick': {} },
+            label: "Jump to Latest",
+            icon: "pi pi-arrow-down",
+            severity: "secondary",
+            size: "small",
+            ...{ class: "shadow-sm" },
+        }, ...__VLS_functionalComponentArgsRest(__VLS_1));
+        let __VLS_4;
+        let __VLS_5;
+        let __VLS_6;
+        const __VLS_7 = {
+            onClick: (__VLS_ctx.scrollToBottom)
+        };
+        var __VLS_3;
+    }
+    const __VLS_8 = {}.TransitionGroup;
+    /** @type {[typeof __VLS_components.TransitionGroup, typeof __VLS_components.TransitionGroup, ]} */ ;
+    // @ts-ignore
+    const __VLS_9 = __VLS_asFunctionalComponent(__VLS_8, new __VLS_8({
+        tag: "ul",
+        name: "timeline",
+        ...{ class: "space-y-3" },
+    }));
+    const __VLS_10 = __VLS_9({
+        tag: "ul",
+        name: "timeline",
+        ...{ class: "space-y-3" },
+    }, ...__VLS_functionalComponentArgsRest(__VLS_9));
+    __VLS_11.slots.default;
     for (const [item] of __VLS_getVForSourceType((__VLS_ctx.sortedItems))) {
         __VLS_asFunctionalElement(__VLS_intrinsicElements.li, __VLS_intrinsicElements.li)({
             key: (item.id),
@@ -184,6 +308,7 @@ else {
             }
         }
     }
+    var __VLS_11;
 }
 /** @type {__VLS_StyleScopedClasses['rounded-executive']} */ ;
 /** @type {__VLS_StyleScopedClasses['border']} */ ;
@@ -204,11 +329,19 @@ else {
 /** @type {__VLS_StyleScopedClasses['text-center']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-slate-500']} */ ;
-/** @type {__VLS_StyleScopedClasses['max-h-[58vh]']} */ ;
-/** @type {__VLS_StyleScopedClasses['space-y-3']} */ ;
+/** @type {__VLS_StyleScopedClasses['relative']} */ ;
+/** @type {__VLS_StyleScopedClasses['max-h-[70vh]']} */ ;
+/** @type {__VLS_StyleScopedClasses['min-h-[18rem]']} */ ;
 /** @type {__VLS_StyleScopedClasses['overflow-y-auto']} */ ;
 /** @type {__VLS_StyleScopedClasses['px-3']} */ ;
 /** @type {__VLS_StyleScopedClasses['py-4']} */ ;
+/** @type {__VLS_StyleScopedClasses['sticky']} */ ;
+/** @type {__VLS_StyleScopedClasses['bottom-4']} */ ;
+/** @type {__VLS_StyleScopedClasses['z-10']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex']} */ ;
+/** @type {__VLS_StyleScopedClasses['justify-end']} */ ;
+/** @type {__VLS_StyleScopedClasses['shadow-sm']} */ ;
+/** @type {__VLS_StyleScopedClasses['space-y-3']} */ ;
 /** @type {__VLS_StyleScopedClasses['flex']} */ ;
 /** @type {__VLS_StyleScopedClasses['max-w-[92%]']} */ ;
 /** @type {__VLS_StyleScopedClasses['rounded-xl']} */ ;
@@ -284,9 +417,14 @@ var __VLS_dollars;
 const __VLS_self = (await import('vue')).defineComponent({
     setup() {
         return {
+            Button: Button,
             stateLabel: stateLabel,
             stateBadgeClass: stateBadgeClass,
             sortedItems: sortedItems,
+            scrollContainer: scrollContainer,
+            showJumpToLatest: showJumpToLatest,
+            updateScrollState: updateScrollState,
+            scrollToBottom: scrollToBottom,
             roleLabel: roleLabel,
             formatWorkerType: formatWorkerType,
             executionProgress: executionProgress,

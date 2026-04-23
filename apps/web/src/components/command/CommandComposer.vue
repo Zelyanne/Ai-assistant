@@ -6,9 +6,11 @@ import Textarea from 'primevue/textarea';
 const props = withDefaults(defineProps<{
   disabled?: boolean;
   placeholder?: string;
+  variant?: 'default' | 'chat';
 }>(), {
   disabled: false,
-  placeholder: 'Type a command...'
+  placeholder: 'Type a command…',
+  variant: 'default',
 });
 
 const emit = defineEmits<{
@@ -37,7 +39,12 @@ function onComposerKeydown(event: KeyboardEvent): void {
 </script>
 
 <template>
-  <section class="rounded-executive border border-slate-200 bg-white p-4 shadow-sm">
+  <section
+    class="border border-slate-200 bg-white shadow-sm"
+    :class="props.variant === 'chat'
+      ? 'rounded-[1.25rem] p-3 md:p-4'
+      : 'rounded-executive p-4'"
+  >
     <label
       :for="composerInputId"
       class="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500"
@@ -51,6 +58,8 @@ function onComposerKeydown(event: KeyboardEvent): void {
         v-model="draft"
         :disabled="disabled"
         :placeholder="placeholder"
+        name="command"
+        autocomplete="off"
         rows="3"
         auto-resize
         class="w-full"
@@ -66,7 +75,10 @@ function onComposerKeydown(event: KeyboardEvent): void {
       />
     </div>
 
-    <p class="mt-2 text-xs text-slate-500">
+    <p
+      v-if="props.variant !== 'chat'"
+      class="mt-2 text-xs text-slate-500"
+    >
       Enter submits. Shift+Enter adds a newline.
     </p>
   </section>

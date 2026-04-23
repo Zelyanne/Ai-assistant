@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import {
   Channel,
   Database,
@@ -35,6 +35,24 @@ function readStringField(payload: unknown, key: string): string | undefined {
 
   const value = payload[key];
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  if (!isRecord(error)) {
+    return false;
+  }
+
+  return error.code === '23505';
+}
+
+function buildOutboundTaskId(input: {
+  organization_id: string;
+  channel: Channel;
+  external_message_id: string;
+}): string {
+  const seed = `${input.organization_id}:${input.channel}:${input.external_message_id}`;
+  const hash = createHash('sha256').update(seed).digest('hex').slice(0, 32);
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
 }
 
 function toJson(value: unknown): Json {
@@ -411,7 +429,71 @@ export class ChannelRouterService {
     const normalized = OutboundChannelMessageSchema.parse(message);
     const correlationId = normalized.correlation_id ?? randomUUID();
 
+    const findExistingOutboundTask = async () => {
+      const { data: existingTask, error: existingError } = await this.supabaseClient
+        .from('tasks')
+        .select('id, payload')
+        .eq('organization_id', normalized.organization_id)
+        .eq('domain_action', 'channel.send')
+        .eq('payload->>channel', normalized.channel)
+        .eq('payload->>external_message_id', normalized.external_message_id)
+        .maybeSingle();
+
+      if (existingError) {
+        throw new Error(existingError.message);
+      }
+
+      if (!existingTask || typeof (existingTask as { id?: unknown }).id !== 'string') {
+        return null;
+      }
+
+      const taskId = (existingTask as { id: string }).id;
+      const existingCorrelationId = readCorrelationId((existingTask as { payload?: unknown }).payload) ?? correlationId;
+      return { taskId, correlationId: existingCorrelationId };
+    };
+
+    const existing = await findExistingOutboundTask();
+    if (existing) {
+      const existingTaskId = existing.taskId;
+      const existingCorrelationId = existing.correlationId;
+
+      await AuditLogger.flush(
+        normalized.organization_id,
+        existingTaskId,
+        'channel-router',
+        'channel_outbound_duplicate_prevented',
+        [
+          AuditLogger.createStep('Channel Outbound', `Duplicate outbound ${normalized.channel} message suppressed`, {
+            input_summary: `external_message_id=${normalized.external_message_id}; thread_id=${normalized.thread_id}`,
+            output_summary: `task_id=${existingTaskId}; correlation_id=${existingCorrelationId}`,
+          }),
+        ],
+        [
+          AuditLogger.createCitation(
+            'channel_message',
+            normalized.external_message_id,
+            `Duplicate outbound ${normalized.channel} message suppressed`,
+          ),
+        ],
+      );
+
+      return {
+        task_id: existingTaskId,
+        correlation_id: existingCorrelationId,
+        message: {
+          ...normalized,
+          task_id: normalized.task_id ?? existingTaskId,
+          correlation_id: existingCorrelationId,
+        },
+      };
+    }
+
     const taskInsert: TasksInsert = {
+      id: buildOutboundTaskId({
+        organization_id: normalized.organization_id,
+        channel: normalized.channel,
+        external_message_id: normalized.external_message_id,
+      }),
       organization_id: normalized.organization_id,
       user_id: normalized.user_id ?? null,
       domain_action: 'channel.send',
@@ -445,6 +527,21 @@ export class ChannelRouterService {
       .single();
 
     if (error || !data?.id) {
+      if (error && isUniqueViolation(error)) {
+        const duplicate = await findExistingOutboundTask();
+        if (duplicate) {
+          return {
+            task_id: duplicate.taskId,
+            correlation_id: duplicate.correlationId,
+            message: {
+              ...normalized,
+              task_id: normalized.task_id ?? duplicate.taskId,
+              correlation_id: duplicate.correlationId,
+            },
+          };
+        }
+      }
+
       throw new Error(error?.message ?? 'Failed to enqueue outbound channel task');
     }
 
