@@ -89,6 +89,7 @@ const envSchema = z.object({
   GOOGLE_OAUTH_REDIRECT_URI: z.string().url().transform((val) => val.trim()),
   ENCRYPTION_SECRET: z.string().length(32),
   TELEGRAM_BOT_TOKEN: z.string().min(1).optional().transform((val) => val?.trim()),
+  TELEGRAM_BOT_USERNAME: z.string().min(1).optional().transform((val) => val?.trim()),
   TELEGRAM_WEBHOOK_SECRET: z.string().min(1).optional().transform((val) => val?.trim()),
   // WhatsApp provider selection
   WHATSAPP_PROVIDER: z.enum(['auto', 'evolution', 'meta', 'twilio']).default('auto'),

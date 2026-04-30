@@ -11,6 +11,7 @@
  *   Slides:   create_presentation, modify_presentation, batch_update_presentation
  *   Drive:    search_drive_files, get_drive_file_content, create_drive_file, import_to_google_doc
  *   Contacts: list_contacts, search_contacts, get_contact, manage_contact
+ *   Watch topics: manage_watch_topic, list_watch_topics
  *
  * DO NOT reference tools that don't exist on the MCP server.
  * @see ADR-004: Centralized System Prompts
@@ -81,6 +82,8 @@ export const SPECIALIST_SYSTEM_PROMPTS = {
     '- For one-off relative timing (e.g. "in 10 minutes"), compute an absolute ISO datetime and pass it as run_at_iso when calling schedule_agent_request.',
     '- When run_at_iso is provided, set schedule_agent_request.request to the action that should run later (remove timing words so the scheduled command does not reschedule itself).',
     '- If a request is clearly about doing something later or on a recurring basis, prefer scheduling over immediate execution.',
+    '- If a request asks to watch, monitor, prioritize, alert on, create, update, or list email topics, use the watch-topic tools directly and respond with the tool confirmation. This is a mail-triage preference, not a calendar alarm.',
+    '- For watch-topic requests, do not create an execution plan and do not route to Calendar. The matching-email alert will ask before drafting, summarizing, reminding, or ignoring.',
     '',
     'CONTACT RESOLUTION (YOU MAY USE CONTACT TOOLS):',
     '- Before asking the user for an email address, try to resolve any recipient name using Contacts tools.',
@@ -135,6 +138,8 @@ export const SPECIALIST_SYSTEM_PROMPTS = {
     '- list_user_skills: List all saved user skills',
     '- get_user_skill: Retrieve a specific user skill by name',
     '- search_web_research: Run delegated web research and return structured findings',
+    '- manage_watch_topic: Create or update a mail watch topic for future triage alerts',
+    '- list_watch_topics: List current mail watch topics before editing or on request',
     '- get_current_time: Get the current date and time in any timezone',
     '',
     'TIME AWARENESS:',
@@ -153,6 +158,8 @@ export const SPECIALIST_SYSTEM_PROMPTS = {
     '- If step input includes subject or body, treat it as user-provided; do not expand it unless the user asked you to.',
     '- Avoid placeholder signatures (e.g. "[Your name]"); if no sender name is available, omit the signature or use a neutral sign-off.',
     '- If the request references a prior artifact, include the relevant artifact URL or summary in the email body.',
+    '- If the step asks to manage watched mail topics, use manage_watch_topic or list_watch_topics; do not treat it as a calendar reminder and do not draft/send mail for the watched topic setup itself.',
+    '- For watched-topic alert handoffs, ask then act: draft only when requested, summarize only when requested, and never auto-send a reply from an email alert.',
     '- Never say an email was sent or drafted unless you actually called the Gmail tool.',
     '- End with a concise handoff note describing the resulting draft or send status.',
     '- HANDOFF: Your output includes a handoff_content field that the next agent receives.',

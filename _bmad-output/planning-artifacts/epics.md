@@ -113,34 +113,60 @@ Implement the core Agent Controller service that orchestrates autonomous executi
 **FRs covered:** All FRs (provides backend execution layer for FRs 1-20, 25-29).
 **NFRs covered:** NFR2 (zero-training), NFR3 (PII filtering), NFR5 (shadow mode), NFR6 (emergency brake), NFR7 (audit logs), NFR8-10 (performance).
 
-### Epic 3: Personalized Triage & The "Brain" Setup
+### Epic 3: The "Brain" & Memory Layer
+Implement the layered Markdown-based memory architecture and the agent's internal reasoning loop.
+**FRs covered:** FR1-FR5.
 
-Define leadership "nudging" protocols and custom keywords to receive the first semantically categorized Morning Brief.
-
-### Story 3.0: UI Design System & App Shell Implementation
+### Story 3.1: Layered Memory Manager
 As a Developer,
-I want to set up the core UI framework, Design System, Application Shell, and foundational pages (Login & Home),
-So that the application has a secure, consistent, and "Executive Calm" entry point and layout.
+I want to implement the logic for loading, updating, and rotating the `.md` memory files,
+So that the agent has persistent, layered context for all interactions.
 
 **Acceptance Criteria:**
-**Given** the UX Design Specification (Executive Calm palette, Typography)
-**When** the frontend application is configured
-**Then** Material UI (or PrimeVue) is installed with a custom Theme Provider using the specified colors (Indigo #334155, Deep Teal #059669)
-**And** the "Executive Calm" Login page is implemented with Supabase Auth
-**And** the "Structured Hub" layout is implemented (Persistent Sidebar, Header, Main Content Area)
-**And** the layout is responsive (Collapsible sidebar on mobile)
-**And** basic routing is set up for Login, Dashboard, and Settings.
+**Given** a new user prompt
+**When** the agent starts processing
+**Then** it loads `persona.md` and `weekly-memory.md`
+**And** it loads `short-term.md` after the first task is initiated
+**And** it updates `task-state.json` in real-time.
 
-### Story 3.1: Natural Language Protocol Generation
-As an SME Leader,
-I want to describe my leadership style in natural language,
-So that the AI can generate a personalized `.md` protocol that governs its behavior (FR1, FR2).
+### Story 3.2: EOD Memory Aggregator
+As a Developer,
+I want to implement the EOD summary and rotation logic,
+So that short-term tasks are distilled into weekly memories and the daily log is reset.
 
 **Acceptance Criteria:**
-**Given** the Brain Setup interface
-**When** I describe my "nudging philosophy" (e.g., "Be polite but firm with Leo")
-**Then** the system generates a structured Markdown protocol
-**And** I can review and approve it before activation (FR3).
+**Given** the end of the day
+**When** the cron triggers the EOD process
+**Then** the agent summarizes `short-term.md`
+**And** appends it to `weekly-memory.md`
+**And** clears `short-term.md`.
+
+### Epic 7: Messaging Integration & Scheduling
+Implement the primary interaction layer via WhatsApp/Telegram and the JSON-based scheduling system.
+**FRs covered:** FR6-FR9.
+
+### Story 7.1: Messaging Channel Webhooks
+As a User,
+I want to interact with the agent via WhatsApp/Telegram,
+So that I can delegate tasks from the apps I use most.
+
+**Acceptance Criteria:**
+**Given** an inbound message from a messaging app
+**When** the webhook is triggered
+**Then** the message is routed to the Agent Controller
+**And** the agent responds via the same channel.
+
+### Story 7.2: JSON Schedule & Cron Service
+As a User,
+I want to schedule recurring tasks via natural language,
+So that the agent can execute them autonomously at the right time.
+
+**Acceptance Criteria:**
+**Given** a scheduling request (e.g., "Remind me every Monday...")
+**When** the agent parses the command
+**Then** it stores the schedule as JSON in the database
+**And** a Cron service triggers the agent execution at the specified interval.
+
 
 ### Story 3.2: Semantic Email Triage & Keyword Classification
 As a User,

@@ -463,6 +463,8 @@ function normalizeMessageRow(row: CommandMessageRow): CommandTimelineEntry {
     state,
     taskId: row.source_task_id ?? undefined,
     correlationId: row.correlation_id ?? undefined,
+    threadId: row.thread_id ?? (typeof metadata.thread_id === 'string' ? metadata.thread_id : undefined),
+    metadata,
     createdAt: row.created_at,
   };
 }
@@ -480,6 +482,8 @@ function upsertTimelineEntry(entry: CommandTimelineEntry): void {
     state: entry.state,
     taskId: entry.taskId,
     correlationId: entry.correlationId,
+    threadId: entry.threadId,
+    metadata: entry.metadata,
     createdAt: entry.createdAt,
     executionRun: entry.executionRun,
   });
@@ -872,6 +876,8 @@ export function useCommandCenter(): UseCommandCenterApi {
       created_at: entry.createdAt,
       task_id: entry.taskId,
       correlation_id: entry.correlationId,
+      thread_id: entry.threadId,
+      metadata: entry.metadata,
     }));
 
     const createdAt = new Date().toISOString();

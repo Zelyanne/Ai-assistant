@@ -40,6 +40,19 @@ function createMockRequest(overrides: Partial<Request>): Request {
 }
 
 describe('Telegram webhook handler', () => {
+  function createLinkService(overrides: Partial<TelegramWebhookDeps['linkService']> = {}): TelegramWebhookDeps['linkService'] {
+    return {
+      resolveTelegramIdentity: vi.fn().mockResolvedValue({
+        organization_id: '11111111-1111-1111-1111-111111111111',
+        user_id: '22222222-2222-4222-8222-222222222222',
+      }),
+      activateTelegramLink: vi.fn(),
+      sendTelegramText: vi.fn().mockResolvedValue(undefined),
+      createTelegramLinkToken: vi.fn(),
+      ...overrides,
+    } as unknown as TelegramWebhookDeps['linkService'];
+  }
+
   it('rejects invalid webhook signatures', async () => {
     const adapter = {
       validateWebhook: vi.fn(() => ({ valid: false, reason: 'telegram_secret_token_mismatch' })),
@@ -52,6 +65,7 @@ describe('Telegram webhook handler', () => {
       routerService: {
         enqueueInbound: vi.fn(),
       } as unknown as ChannelRouterService,
+      linkService: createLinkService(),
     };
 
     const req = createMockRequest({});
@@ -64,7 +78,7 @@ describe('Telegram webhook handler', () => {
     expect(deps.routerService.enqueueInbound).not.toHaveBeenCalled();
   });
 
-  it('enqueues inbound message when signature is valid', async () => {
+  it('enqueues linked inbound message when signature is valid', async () => {
     const adapter = {
       validateWebhook: vi.fn(() => ({ valid: true })),
     };
@@ -80,13 +94,13 @@ describe('Telegram webhook handler', () => {
           envelope: {},
         }),
       } as unknown as ChannelRouterService,
+      linkService: createLinkService(),
     };
 
     const req = createMockRequest({
       body: {
-        organization_id: '11111111-1111-1111-1111-111111111111',
-        user_id: '22222222-2222-4222-8222-222222222222',
         update_id: 999,
+        message: { message_id: 1, text: 'hello', chat: { id: 123 } },
       },
     });
     const res = createMockResponse();
@@ -124,12 +138,13 @@ describe('Telegram webhook handler', () => {
           envelope: {},
         }),
       } as unknown as ChannelRouterService,
+      linkService: createLinkService(),
     };
 
     const req = createMockRequest({
       body: {
-        organization_id: '11111111-1111-1111-1111-111111111111',
         update_id: 999,
+        message: { message_id: 1, text: 'hello', chat: { id: 123 } },
       },
       query: {
         domain_action: 'relancing.update',
@@ -145,5 +160,78 @@ describe('Telegram webhook handler', () => {
         domain_action: 'relancing.update',
       }),
     );
+  });
+
+  it('activates a Telegram link when receiving /start token', async () => {
+    const adapter = {
+      validateWebhook: vi.fn(() => ({ valid: true })),
+    };
+    const linkService = createLinkService({
+      activateTelegramLink: vi.fn().mockResolvedValue({
+        ok: true,
+        chatId: '123',
+        link: {},
+        message: 'Telegram is connected.',
+      }),
+    });
+
+    const deps: TelegramWebhookDeps = {
+      registry: {
+        get: vi.fn(() => adapter),
+      } as unknown as ChannelAdapterRegistry,
+      routerService: {
+        enqueueInbound: vi.fn(),
+      } as unknown as ChannelRouterService,
+      linkService,
+    };
+
+    const req = createMockRequest({
+      body: {
+        update_id: 999,
+        message: { message_id: 1, text: '/start abc123', chat: { id: 123 } },
+      },
+    });
+    const res = createMockResponse();
+
+    await handleTelegramWebhook(req, res as unknown as Response, deps);
+
+    expect(res.statusCode).toBe(202);
+    expect(linkService.activateTelegramLink).toHaveBeenCalledWith('abc123', req.body);
+    expect(linkService.sendTelegramText).toHaveBeenCalledWith('123', 'Telegram is connected.');
+    expect(deps.routerService.enqueueInbound).not.toHaveBeenCalled();
+  });
+
+  it('does not enqueue unlinked Telegram chats', async () => {
+    const adapter = {
+      validateWebhook: vi.fn(() => ({ valid: true })),
+    };
+    const linkService = createLinkService({
+      resolveTelegramIdentity: vi.fn().mockResolvedValue(null),
+    });
+
+    const deps: TelegramWebhookDeps = {
+      registry: {
+        get: vi.fn(() => adapter),
+      } as unknown as ChannelAdapterRegistry,
+      routerService: {
+        enqueueInbound: vi.fn(),
+      } as unknown as ChannelRouterService,
+      linkService,
+    };
+
+    const req = createMockRequest({
+      body: {
+        update_id: 999,
+        message: { message_id: 1, text: 'hello', chat: { id: 123 } },
+      },
+    });
+    const res = createMockResponse();
+
+    await handleTelegramWebhook(req, res as unknown as Response, deps);
+
+    expect(res.statusCode).toBe(202);
+    expect(res.body).toEqual(expect.objectContaining({ ignored: true, reason: 'telegram_chat_not_linked' }));
+    expect(linkService.sendTelegramText).toHaveBeenCalledWith('123', expect.stringContaining('connect Telegram'));
+    expect(deps.routerService.enqueueInbound).not.toHaveBeenCalled();
   });
 });

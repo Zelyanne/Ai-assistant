@@ -17,6 +17,7 @@ interface MockThread {
 interface MockTopic {
   topic: string;
   priority: string;
+  keywords_array?: string[];
 }
 
 interface SupabaseMockState {
@@ -31,6 +32,13 @@ const mocks = vi.hoisted(() => ({
   generateText: vi.fn(),
   from: vi.fn(),
   flush: vi.fn().mockResolvedValue(undefined),
+  alertForMatchedThread: vi.fn().mockResolvedValue({
+    alerted: true,
+    webMessageCreated: true,
+    telegramTaskQueued: false,
+    reason: null,
+    alertText: 'alert',
+  }),
   createStep: vi.fn((step_name: string, message: string, extra?: Record<string, unknown>) => ({
     step_name,
     message,
@@ -66,6 +74,12 @@ vi.mock('../services/AuditLogger.js', () => ({
   AuditLogger: {
     flush: mocks.flush,
     createStep: mocks.createStep,
+  },
+}));
+
+vi.mock('../services/TopicWatchAlertService.js', () => ({
+  topicWatchAlertService: {
+    alertForMatchedThread: mocks.alertForMatchedThread,
   },
 }));
 
@@ -201,7 +215,7 @@ describe('EmailTriageProcessor', () => {
         summary_json: null,
       },
     ];
-    state.topics = [{ topic: 'Customer Escalation', priority: 'High' }];
+    state.topics = [{ topic: 'Customer Escalation', priority: 'High', keywords_array: ['urgent customer', 'SLA'] }];
 
     mocks.generateStructured.mockResolvedValueOnce({
       data: {
@@ -255,6 +269,7 @@ describe('EmailTriageProcessor', () => {
     const prompt = String(mocks.generateStructured.mock.calls[0][0]);
     expect(prompt).toContain('THREAD_ID: thread-1');
     expect(prompt).toContain('THREAD_ID: thread-2');
+    expect(prompt).toContain('Keywords: urgent customer, SLA');
     expect(prompt).toContain('RETURN ONLY A JSON OBJECT');
     expect(mocks.generateStructured.mock.calls[0][2]).toMatchObject({
       structuredOutput: {

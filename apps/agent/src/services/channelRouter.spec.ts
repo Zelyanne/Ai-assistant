@@ -154,6 +154,52 @@ describe('ChannelRouterService', () => {
     expect(flushSpy).toHaveBeenCalledOnce();
   });
 
+  it('carries prior topic-watch alert context into inbound assistant commands', async () => {
+    const { mockSupabase, chain, state } = createSupabaseMock();
+    const registry = new ChannelAdapterRegistry([createAdapterStub()]);
+    vi.spyOn(AuditLogger, 'flush').mockResolvedValue(undefined);
+
+    state.maybeSingleResponses = [
+      {
+        data: {
+          payload: {
+            channel: 'telegram',
+            thread_id: 'thread-1',
+            message_text: 'I found a new APSEC-related email. Want me to draft a reply?',
+            correlation_id: 'topic-watch-corr',
+            channel_metadata: {
+              alert_type: 'topic_watch',
+              thread_id: 'gmail-thread-1',
+              topics: ['APSEC'],
+            },
+          },
+        },
+        error: null,
+      },
+      { data: null, error: null },
+    ];
+
+    const service = new ChannelRouterService({
+      registry,
+      supabaseClient: mockSupabase as unknown as typeof import('./supabase.js').supabase,
+    });
+
+    await service.enqueueInbound('telegram', { ignored: true });
+
+    expect(chain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          conversation_context: [
+            expect.objectContaining({
+              thread_id: 'gmail-thread-1',
+              correlation_id: 'topic-watch-corr',
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
   it('returns existing task when inbound message is a duplicate', async () => {
     const { mockSupabase, chain, state } = createSupabaseMock();
     const registry = new ChannelAdapterRegistry([createAdapterStub()]);

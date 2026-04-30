@@ -19,6 +19,7 @@ import {
   type TokenAwareBatchInput,
 } from '../services/emailBatching.js';
 import { isStructuredOutputError } from '../services/llm/structuredOutput.js';
+import { topicWatchAlertService } from '../services/TopicWatchAlertService.js';
 
 const DEFAULT_BATCH_INPUT_TOKENS = 13_000;
 const MIN_BATCH_INPUT_TOKENS = 12_000;
@@ -53,6 +54,7 @@ interface UnclassifiedThread {
 interface WatchTopic {
   topic: string;
   priority: string;
+  keywords_array?: string[] | null;
 }
 
 interface TriageBatchPayload {
@@ -141,7 +143,7 @@ export class EmailTriageProcessor extends BaseProcessor {
 
     let topicQuery = supabase
       .from('watch_topics')
-      .select('topic, priority')
+      .select('topic, priority, keywords_array')
       .eq('organization_id', organization_id);
 
     if (user_id) {
@@ -380,6 +382,7 @@ export class EmailTriageProcessor extends BaseProcessor {
           item.payload.thread.subject,
           classificationWithRecoveredPii,
         );
+        await this.alertForTopicMatches(task, item.payload.thread, classificationWithRecoveredPii);
 
         processedCount += 1;
       } catch (error) {
@@ -572,6 +575,7 @@ export class EmailTriageProcessor extends BaseProcessor {
           item.payload.thread.subject,
           classificationWithRecoveredPii,
         );
+        await this.alertForTopicMatches(task, item.payload.thread, classificationWithRecoveredPii);
 
         processedCount += 1;
       } catch (error) {
@@ -804,6 +808,59 @@ export class EmailTriageProcessor extends BaseProcessor {
     }
   }
 
+  private async alertForTopicMatches(
+    task: Task,
+    thread: UnclassifiedThread,
+    classification: EmailTriageClassification,
+  ): Promise<void> {
+    if (!classification.is_highlighted || classification.matches.length === 0) {
+      return;
+    }
+
+    try {
+      await topicWatchAlertService.alertForMatchedThread({
+        organizationId: task.organization_id,
+        userId: task.user_id ?? null,
+        sourceTaskId: task.id ?? null,
+        thread,
+        classification,
+      });
+    } catch (error) {
+      console.error(
+        `[EmailTriageProcessor] Failed to emit topic-watch alert for thread ${thread.id}:`,
+        error,
+      );
+
+      try {
+        await AuditLogger.flush(
+          task.organization_id,
+          task.id || null,
+          task.user_id || 'agent-controller',
+          'topic_watch_alert_failed',
+          [
+            AuditLogger.createStep(
+              'Topic Watch Alert',
+              'Failed to emit matched-topic alert after successful triage; triage result was preserved.',
+              {
+                input_summary: `Thread: ${thread.id}`,
+                output_summary: this.formatErrorForLog(error),
+              },
+            ),
+          ],
+          [
+            {
+              source_type: 'email',
+              source_id: thread.id,
+              description: 'Topic watch alert delivery failed',
+            },
+          ],
+        );
+      } catch (auditError) {
+        console.error('Failed to log topic-watch alert failure:', auditError);
+      }
+    }
+  }
+
   private async logSnippetExtractionSummary(
     task: Task,
     threadIds: string[],
@@ -892,7 +949,13 @@ export class EmailTriageProcessor extends BaseProcessor {
     topics: WatchTopic[],
   ): string {
     const topicsBlock = topics
-      .map((topic) => `- ${topic.topic} (Priority: ${topic.priority})`)
+      .map((topic) => {
+        const keywords = Array.isArray(topic.keywords_array)
+          ? topic.keywords_array.filter((keyword) => typeof keyword === 'string' && keyword.trim().length > 0)
+          : [];
+        const keywordText = keywords.length > 0 ? `; Keywords: ${keywords.join(', ')}` : '';
+        return `- ${topic.topic} (Priority: ${topic.priority}${keywordText})`;
+      })
       .join('\n');
 
     const emailsBlock = batch.items

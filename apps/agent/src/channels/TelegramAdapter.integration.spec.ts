@@ -112,8 +112,6 @@ describe('Telegram Integration', () => {
         chat: { id: 12345 },
         from: { id: 999, username: 'sandbox-user' },
       },
-      organization_id: '11111111-1111-1111-1111-111111111111',
-      user_id: '22222222-2222-4222-8222-222222222222',
     };
 
     const req = {
@@ -138,6 +136,15 @@ describe('Telegram Integration', () => {
     await handleTelegramWebhook(req, res as unknown as Response, {
       registry,
       routerService,
+      linkService: {
+        resolveTelegramIdentity: vi.fn().mockResolvedValue({
+          organization_id: '11111111-1111-1111-1111-111111111111',
+          user_id: '22222222-2222-4222-8222-222222222222',
+        }),
+        activateTelegramLink: vi.fn(),
+        sendTelegramText: vi.fn().mockResolvedValue(undefined),
+        createTelegramLinkToken: vi.fn(),
+      } as any,
     });
 
     expect(res.statusCode).toBe(202);

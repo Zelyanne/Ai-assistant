@@ -173,4 +173,4 @@ Add a dedicated Social section in Settings for Telegram and WhatsApp setup guida
 - Adversarial review completed
 - Findings: 12 total, 7 fixed, 5 skipped
 - Resolution approach: auto-fix
-- Follow-up: trusted Command Center, Telegram, and WhatsApp commands now bypass agency-tier lookup and use in-chat recap confirmation for high-risk requests
+- Follow-up: trusted Command Center, Telegram, and WhatsApp commands now bypass agency-tier lookup; trusted email-send requests no longer pause for recap confirmation, while other high-risk chat sends still do

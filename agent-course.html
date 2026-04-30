@@ -1,0 +1,1492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Agent Architecture — Interactive Course</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;700&family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-warm: #FDFCF8;
+      --bg-warm-alt: #F7F5F0;
+      --bg-code: #1E1E2E;
+      --text-primary: #2D2A26;
+      --text-secondary: #5C5552;
+      --text-muted: #8B827D;
+      --accent: #E85D3F;
+      --accent-light: #F59F8A;
+      --accent-bg: #FEF0ED;
+      --success: #4A7C59;
+      --warning: #C9A95A;
+      --border: #E6E2DD;
+      --shadow: 0 4px 24px rgba(92, 85, 82, 0.08);
+      --shadow-sm: 0 2px 8px rgba(92, 85, 82, 0.06);
+      --radius: 12px;
+      --radius-sm: 8px;
+      --space-2: 0.5rem;
+      --space-3: 0.75rem;
+      --space-4: 1rem;
+      --space-5: 1.25rem;
+      --space-6: 1.5rem;
+      --space-8: 2rem;
+      --space-10: 2.5rem;
+      --space-12: 3rem;
+      --font-display: 'Bricolage Grotesque', sans-serif;
+      --font-body: 'DM Sans', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+      --syntax-comment: #6C7086;
+      --syntax-keyword: #CBA6F7;
+      --syntax-string: #A6E3A1;
+      --syntax-func: #89B4FA;
+      --syntax-type: #F9E2AF;
+      --syntax-var: #F5C2E7;
+      --syntax-number: #FFAB70;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: var(--font-body);
+      background: var(--bg-warm);
+      color: var(--text-primary);
+      line-height: 1.7;
+      overflow-x: hidden;
+    }
+
+    /* Progress Bar */
+    .progress-container {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 4px;
+      background: var(--border);
+      z-index: 1000;
+    }
+
+    .progress-bar {
+      height: 100%;
+      background: var(--accent);
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+
+    /* Navigation */
+    .nav {
+      position: fixed;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(253, 252, 248, 0.95);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--border);
+      border-radius: 100px;
+      padding: var(--space-3) var(--space-5);
+      display: flex;
+      gap: var(--space-4);
+      z-index: 999;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .nav-link {
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      text-decoration: none;
+      padding: var(--space-2) var(--space-4);
+      border-radius: 100px;
+      transition: all 0.2s ease;
+    }
+
+    .nav-link:hover,
+    .nav-link.active {
+      background: var(--accent-bg);
+      color: var(--accent);
+    }
+
+    /* Modules */
+    .module {
+      min-height: 100dvh;
+      min-height: 100vh;
+      scroll-snap-align: start;
+      padding: var(--space-12) var(--space-6);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .module:nth-child(odd) {
+      background: var(--bg-warm);
+    }
+
+    .module:nth-child(even) {
+      background: var(--bg-warm-alt);
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    /* Typography */
+    h1 {
+      font-family: var(--font-display);
+      font-size: clamp(2.5rem, 5vw, 4rem);
+      font-weight: 700;
+      line-height: 1.1;
+      margin-bottom: var(--space-6);
+      color: var(--text-primary);
+    }
+
+    h2 {
+      font-family: var(--font-display);
+      font-size: clamp(1.75rem, 3vw, 2.5rem);
+      font-weight: 600;
+      margin-bottom: var(--space-6);
+      color: var(--text-primary);
+    }
+
+    h3 {
+      font-family: var(--font-display);
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin-bottom: var(--space-4);
+      color: var(--text-primary);
+    }
+
+    p {
+      font-size: 1.125rem;
+      color: var(--text-secondary);
+      margin-bottom: var(--space-4);
+      max-width: 65ch;
+    }
+
+    .module-subtitle {
+      font-size: 1.25rem;
+      color: var(--text-muted);
+      margin-bottom: var(--space-8);
+    }
+
+    /* Tooltip */
+    .tooltip-term {
+      border-bottom: 2px dashed var(--accent);
+      cursor: pointer;
+      color: var(--text-primary);
+      font-weight: 500;
+      transition: all 0.2s ease;
+    }
+
+    .tooltip-term:hover {
+      background: var(--accent-bg);
+    }
+
+    .tooltip {
+      position: fixed;
+      background: var(--text-primary);
+      color: var(--bg-warm);
+      padding: var(--space-3) var(--space-4);
+      border-radius: var(--radius-sm);
+      font-size: 0.875rem;
+      max-width: 320px;
+      z-index: 10000;
+      box-shadow: var(--shadow);
+      pointer-events: none;
+      opacity: 0;
+      transform: translateY(4px);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+
+    .tooltip.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* Code Translation Block */
+    .translation-block {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--space-4);
+      background: var(--bg-warm);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+      margin: var(--space-8) 0;
+    }
+
+    .code-panel {
+      background: var(--bg-code);
+      padding: var(--space-5);
+      overflow-x: hidden;
+    }
+
+    .code-panel pre {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      line-height: 1.6;
+      color: #f8f8f2;
+    }
+
+    .english-panel {
+      padding: var(--space-5);
+      background: var(--bg-warm);
+      border-left: 1px solid var(--border);
+    }
+
+    .english-line {
+      padding: var(--space-2) 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+    }
+
+    .english-line:last-child {
+      border-bottom: none;
+    }
+
+    /* Syntax Highlighting */
+    .kw { color: var(--syntax-keyword); }
+    .str { color: var(--syntax-string); }
+    .func { color: var(--syntax-func); }
+    .type { color: var(--syntax-type); }
+    .var { color: var(--syntax-var); }
+    .num { color: var(--syntax-number); }
+    .comment { color: var(--syntax-comment); font-style: italic; }
+
+    /* Cards */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: var(--space-5);
+      margin: var(--space-8) 0;
+    }
+
+    .card {
+      background: var(--bg-warm);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: var(--space-6);
+      box-shadow: var(--shadow-sm);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+      box-shadow: var(--shadow);
+    }
+
+    .card-icon {
+      font-size: 2rem;
+      margin-bottom: var(--space-4);
+    }
+
+    .card-title {
+      font-family: var(--font-display);
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin-bottom: var(--space-3);
+      color: var(--text-primary);
+    }
+
+    .card-desc {
+      font-size: 0.95rem;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    /* Callout Box */
+    .callout {
+      background: var(--accent-bg);
+      border-left: 4px solid var(--accent);
+      padding: var(--space-5) var(--space-6);
+      border-radius: var(--radius-sm);
+      margin: var(--space-8) 0;
+    }
+
+    .callout-title {
+      font-family: var(--font-display);
+      font-weight: 600;
+      color: var(--accent);
+      margin-bottom: var(--space-3);
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+    }
+
+    .callout p {
+      margin-bottom: 0;
+      font-size: 1rem;
+    }
+
+    /* Flow Diagram */
+    .flow-diagram {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: var(--space-4);
+      margin: var(--space-8) 0;
+      padding: var(--space-8);
+      background: var(--bg-warm);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .flow-step {
+      background: var(--bg-warm-alt);
+      border: 2px solid var(--border);
+      border-radius: var(--radius);
+      padding: var(--space-4) var(--space-6);
+      text-align: center;
+      min-width: 200px;
+      transition: all 0.3s ease;
+    }
+
+    .flow-step.active {
+      border-color: var(--accent);
+      background: var(--accent-bg);
+      transform: scale(1.05);
+    }
+
+    .flow-step-title {
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: var(--space-2);
+    }
+
+    .flow-step-desc {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    .flow-arrow {
+      font-size: 1.5rem;
+      color: var(--accent);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* Quiz */
+    .quiz-container {
+      background: var(--bg-warm);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: var(--space-8);
+      margin: var(--space-8) 0;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .quiz-question {
+      font-family: var(--font-display);
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin-bottom: var(--space-5);
+      color: var(--text-primary);
+    }
+
+    .quiz-options {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-3);
+    }
+
+    .quiz-option {
+      padding: var(--space-4) var(--space-5);
+      border: 2px solid var(--border);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-size: 1rem;
+      color: var(--text-secondary);
+    }
+
+    .quiz-option:hover {
+      border-color: var(--accent);
+      background: var(--accent-bg);
+    }
+
+    .quiz-option.selected {
+      border-color: var(--accent);
+      background: var(--accent-bg);
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+
+    .quiz-option.correct {
+      border-color: var(--success);
+      background: #E8F5E9;
+      color: var(--success);
+    }
+
+    .quiz-option.incorrect {
+      border-color: var(--warning);
+      background: #FFF8E1;
+      color: #B78900;
+    }
+
+    .quiz-feedback {
+      margin-top: var(--space-4);
+      padding: var(--space-4);
+      border-radius: var(--radius-sm);
+      font-size: 0.95rem;
+      display: none;
+    }
+
+    .quiz-feedback.visible {
+      display: block;
+    }
+
+    .quiz-feedback.correct {
+      background: #E8F5E9;
+      color: var(--success);
+    }
+
+    .quiz-feedback.incorrect {
+      background: #FFF8E1;
+      color: #B78900;
+    }
+
+    /* Architecture Diagram */
+    .arch-diagram {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: var(--space-4);
+      margin: var(--space-8) 0;
+      padding: var(--space-6);
+      background: var(--bg-warm);
+      border-radius: var(--radius);
+    }
+
+    .arch-layer {
+      text-align: center;
+      padding: var(--space-5);
+      background: var(--bg-warm-alt);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+    }
+
+    .arch-layer-title {
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: var(--space-3);
+    }
+
+    .arch-layer-items {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      line-height: 1.8;
+    }
+
+    /* Badge */
+    .badge {
+      display: inline-block;
+      padding: var(--space-2) var(--space-3);
+      background: var(--accent-bg);
+      color: var(--accent);
+      border-radius: 100px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: var(--space-4);
+    }
+
+    /* Step Cards */
+    .step-cards {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-4);
+      margin: var(--space-8) 0;
+    }
+
+    .step-card {
+      display: flex;
+      gap: var(--space-4);
+      padding: var(--space-5);
+      background: var(--bg-warm);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      align-items: flex-start;
+    }
+
+    .step-number {
+      width: 32px;
+      height: 32px;
+      background: var(--accent);
+      color: var(--bg-warm);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 1rem;
+      flex-shrink: 0;
+    }
+
+    .step-content h4 {
+      font-family: var(--font-display);
+      font-weight: 600;
+      margin-bottom: var(--space-2);
+      color: var(--text-primary);
+    }
+
+    .step-content p {
+      font-size: 0.95rem;
+      margin-bottom: 0;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .translation-block {
+        grid-template-columns: 1fr;
+      }
+
+      .english-panel {
+        border-left: none;
+        border-top: 1px solid var(--border);
+      }
+
+      .arch-diagram {
+        grid-template-columns: 1fr;
+      }
+
+      .nav {
+        width: 90%;
+        overflow-x: auto;
+        justify-content: flex-start;
+      }
+
+      .nav-link {
+        white-space: nowrap;
+      }
+    }
+
+    /* Hero Section */
+    .hero {
+      text-align: center;
+      padding: var(--space-12) var(--space-6);
+    }
+
+    .hero-visual {
+      width: 100%;
+      max-width: 600px;
+      height: 300px;
+      margin: var(--space-8) auto;
+      background: linear-gradient(135deg, var(--accent-bg) 0%, var(--bg-warm-alt) 100%);
+      border-radius: var(--radius);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero-animation {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+    }
+
+    .hero-circle {
+      position: absolute;
+      border-radius: 50%;
+      background: var(--accent);
+      opacity: 0.1;
+      animation: float 6s infinite ease-in-out;
+    }
+
+    .hero-circle:nth-child(1) {
+      width: 100px;
+      height: 100px;
+      top: 20%;
+      left: 10%;
+      animation-delay: 0s;
+    }
+
+    .hero-circle:nth-child(2) {
+      width: 60px;
+      height: 60px;
+      top: 60%;
+      right: 15%;
+      animation-delay: 2s;
+    }
+
+    .hero-circle:nth-child(3) {
+      width: 80px;
+      height: 80px;
+      bottom: 15%;
+      left: 25%;
+      animation-delay: 4s;
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0) scale(1); }
+      50% { transform: translateY(-20px) scale(1.1); }
+    }
+
+    .hero-icon {
+      font-size: 5rem;
+      z-index: 1;
+    }
+  </style>
+</head>
+<body>
+  <div class="progress-container">
+    <div class="progress-bar" id="progressBar"></div>
+  </div>
+
+  <nav class="nav">
+    <a href="#module1" class="nav-link">Overview</a>
+    <a href="#module2" class="nav-link">Actors</a>
+    <a href="#module3" class="nav-link">Workflow</a>
+    <a href="#module4" class="nav-link">Security</a>
+    <a href="#module5" class="nav-link">Tools</a>
+    <a href="#module6" class="nav-link">Debugging</a>
+  </nav>
+
+  <div class="tooltip" id="tooltip"></div>
+
+  <!-- Module 1: Overview -->
+  <section id="module1" class="module">
+    <div class="container">
+      <div class="hero">
+        <span class="badge">Module 1</span>
+        <h1>What Does This Agent Do?</h1>
+        <p class="module-subtitle">Think of it as an autopilot for your digital workspace — it watches for tasks and executes them automatically.</p>
+        
+        <div class="hero-visual">
+          <div class="hero-animation">
+            <div class="hero-circle"></div>
+            <div class="hero-circle"></div>
+            <div class="hero-circle"></div>
+          </div>
+          <div class="hero-icon">🤖</div>
+        </div>
+      </div>
+
+      <div class="callout">
+        <div class="callout-title">
+          <span>💡</span>
+          <span>Aha! Moment</span>
+        </div>
+        <p>This agent doesn't "think" on its own — it waits for tasks to appear in a database, then processes them through a predefined workflow. It's like a factory assembly line, not a brainstorming session.</p>
+      </div>
+
+      <h3>Real Example: Email Triage</h3>
+      <p>Imagine you receive 100 emails overnight. The agent automatically:</p>
+      
+      <div class="step-cards">
+        <div class="step-card">
+          <div class="step-number">1</div>
+          <div class="step-content">
+            <h4>Reads each email</h4>
+            <p>Fetches subject, sender, and content from your inbox</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-number">2</div>
+          <div class="step-content">
+            <h4>Matches against your topics</h4>
+            <p>Checks if email relates to "Client Projects", "Invoices", etc.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-number">3</div>
+          <div class="step-content">
+            <h4>Assigns priority scores</h4>
+            <p>Urgent client requests get 80%, newsletters get 10%</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-number">4</div>
+          <div class="step-content">
+            <h4>Queues follow-up actions</h4>
+            <p>High-priority emails get auto-summarized for your morning brief</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="translation-block">
+        <div class="code-panel">
+          <pre><span class="kw">const</span> <span class="var">taskChannel</span> = <span class="var">supabase</span>
+  .<span class="func">channel</span>(<span class="str">'public:tasks'</span>)
+  .<span class="func">on</span>(
+    <span class="str">'postgres_changes'</span>,
+    {
+      <span class="var">event</span>: <span class="str">'INSERT'</span>,
+      <span class="var">schema</span>: <span class="str">'public'</span>,
+      <span class="var">table</span>: <span class="str">'tasks'</span>,
+      <span class="var">filter</span>: <span class="str">'status=eq.queued'</span>
+    },
+    <span class="kw">async</span> (<span class="var">payload</span>) => {
+      <span class="kw">const</span> <span class="var">task</span> = <span class="var">payload</span>.<span class="var">new</span> <span class="kw">as</span> <span class="type">Task</span>;
+      <span class="kw">await</span> <span class="func">processQueuedTask</span>(<span class="var">task</span>);
+    }
+  )
+  .<span class="func">subscribe</span>();</pre>
+        </div>
+        <div class="english-panel">
+          <div class="english-line"><strong>Line 1-2:</strong> Create a realtime connection to the database</div>
+          <div class="english-line"><strong>Line 4-8:</strong> Listen for new rows inserted into the "tasks" table</div>
+          <div class="english-line"><strong>Line 9:</strong> Only trigger when task status equals "queued"</div>
+          <div class="english-line"><strong>Line 11-12:</strong> When a new task appears, extract it from the payload</div>
+          <div class="english-line"><strong>Line 13:</strong> Hand off the task to the processing function</div>
+        </div>
+      </div>
+
+      <div class="quiz-container">
+        <div class="quiz-question">A task is stuck in "queued" status and never processes. Where would you look first?</div>
+        <div class="quiz-options">
+          <div class="quiz-option" data-correct="true">Check if the realtime subscription is connected (look for "[Realtime] Subscription status" in logs)</div>
+          <div class="quiz-option" data-correct="false">Rewrite the email triage processor logic</div>
+          <div class="quiz-option" data-correct="false">Increase the LLM token limit</div>
+          <div class="quiz-option" data-correct="false">Add more watch topics to the database</div>
+        </div>
+        <div class="quiz-feedback"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Module 2: Meet the Actors -->
+  <section id="module2" class="module">
+    <div class="container">
+      <span class="badge">Module 2</span>
+      <h2>Meet the Cast of Characters</h2>
+      <p class="module-subtitle">Six key components work together to process tasks. Each has a single, well-defined responsibility.</p>
+
+      <div class="cards">
+        <div class="card">
+          <div class="card-icon">📬</div>
+          <div class="card-title">Task Subscriber</div>
+          <div class="card-desc">The listener. Watches the database for new queued tasks and kicks off the processing workflow. Lives in <code>taskSubscriber.ts</code>.</div>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">🎯</div>
+          <div class="card-title">LangGraph State Machine</div>
+          <div class="card-desc">The conductor. Orchestrates the flow from task intake through execution. Manages state, handles errors, decides which node runs next. Found in <code>graph.ts</code>.</div>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">🔧</div>
+          <div class="card-title">Processors</div>
+          <div class="card-desc">The specialists. Each processor handles one domain action (email.triage, calendar.create, etc.). They contain the actual business logic.</div>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">🛡️</div>
+          <div class="card-title">PerimeterGuard</div>
+          <div class="card-desc">The security guard. Redacts PII (personally identifiable information) before it reaches the LLM, enforces agency tier boundaries.</div>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">🔌</div>
+          <div class="card-title">MCP Service</div>
+          <div class="card-desc">The tool connector. Manages connections to Google Workspace APIs (Gmail, Calendar, Drive) via the Model Context Protocol.</div>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">📝</div>
+          <div class="card-title">AuditLogger</div>
+          <div class="card-desc">The recorder. Writes every action to an audit trail for debugging and compliance. Creates the "black box" flight recorder.</div>
+        </div>
+      </div>
+
+      <div class="callout">
+        <div class="callout-title">
+          <span>🎭</span>
+          <span>Metaphor Time</span>
+        </div>
+        <p>Think of this like a hospital emergency room: <strong>Task Subscriber</strong> is the triage nurse who admits patients, <strong>LangGraph</strong> is the charge nurse coordinating care, <strong>Processors</strong> are specialist doctors (cardiologist, neurologist), <strong>PerimeterGuard</strong> is infection control, <strong>MCP</strong> is the lab equipment, and <strong>AuditLogger</strong> is the medical records system.</p>
+      </div>
+
+      <h3>Agency Tiers Explained</h3>
+      <p>Not all tasks are created equal. The system uses three tiers to control autonomy:</p>
+
+      <div class="step-cards">
+        <div class="step-card">
+          <div class="step-number" style="background: var(--success);">P</div>
+          <div class="step-content">
+            <h4>Public Tier</h4>
+            <p>Low-risk actions the agent can execute autonomously. Example: summarizing a newsletter, categorizing low-priority emails.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-number" style="background: var(--warning);">C</div>
+          <div class="step-content">
+            <h4>Controlled Tier</h4>
+            <p>Medium-risk actions requiring human approval. Example: drafting emails on sensitive topics, creating calendar events with external parties.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-number" style="background: var(--accent);">R</div>
+          <div class="step-content">
+            <h4>Restricted Tier</h4>
+            <p>High-risk actions always escalated to humans. Example: sending emails about legal matters, accessing financial records.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="quiz-container">
+        <div class="quiz-question">You're adding a new processor for "invoice.payment". Which agency tier should it default to?</div>
+        <div class="quiz-options">
+          <div class="quiz-option" data-correct="false">Public — payments are routine</div>
+          <div class="quiz-option" data-correct="true">Controlled — financial actions need human approval</div>
+          <div class="quiz-option" data-correct="false">Restricted — all payments are high-risk</div>
+          <div class="quiz-option" data-correct="false">It doesn't matter, the LLM will decide</div>
+        </div>
+        <div class="quiz-feedback"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Module 3: How the Pieces Talk -->
+  <section id="module3" class="module">
+    <div class="container">
+      <span class="badge">Module 3</span>
+      <h2>How the Pieces Talk</h2>
+      <p class="module-subtitle">Data flows through a state machine. Each node transforms the state and passes it to the next node.</p>
+
+      <div class="flow-diagram" id="flowDiagram">
+        <div class="flow-step" data-step="1">
+          <div class="flow-step-title">Task Queued</div>
+          <div class="flow-step-desc">Row inserted in Supabase</div>
+        </div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-step" data-step="2">
+          <div class="flow-step-title">Realtime Trigger</div>
+          <div class="flow-step-desc">taskSubscriber detects INSERT</div>
+        </div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-step" data-step="3">
+          <div class="flow-step-title">Initialize Node</div>
+          <div class="flow-step-desc">Update status to "processing"</div>
+        </div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-step" data-step="4">
+          <div class="flow-step-title">Perimeter Check</div>
+          <div class="flow-step-desc">Redact PII, check agency tier</div>
+        </div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-step" data-step="5">
+          <div class="flow-step-title">Execute Processor</div>
+          <div class="flow-step-desc">Run domain-specific logic</div>
+        </div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-step" data-step="6">
+          <div class="flow-step-title">Finalize</div>
+          <div class="flow-step-desc">Update status to "done" or "error"</div>
+        </div>
+      </div>
+
+      <div class="translation-block">
+        <div class="code-panel">
+          <pre><span class="kw">export const</span> <span class="var">AgentStateAnnotation</span> = <span class="var">Annotation</span>.<span class="func">Root</span>({
+  <span class="var">task</span>: <span class="var">Annotation</span>&lt;<span class="type">Task</span>&gt;({
+    <span class="var">reducer</span>: (<span class="var">x</span>, <span class="var">y</span>) => <span class="var">y</span> ?? <span class="var">x</span>,
+  }),
+  <span class="var">error</span>: <span class="var">Annotation</span>&lt;<span class="type">string</span>&gt;({
+    <span class="var">reducer</span>: (<span class="var">x</span>, <span class="var">y</span>) => <span class="var">y</span> ?? <span class="var">x</span>,
+  }),
+  <span class="var">trace</span>: <span class="var">Annotation</span>&lt;<span class="type">ReasoningStep</span>[]&gt;({
+    <span class="var">reducer</span>: (<span class="var">x</span>, <span class="var">y</span>) => (<span class="var">x</span> || []).<span class="func">concat</span>(<span class="var">y</span> || []),
+    <span class="var">default</span>: () => [],
+  }),
+  <span class="var">planner_intent</span>: <span class="var">Annotation</span>&lt;<span class="type">AssistantCommandIntent</span> | <span class="kw">null</span>&gt;({
+    <span class="var">reducer</span>: (<span class="var">_x</span>, <span class="var">y</span>) => <span class="var">y</span> ?? <span class="kw">null</span>,
+  }),
+});</pre>
+        </div>
+        <div class="english-panel">
+          <div class="english-line"><strong>Line 1:</strong> Define the state shape for the entire workflow</div>
+          <div class="english-line"><strong>Line 2-5:</strong> "task" holds the current task being processed</div>
+          <div class="english-line"><strong>Line 6-8:</strong> "error" stores any error message (overrides previous)</div>
+          <div class="english-line"><strong>Line 9-12:</strong> "trace" accumulates all reasoning steps (appends, never replaces)</div>
+          <div class="english-line"><strong>Line 13-16:</strong> "planner_intent" stores the AI's planned action</div>
+        </div>
+      </div>
+
+      <div class="callout">
+        <div class="callout-title">
+          <span>🧠</span>
+          <span>What's a State Machine?</span>
+        </div>
+        <p>A <strong>state machine</strong> is a system that can be in one of several states at a time. It transitions between states based on rules. Think of a traffic light: red → green → yellow → red. In this agent, the state is the <code>AgentState</code> object, and each node (initialize, perimeter check, processor) transforms that state.</p>
+      </div>
+
+      <h3>The Graph Structure</h3>
+      
+      <div class="arch-diagram">
+        <div class="arch-layer">
+          <div class="arch-layer-title">Entry Points</div>
+          <div class="arch-layer-items">
+            START<br/>
+            initializeTask<br/>
+            checkPerimeter
+          </div>
+        </div>
+        <div class="arch-layer">
+          <div class="arch-layer-title">Decision Nodes</div>
+          <div class="arch-layer-items">
+            reasoning<br/>
+            loadMemory<br/>
+            loadWorkspaceContext<br/>
+            planner
+          </div>
+        </div>
+        <div class="arch-layer">
+          <div class="arch-layer-title">Action Nodes</div>
+          <div class="arch-layer-items">
+            processEmailTriage<br/>
+            processCalendarCreate<br/>
+            processAssistantCommand<br/>
+            finalizeTask
+          </div>
+        </div>
+      </div>
+
+      <div class="quiz-container">
+        <div class="quiz-question">The "trace" field uses a reducer that concatenates arrays. What would happen if you changed it to `(x, y) => y ?? x`?</div>
+        <div class="quiz-options">
+          <div class="quiz-option" data-correct="false">The trace would grow infinitely large</div>
+          <div class="quiz-option" data-correct="true">Each node would overwrite the previous trace, losing history</div>
+          <div class="quiz-option" data-correct="false">The graph would crash on startup</div>
+          <div class="quiz-option" data-correct="false">Nothing — both reducers behave the same way</div>
+        </div>
+        <div class="quiz-feedback"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Module 4: Security & Access -->
+  <section id="module4" class="module">
+    <div class="container">
+      <span class="badge">Module 4</span>
+      <h2>Security & Access Control</h2>
+      <p class="module-subtitle">The PerimeterGuard ensures sensitive data never reaches the LLM and enforces agency boundaries.</p>
+
+      <div class="callout">
+        <div class="callout-title">
+          <span>🔒</span>
+          <span>Why Redact PII?</span>
+        </div>
+        <p>LLM providers (like Mistral) log all requests for debugging and model improvement. If you send real email addresses or phone numbers, they could end up in training data. Redaction replaces sensitive data with placeholders like <code>[EMAIL_1]</code> before transmission.</p>
+      </div>
+
+      <div class="translation-block">
+        <div class="code-panel">
+          <pre><span class="kw">public</span> <span class="func">filter</span>(
+  <span class="var">text</span>: <span class="type">string</span>,
+  <span class="var">agencyTier</span>: <span class="type">AgencyTier</span>,
+  <span class="var">requiredTier</span>: <span class="type">AgencyTier</span>,
+  <span class="var">mode</span>: <span class="str">'analysis'</span> | <span class="str">'execution'</span>
+): <span class="type">FilterResult</span> {
+  <span class="comment">// 1. Check Agency Tier (Execution Mode Only)</span>
+  <span class="kw">if</span> (<span class="var">mode</span> === <span class="str">'execution'</span>) {
+    <span class="kw">const</span> <span class="var">tierPriority</span>: <span class="type">Record</span>&lt;<span class="type">AgencyTier</span>, <span class="type">number</span>&gt; = {
+      <span class="str">'Public'</span>: <span class="num">2</span>,
+      <span class="str">'Controlled'</span>: <span class="num">1</span>,
+      <span class="str">'Restricted'</span>: <span class="num">0</span>
+    };
+    
+    <span class="kw">if</span> (<span class="var">tierPriority</span>[<span class="var">agencyTier</span>] &lt; <span class="var">tierPriority</span>[<span class="var">requiredTier</span>]) {
+      <span class="kw">const</span> <span class="var">redactedEscalationText</span> = <span class="kw">this</span>.<span class="func">redactPII</span>(<span class="var">text</span>);
+      <span class="kw">return</span> {
+        <span class="var">redactedText</span>: <span class="var">redactedEscalationText</span>,
+        <span class="var">isEscalated</span>: <span class="kw">true</span>,
+        <span class="var">reason</span>: <span class="str">`Action requires ${requiredTier} tier`</span>
+      };
+    }
+  }
+
+  <span class="comment">// 2. Redact PII</span>
+  <span class="kw">const</span> <span class="var">redacted</span> = <span class="kw">this</span>.<span class="func">redactPII</span>(<span class="var">text</span>);
+  <span class="kw">return</span> { <span class="var">redactedText</span>: <span class="var">redacted</span>, <span class="var">isEscalated</span>: <span class="kw">false</span> };
+}</pre>
+        </div>
+        <div class="english-panel">
+          <div class="english-line"><strong>Line 1-6:</strong> Function signature with 4 parameters</div>
+          <div class="english-line"><strong>Line 8:</strong> Only enforce tiers in "execution" mode (not "analysis")</div>
+          <div class="english-line"><strong>Line 9-13:</strong> Define priority: Public=2 (highest), Restricted=0 (lowest)</div>
+          <div class="english-line"><strong>Line 15:</strong> If topic tier is lower than required, escalate</div>
+          <div class="english-line"><strong>Line 16-22:</strong> Return escalation result with redacted text</div>
+          <div class="english-line"><strong>Line 26-27:</strong> Always redact PII, even if not escalating</div>
+        </div>
+      </div>
+
+      <h3>PII Redaction Patterns</h3>
+      
+      <div class="cards">
+        <div class="card">
+          <div class="card-title">Email Addresses</div>
+          <div class="card-desc"><code>john.doe@example.com</code> → <code>[EMAIL_1]</code></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Phone Numbers</div>
+          <div class="card-desc"><code>+1-555-123-4567</code> → <code>[PHONE_1]</code></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Names</div>
+          <div class="card-desc"><code>Jane Smith</code> → <code>[NAME_1]</code></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Physical Addresses</div>
+          <div class="card-desc"><code>123 Main St, NYC 10001</code> → <code>[ADDRESS_1]</code></div>
+        </div>
+        <div class="card">
+          <div class="card-title">SSN / Credit Cards</div>
+          <div class="card-desc"><code>123-45-6789</code> → <code>[ID_1]</code></div>
+        </div>
+      </div>
+
+      <div class="callout">
+        <div class="callout-title">
+          <span>🔄</span>
+          <span>Reversible Redaction</span>
+        </div>
+        <p>The PerimeterGuard maintains a <code>reverseMap</code> that stores the original values. After the LLM generates a response (like an email draft), the system can recover the original PII to populate the actual email. This happens server-side, so the LLM never sees the real data.</p>
+      </div>
+
+      <h3>Tool Wrapping</h3>
+      <p>Every tool call goes through the PerimeterGuard twice:</p>
+
+      <div class="step-cards">
+        <div class="step-card">
+          <div class="step-number">1</div>
+          <div class="step-content">
+            <h4>Input Redaction</h4>
+            <p>Before calling a tool (like "send_email"), arguments are redacted so the LLM sees placeholders in its reasoning trace.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-number">2</div>
+          <div class="step-content">
+            <h4>Tool Execution</h4>
+            <p>The tool executes with real data (the wrapper recovers PII just for the actual API call).</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-number">3</div>
+          <div class="step-content">
+            <h4>Output Redaction</h4>
+            <p>The tool's response is redacted before being returned to the LLM, preventing accidental data leakage in follow-up reasoning.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="quiz-container">
+        <div class="quiz-question">A user reports that the agent "forgot" their colleague's email address when drafting a reply. What's the most likely cause?</div>
+        <div class="quiz-options">
+          <div class="quiz-option" data-correct="false">The LLM has a token limit issue</div>
+          <div class="quiz-option" data-correct="true">The PerimeterGuard redacted the email but failed to recover it before sending</div>
+          <div class="quiz-option" data-correct="false">The email address was in the Restricted tier</div>
+          <div class="quiz-option" data-correct="false">The MCP service lost connection to Gmail</div>
+        </div>
+        <div class="quiz-feedback"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Module 5: Tools & APIs -->
+  <section id="module5" class="module">
+    <div class="container">
+      <span class="badge">Module 5</span>
+      <h2>Tools & APIs via MCP</h2>
+      <p class="module-subtitle">The MCP (Model Context Protocol) Service connects the agent to Google Workspace tools.</p>
+
+      <div class="callout">
+        <div class="callout-title">
+          <span>🔌</span>
+          <span>What is MCP?</span>
+        </div>
+        <p><strong>Model Context Protocol</strong> is a standard for connecting AI models to external tools. Think of it like USB-C for AI — a universal connector that lets any MCP-compatible tool plug into any MCP-compatible AI. This agent uses MCP to access Gmail, Calendar, Drive, and other Google Workspace APIs.</p>
+      </div>
+
+      <div class="translation-block">
+        <div class="code-panel">
+          <pre><span class="kw">const</span> <span class="var">transport</span> = <span class="kw">new</span> <span class="type">StreamableHTTPClientTransport</span>(
+  <span class="kw">new</span> <span class="type">URL</span>(<span class="var">MCP_SERVER_URL</span>),
+  {
+    <span class="var">requestInit</span>: {
+      <span class="var">headers</span>: <span class="kw">new</span> <span class="type">Headers</span>({
+        <span class="str">'Authorization'</span>: <span class="str">`Bearer ${accessToken}`</span>
+      })
+    }
+  }
+);
+
+<span class="kw">const</span> <span class="var">client</span> = <span class="kw">new</span> <span class="type">Client</span>(
+  { <span class="var">name</span>: <span class="str">'agent-controller'</span>, <span class="var">version</span>: <span class="str">'1.0.0'</span> },
+  { <span class="var">capabilities</span>: {} }
+);
+
+<span class="kw">await</span> <span class="var">client</span>.<span class="func">connect</span>(<span class="var">transport</span>);</pre>
+        </div>
+        <div class="english-panel">
+          <div class="english-line"><strong>Line 1-10:</strong> Create HTTP transport with OAuth2 bearer token</div>
+          <div class="english-line"><strong>Line 12-15:</strong> Initialize MCP client with agent identity</div>
+          <div class="english-line"><strong>Line 17:</strong> Establish connection to MCP server</div>
+          <div class="english-line"><strong>Key insight:</strong> The access token authenticates which user's Google data the agent can access</div>
+        </div>
+      </div>
+
+      <h3>Token Management Flow</h3>
+
+      <div class="step-cards">
+        <div class="step-card">
+          <div class="step-number">1</div>
+          <div class="step-content">
+            <h4>Fetch Stored Tokens</h4>
+            <p>Query Supabase for the organization's encrypted Google OAuth tokens (access token + refresh token).</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-number">2</div>
+          <div class="step-content">
+            <h4>Check Expiry</h4>
+            <p>If access token expires within 5 minutes (or is missing), use refresh token to get a new one.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-number">3</div>
+          <div class="step-content">
+            <h4>Update Database</h4>
+            <p>Store the new access token back to Supabase for future requests.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-number">4</div>
+          <div class="step-content">
+            <h4>Connect MCP Client</h4>
+            <p>Use the fresh access token as Bearer auth in HTTP headers.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout">
+        <div class="callout-title">
+          <span>⚠️</span>
+          <span>Auth Error Handling</span>
+        </div>
+        <p>The MCP service detects 401/403 errors and automatically refreshes tokens. If refresh fails, it clears the org cache and retries once. This handles edge cases like token revocation or clock skew.</p>
+      </div>
+
+      <h3>Available Tools</h3>
+      
+      <div class="cards">
+        <div class="card">
+          <div class="card-title">Gmail Tools</div>
+          <div class="card-desc">
+            <code>create_gmail_draft</code><br/>
+            <code>send_gmail_message</code><br/>
+            <code>search_drive_files</code>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Calendar Tools</div>
+          <div class="card-desc">
+            <code>create_calendar_event</code><br/>
+            <code>patch_calendar_event</code><br/>
+            <code>query_calendar_freebusy</code>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Drive Tools</div>
+          <div class="card-desc">
+            <code>create_doc</code><br/>
+            <code>modify_doc_text</code><br/>
+            <code>get_drive_file_content</code>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Workspace Tools</div>
+          <div class="card-desc">
+            <code>create_spreadsheet</code><br/>
+            <code>read_sheet_values</code><br/>
+            <code>create_presentation</code>
+          </div>
+        </div>
+      </div>
+
+      <div class="quiz-container">
+        <div class="quiz-question">The MCP server returns a 401 error during tool execution. What happens next?</div>
+        <div class="quiz-options">
+          <div class="quiz-option" data-correct="false">The task fails immediately with an auth error</div>
+          <div class="quiz-option" data-correct="true">The service refreshes the access token and retries the tool call once</div>
+          <div class="quiz-option" data-correct="false">The user is prompted to reconnect their Google account</div>
+          <div class="quiz-option" data-correct="false">The agent switches to a backup OAuth client</div>
+        </div>
+        <div class="quiz-feedback"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Module 6: Debugging -->
+  <section id="module6" class="module">
+    <div class="container">
+      <span class="badge">Module 6</span>
+      <h2>Debugging & Observability</h2>
+      <p class="module-subtitle">When things go wrong, the AuditLogger and execution traces tell you exactly what happened.</p>
+
+      <div class="callout">
+        <div class="callout-title">
+          <span>📊</span>
+          <span>Three Layers of Observability</span>
+        </div>
+        <p><strong>1. Console Logs:</strong> Real-time output during development. <strong>2. Audit Logs:</strong> Persistent records in Supabase for compliance. <strong>3. Langfuse Traces:</strong> Full LLM interaction traces when <code>ENABLE_LANGFUSE_TRACING</code> is enabled.</p>
+      </div>
+
+      <div class="translation-block">
+        <div class="code-panel">
+          <pre><span class="kw">await</span> <span class="type">AuditLogger</span>.<span class="func">flush</span>(
+  <span class="var">task</span>.<span class="var">organization_id</span>,
+  <span class="var">task</span>.<span class="var">id</span> || <span class="kw">null</span>,
+  <span class="var">task</span>.<span class="var">user_id</span> || <span class="str">'agent-controller'</span>,
+  <span class="str">`Triaged thread: ${subject ?? 'Unknown Subject'}`</span>,
+  [
+    <span class="type">AuditLogger</span>.<span class="func">createStep</span>(
+      <span class="str">'Email Triage'</span>,
+      <span class="str">`Classification complete: ${classification.overall_priority_score}% priority`</span>,
+      {
+        <span class="var">input_summary</span>: <span class="str">`Subject: ${subject ?? 'Unknown Subject'}`</span>,
+        <span class="var">output_summary</span>: <span class="str">`Matches: ${classification.matches.length}`</span>,
+      }
+    )
+  ],
+  [
+    {
+      <span class="var">source_type</span>: <span class="str">'email'</span>,
+      <span class="var">source_id</span>: <span class="var">threadId</span>,
+      <span class="var">description</span>: <span class="str">`Triaged email: ${subject}`</span>
+    }
+  ]
+);</pre>
+        </div>
+        <div class="english-panel">
+          <div class="english-line"><strong>Line 1-4:</strong> Identify org, task, and user for the audit record</div>
+          <div class="english-line"><strong>Line 5:</strong> Human-readable summary of what happened</div>
+          <div class="english-line"><strong>Line 6-14:</strong> Array of reasoning steps (the "trace")</div>
+          <div class="english-line"><strong>Line 15-22:</strong> Citations linking to source data (email thread ID)</div>
+        </div>
+      </div>
+
+      <h3>Common Failure Modes</h3>
+
+      <div class="step-cards">
+        <div class="step-card">
+          <div class="step-number" style="background: var(--warning);">!</div>
+          <div class="step-content">
+            <h4>Task Stuck in "queued"</h4>
+            <p><strong>Cause:</strong> Realtime subscription disconnected. <strong>Fix:</strong> Check logs for "[Realtime] Subscription error" and verify Supabase credentials.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-number" style="background: var(--warning);">!</div>
+          <div class="step-content">
+            <h4>Perimeter Escalation Loop</h4>
+            <p><strong>Cause:</strong> Topic tier mismatch (e.g., "Controlled" topic trying to execute "Public" action). <strong>Fix:</strong> Adjust topic tier or add protocol override.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-number" style="background: var(--warning);">!</div>
+          <div class="step-content">
+            <h4>MCP Auth Failures</h4>
+            <p><strong>Cause:</strong> Expired or revoked OAuth tokens. <strong>Fix:</strong> Check <code>workspace_integrations.sync_status</code> — if "error", user must reconnect.</p>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-number" style="background: var(--warning);">!</div>
+          <div class="step-content">
+            <h4>Structured Output Parse Failures</h4>
+            <p><strong>Cause:</strong> LLM returned malformed JSON. <strong>Fix:</strong> EmailTriageProcessor has retry logic with batch degradation (split large batches into single-thread calls).</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout">
+        <div class="callout-title">
+          <span>🔍</span>
+          <span>Debugging Workflow</span>
+        </div>
+        <p>1. Find the task in Supabase <code>tasks</code> table. 2. Check <code>status</code> field (queued/processing/done/error/escalation). 3. Query <code>agent_activity_log</code> for that task ID. 4. If Langfuse is enabled, view the full trace in Langfuse UI. 5. Check console logs for "[Graph]" prefixed messages.</p>
+      </div>
+
+      <h3>Confidence-Based Escalation</h3>
+      <p>The agent escalates when uncertain — this is a feature, not a bug:</p>
+
+      <div class="cards">
+        <div class="card">
+          <div class="card-title">Low Confidence (&lt;0.7)</div>
+          <div class="card-desc">LLM wasn't sure about its classification or action plan. Escalates to human for review.</div>
+        </div>
+        <div class="card">
+          <div class="card-title">Ambiguity Detected</div>
+          <div class="card-desc">Multiple valid interpretations exist. Better to ask than guess wrong.</div>
+        </div>
+        <div class="card">
+          <div class="card-title">Missing Required Data</div>
+          <div class="card-desc">Can't execute without key info (e.g., meeting time, email recipient). Asks user to clarify.</div>
+        </div>
+      </div>
+
+      <div class="quiz-container">
+        <div class="quiz-question">A user complains that the agent "keeps asking for approval on everything." Where do you look first?</div>
+        <div class="quiz-options">
+          <div class="quiz-option" data-correct="false">Increase the LLM temperature for more confident outputs</div>
+          <div class="quiz-option" data-correct="true">Check the agency tier assignments for their watch topics — they may all be set to "Controlled"</div>
+          <div class="quiz-option" data-correct="false">Disable the PerimeterGuard temporarily</div>
+          <div class="quiz-option" data-correct="false">Add more training data to the email triage processor</div>
+        </div>
+        <div class="quiz-feedback"></div>
+      </div>
+
+      <div class="hero" style="margin-top: var(--space-12);">
+        <h3>🎉 You've Completed the Course!</h3>
+        <p>You now understand how this AI agent processes tasks end-to-end. You can debug issues, add new processors, and configure security policies.</p>
+        <div class="callout" style="text-align: left; display: inline-block;">
+          <div class="callout-title">
+            <span>📚</span>
+            <span>Key Files Reference</span>
+          </div>
+          <p style="margin-bottom: var(--space-2);"><code>apps/agent/src/index.ts</code> — Entry point, realtime subscription</p>
+          <p style="margin-bottom: var(--space-2);"><code>apps/agent/src/controller/graph.ts</code> — LangGraph state machine</p>
+          <p style="margin-bottom: var(--space-2);"><code>apps/agent/src/processors/BaseProcessor.ts</code> — Base processor class</p>
+          <p style="margin-bottom: var(--space-2);"><code>apps/agent/src/guards/PerimeterGuard.ts</code> — PII redaction & security</p>
+          <p style="margin-bottom: var(--space-2);"><code>apps/agent/src/services/mcp.ts</code> — Tool integration</p>
+          <p><code>apps/agent/src/services/AuditLogger.ts</code> — Observability</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <script>
+    (function() {
+      // Progress Bar
+      const progressBar = document.getElementById('progressBar');
+      
+      function updateProgress() {
+        const scrollTop = window.scrollY;
+        const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+        const progress = (scrollTop / docHeight) * 100;
+        progressBar.style.width = progress + '%';
+      }
+
+      window.addEventListener('scroll', () => requestAnimationFrame(updateProgress), { passive: true });
+      updateProgress();
+
+      // Navigation Active State
+      const navLinks = document.querySelectorAll('.nav-link');
+      const modules = document.querySelectorAll('.module');
+
+      function updateNavActive() {
+        const scrollPos = window.scrollY + window.innerHeight / 3;
+        
+        modules.forEach((module, index) => {
+          const moduleTop = module.offsetTop;
+          const moduleBottom = moduleTop + module.offsetHeight;
+          
+          if (scrollPos >= moduleTop && scrollPos < moduleBottom) {
+            navLinks.forEach(link => link.classList.remove('active'));
+            navLinks[index].classList.add('active');
+          }
+        });
+      }
+
+      window.addEventListener('scroll', () => requestAnimationFrame(updateNavActive), { passive: true });
+      updateNavActive();
+
+      // Quiz Logic
+      const quizContainers = document.querySelectorAll('.quiz-container');
+
+      quizContainers.forEach(container => {
+        const options = container.querySelectorAll('.quiz-option');
+        const feedback = container.querySelector('.quiz-feedback');
+
+        options.forEach(option => {
+          option.addEventListener('click', () => {
+            // Clear previous selections
+            options.forEach(o => {
+              o.classList.remove('selected', 'correct', 'incorrect');
+            });
+
+            const isCorrect = option.getAttribute('data-correct') === 'true';
+            option.classList.add('selected', isCorrect ? 'correct' : 'incorrect');
+
+            // Show feedback
+            const correctOption = Array.from(options).find(o => o.getAttribute('data-correct') === 'true');
+            const feedbackText = isCorrect
+              ? 'Exactly! ' + option.textContent
+              : 'Not quite — ' + correctOption.textContent;
+            
+            feedback.textContent = feedbackText;
+            feedback.className = 'quiz-feedback visible ' + (isCorrect ? 'correct' : 'incorrect');
+          });
+        });
+      });
+
+      // Flow Diagram Animation
+      const flowSteps = document.querySelectorAll('.flow-step');
+      let currentStep = 0;
+
+      function animateFlow() {
+        flowSteps.forEach((step, index) => {
+          if (index === currentStep) {
+            step.classList.add('active');
+          } else {
+            step.classList.remove('active');
+          }
+        });
+
+        currentStep = (currentStep + 1) % flowSteps.length;
+      }
+
+      // Start animation when module is visible
+      const flowObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            setInterval(animateFlow, 2000);
+            flowObserver.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.5 });
+
+      const flowDiagram = document.getElementById('flowDiagram');
+      if (flowDiagram) {
+        flowObserver.observe(flowDiagram);
+      }
+
+      // Keyboard Navigation
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown' || e.key === 'PageDown') {
+          e.preventDefault();
+          window.scrollBy({ top: window.innerHeight * 0.8, behavior: 'smooth' });
+        } else if (e.key === 'ArrowUp' || e.key === 'PageUp') {
+          e.preventDefault();
+          window.scrollBy({ top: -window.innerHeight * 0.8, behavior: 'smooth' });
+        } else if (e.key === 'Home') {
+          e.preventDefault();
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        } else if (e.key === 'End') {
+          e.preventDefault();
+          window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' });
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

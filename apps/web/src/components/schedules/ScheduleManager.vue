@@ -24,10 +24,10 @@ const editingId = ref<string | null>(null);
 const formError = ref<string | null>(null);
 const editError = ref<string | null>(null);
 
-const TASK_TYPE_OPTIONS = ['assistant.command', 'channel.send'] as const;
-const CHANNEL_OPTIONS = ['web', 'telegram', 'whatsapp'] as const;
-type ScheduleTaskType = typeof TASK_TYPE_OPTIONS[number];
-type ScheduleChannel = typeof CHANNEL_OPTIONS[number];
+type ScheduleTaskType = 'assistant.command' | 'channel.send';
+type ScheduleChannel = 'web' | 'telegram' | 'whatsapp';
+const TASK_TYPE_OPTIONS: ScheduleTaskType[] = ['assistant.command', 'channel.send'];
+const CHANNEL_OPTIONS: ScheduleChannel[] = ['web', 'telegram', 'whatsapp'];
 
 const form = ref({
   task_type: 'assistant.command',

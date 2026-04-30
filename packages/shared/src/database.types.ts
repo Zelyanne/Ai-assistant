@@ -278,6 +278,78 @@ export type Database = {
           },
         ]
       }
+      messaging_channel_links: {
+        Row: {
+          channel: string
+          created_at: string
+          display_name: string | null
+          external_thread_id: string | null
+          external_user_id: string | null
+          id: string
+          last_seen_at: string | null
+          link_token_expires_at: string | null
+          link_token_hash: string | null
+          linked_at: string | null
+          metadata: Json
+          organization_id: string
+          status: string
+          updated_at: string
+          user_id: string
+          username: string | null
+        }
+        Insert: {
+          channel: string
+          created_at?: string
+          display_name?: string | null
+          external_thread_id?: string | null
+          external_user_id?: string | null
+          id?: string
+          last_seen_at?: string | null
+          link_token_expires_at?: string | null
+          link_token_hash?: string | null
+          linked_at?: string | null
+          metadata?: Json
+          organization_id: string
+          status?: string
+          updated_at?: string
+          user_id: string
+          username?: string | null
+        }
+        Update: {
+          channel?: string
+          created_at?: string
+          display_name?: string | null
+          external_thread_id?: string | null
+          external_user_id?: string | null
+          id?: string
+          last_seen_at?: string | null
+          link_token_expires_at?: string | null
+          link_token_hash?: string | null
+          linked_at?: string | null
+          metadata?: Json
+          organization_id?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+          username?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "messaging_channel_links_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messaging_channel_links_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       execution_runs: {
         Row: {
           created_at: string
