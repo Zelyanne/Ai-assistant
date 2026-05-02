@@ -168,12 +168,19 @@ function buildConversationContextBlock(entries: ConversationContextEntry[]): str
     return '';
   }
 
-  const recent = entries.slice(-16);
+  const compressedSummary = entries.slice().reverse().find((entry) => entry.role === 'system' && entry.state === 'compressed');
+  const recent = entries
+    .filter((entry) => entry !== compressedSummary)
+    .slice(-16);
+  const promptEntries = compressedSummary ? [compressedSummary, ...recent] : recent;
 
-  const lines = recent.map((entry) => {
+  const lines = promptEntries.map((entry) => {
     const stateSuffix = entry.state ? ` (${entry.state})` : '';
     const roleLabel = entry.role.toUpperCase();
-    return `${roleLabel}${stateSuffix}: ${entry.content}`;
+    const content = entry === compressedSummary && entry.content.length > 900
+      ? `${entry.content.slice(0, 897)}...`
+      : entry.content;
+    return `${roleLabel}${stateSuffix}: ${content}`;
   });
 
   return truncateConversationBlock(`CONVERSATION CONTEXT (most recent last):\n${lines.join('\n')}`);

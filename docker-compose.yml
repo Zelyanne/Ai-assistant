@@ -1,0 +1,29 @@
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: agent
+    env_file:
+      - ./apps/agent/.env
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: web
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
+        VITE_AGENT_URL: ${VITE_AGENT_URL:-http://localhost:3001}
+    ports:
+      - "8080:80"
+    depends_on:
+      - agent
+    restart: unless-stopped
