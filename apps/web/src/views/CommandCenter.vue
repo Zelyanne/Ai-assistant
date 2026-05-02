@@ -53,10 +53,10 @@ async function onSelectConversation(conversationId: string): Promise<void> {
     <header class="flex items-start justify-between gap-4 px-1">
       <div class="space-y-2">
         <h1 class="text-2xl font-bold tracking-tight text-executive-primary md:text-3xl">
-          Command Center
+          Assistant
         </h1>
         <p class="text-sm text-slate-500 md:text-base">
-          Natural language control for safe, delegated execution.
+          Chat with your assistant for safe, delegated Google Workspace actions.
         </p>
       </div>
 

@@ -22,6 +22,7 @@ import {
   createSearchUserSkillsTool,
 } from '../../tools/userSkillsTools.js';
 import { createSearchWebResearchTool } from '../../tools/researchTools.js';
+import { createWatchTopicTools } from '../../tools/watchTopicTools.js';
 import type { SpecialistNodeContext } from './types.js';
 
 /**
@@ -117,6 +118,10 @@ export async function getSpecialistMcpTools(
       createListUserSkillsTool({ organizationId: orgId, userId: options?.userId }),
       createGetUserSkillTool({ organizationId: orgId, userId: options?.userId }),
     );
+  }
+
+  if (workerType === 'gmail') {
+    additionalTools.push(...createWatchTopicTools({ organizationId: orgId, userId: options?.userId }));
   }
 
   // 3. All agents get current time tool for time awareness

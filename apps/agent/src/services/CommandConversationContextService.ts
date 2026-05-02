@@ -1,10 +1,12 @@
 import type { Database, Task } from '@ai-assistant/shared';
 
 import { supabase } from './supabase.js';
+import { LLMProviderFactory } from './llm/factory.js';
 
 type CommandMessageRow = Database['public']['Tables']['command_messages']['Row'];
 type CommandConversationRow = Database['public']['Tables']['command_conversations']['Row'];
 type TaskRow = Database['public']['Tables']['tasks']['Row'];
+type TaskUpdate = Database['public']['Tables']['tasks']['Update'];
 
 type ConversationRole = 'user' | 'assistant' | 'system';
 
@@ -15,9 +17,14 @@ export type ConversationContextEntry = {
   created_at: string;
   task_id?: string;
   correlation_id?: string;
+  thread_id?: string;
+  metadata?: Record<string, unknown>;
 };
 
 const MAX_CONTEXT_MESSAGES = 40;
+const RECENT_VERBATIM_MESSAGES = 18;
+const COMPRESSION_CHAR_THRESHOLD = 16_000;
+const SUMMARY_TARGET_CHARS = 3_500;
 const CHANNEL_CONTEXT_ACTIONS = ['assistant.command', 'channel.send'] as const;
 const CHANNEL_CONTEXT_SOURCES = new Set(['telegram-webhook', 'whatsapp-webhook', 'web-webhook', 'dashboard-command-center']);
 const CHANNEL_CONTEXT_CHANNELS = new Set(['telegram', 'whatsapp', 'web']);
@@ -40,6 +47,45 @@ function asConversationRole(value: unknown): ConversationRole | null {
   }
 
   return null;
+}
+
+function readConversationSummary(payload: unknown): string | null {
+  const record = asRecord(payload);
+  return asString(record.conversation_summary)
+    ?? asString(record.compressed_conversation_summary)
+    ?? asString(record.rolling_conversation_summary);
+}
+
+function readExistingConversationContext(payload: unknown): ConversationContextEntry[] {
+  const record = asRecord(payload);
+  const raw = record.conversation_context;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  return raw
+    .map((entry) => {
+      const entryRecord = asRecord(entry);
+      const role = asConversationRole(entryRecord.role);
+      const content = asString(entryRecord.content);
+      const createdAt = asString(entryRecord.created_at) ?? asString(entryRecord.createdAt) ?? new Date().toISOString();
+      if (!role || !content) {
+        return null;
+      }
+
+      const metadata = asRecord(entryRecord.metadata);
+      return {
+        role,
+        content,
+        created_at: createdAt,
+        ...(asString(entryRecord.state) ? { state: asString(entryRecord.state)! } : {}),
+        ...(asString(entryRecord.task_id) ? { task_id: asString(entryRecord.task_id)! } : {}),
+        ...(asString(entryRecord.correlation_id) ? { correlation_id: asString(entryRecord.correlation_id)! } : {}),
+        ...(asString(entryRecord.thread_id) ? { thread_id: asString(entryRecord.thread_id)! } : {}),
+        ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+      } satisfies ConversationContextEntry;
+    })
+    .filter((entry): entry is ConversationContextEntry => Boolean(entry));
 }
 
 function toContextEntry(row: Pick<CommandMessageRow, 'role' | 'content' | 'state' | 'created_at' | 'source_task_id' | 'correlation_id'>): ConversationContextEntry | null {
@@ -116,6 +162,90 @@ function toTaskContextEntry(row: Pick<TaskRow, 'id' | 'domain_action' | 'status'
   }
 
   return null;
+}
+
+function contextCharLength(entries: ConversationContextEntry[]): number {
+  return entries.reduce((total, entry) => total + entry.content.length, 0);
+}
+
+function formatContextEntry(entry: ConversationContextEntry): string {
+  const state = entry.state ? ` (${entry.state})` : '';
+  const thread = entry.thread_id ? ` [thread:${entry.thread_id}]` : '';
+  return `${entry.role.toUpperCase()}${state}${thread}: ${entry.content}`;
+}
+
+function fallbackCompressContext(existingSummary: string | null, olderEntries: ConversationContextEntry[]): string {
+  const sections = [
+    existingSummary ? `Previous summary:\n${existingSummary}` : null,
+    'Recent older turns:',
+    olderEntries.slice(-12).map(formatContextEntry).join('\n'),
+  ].filter((section): section is string => Boolean(section));
+
+  const summary = sections.join('\n\n').trim();
+  return summary.length > SUMMARY_TARGET_CHARS
+    ? `${summary.slice(0, SUMMARY_TARGET_CHARS - 3)}...`
+    : summary;
+}
+
+async function compressConversationContext(
+  existingSummary: string | null,
+  olderEntries: ConversationContextEntry[],
+): Promise<string> {
+  if (olderEntries.length === 0) {
+    return existingSummary ?? '';
+  }
+
+  const prompt = [
+    'Compress this assistant conversation history into a durable rolling session summary.',
+    `Target ${SUMMARY_TARGET_CHARS} characters or fewer. Preserve unresolved tasks, user preferences, named people, dates, pending confirmations, important file/email/thread IDs, and topic-watch context.`,
+    'Do not include full email bodies. Keep only facts needed to continue the conversation.',
+    '',
+    existingSummary ? `EXISTING SUMMARY:\n${existingSummary}` : 'EXISTING SUMMARY: none',
+    '',
+    'OLDER TURNS:',
+    olderEntries.map(formatContextEntry).join('\n'),
+  ].join('\n');
+
+  try {
+    const provider = LLMProviderFactory.getProvider();
+    const result = await provider.generateText(prompt, {
+      temperature: 0,
+      maxTokens: 900,
+    });
+    const compressed = result.data.trim();
+    if (compressed.length > 0) {
+      return compressed.length > SUMMARY_TARGET_CHARS
+        ? `${compressed.slice(0, SUMMARY_TARGET_CHARS - 3)}...`
+        : compressed;
+    }
+  } catch (error) {
+    console.warn('[CommandConversationContextService] Conversation compression failed; using deterministic fallback.', error);
+  }
+
+  return fallbackCompressContext(existingSummary, olderEntries);
+}
+
+async function persistCurrentTaskConversationContext(
+  task: Task,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  if (!task.id) {
+    return;
+  }
+
+  const values: TaskUpdate = {
+    payload: payload as TaskUpdate['payload'],
+  };
+
+  const { error } = await supabase
+    .from('tasks')
+    .update(values)
+    .eq('id', task.id)
+    .eq('organization_id', task.organization_id);
+
+  if (error) {
+    console.warn('[CommandConversationContextService] Failed to persist compacted conversation context.', error);
+  }
 }
 
 export class CommandConversationContextService {
@@ -219,22 +349,62 @@ export class CommandConversationContextService {
       return task;
     }
 
-    const context = (rows as Array<Pick<TaskRow, 'id' | 'domain_action' | 'status' | 'payload' | 'created_at'>>)
-      .slice(0, MAX_CONTEXT_MESSAGES)
+    const rowSlice = (rows as Array<Pick<TaskRow, 'id' | 'domain_action' | 'status' | 'payload' | 'created_at'>>)
+      .slice(0, MAX_CONTEXT_MESSAGES);
+    const context = rowSlice
+      .slice()
       .reverse()
       .map((row) => toTaskContextEntry(row))
       .filter((entry): entry is ConversationContextEntry => Boolean(entry));
 
-    if (context.length === 0) {
+    const existingContext = readExistingConversationContext(payload);
+    const mergedContext = [...context, ...existingContext];
+
+    if (mergedContext.length === 0) {
       return task;
+    }
+
+    const latestSummary = rowSlice
+      .map((row) => readConversationSummary(row.payload))
+      .find((summary): summary is string => Boolean(summary))
+      ?? readConversationSummary(payload);
+
+    const shouldCompress = contextCharLength(mergedContext) > COMPRESSION_CHAR_THRESHOLD;
+    const recentContext = shouldCompress
+      ? mergedContext.slice(-RECENT_VERBATIM_MESSAGES)
+      : mergedContext;
+    const olderContext = shouldCompress
+      ? mergedContext.slice(0, Math.max(0, mergedContext.length - RECENT_VERBATIM_MESSAGES))
+      : [];
+    const compressedSummary = shouldCompress
+      ? await compressConversationContext(latestSummary, olderContext)
+      : latestSummary;
+    const finalContext = compressedSummary
+      ? [
+          {
+            role: 'system' as const,
+            content: `Rolling conversation summary: ${compressedSummary}`,
+            created_at: new Date().toISOString(),
+            state: 'compressed',
+          },
+          ...recentContext,
+        ]
+      : recentContext;
+
+    const nextPayload = {
+      ...payload,
+      conversation_context: finalContext,
+      ...(compressedSummary ? { conversation_summary: compressedSummary } : {}),
+      ...(shouldCompress ? { conversation_summary_updated_at: new Date().toISOString() } : {}),
+    };
+
+    if (shouldCompress || existingContext.length > 0) {
+      await persistCurrentTaskConversationContext(task, nextPayload);
     }
 
     return {
       ...task,
-      payload: {
-        ...payload,
-        conversation_context: context,
-      },
+      payload: nextPayload,
     };
   }
 

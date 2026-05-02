@@ -15,6 +15,10 @@ const { mockGetByTaskId } = vi.hoisted(() => ({
   mockGetByTaskId: vi.fn(),
 }));
 
+const { mockGenerateText } = vi.hoisted(() => ({
+  mockGenerateText: vi.fn(),
+}));
+
 vi.mock('../controller/graph.js', () => ({
   graph: {
     invoke: mockInvoke,
@@ -40,6 +44,14 @@ vi.mock('./ExecutionRunService.js', () => ({
   },
 }));
 
+vi.mock('./llm/factory.js', () => ({
+  LLMProviderFactory: {
+    getProvider: () => ({
+      generateText: mockGenerateText,
+    }),
+  },
+}));
+
 describe('processQueuedTask', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -47,6 +59,11 @@ describe('processQueuedTask', () => {
     mockGetHandler.mockReturnValue(null);
     mockFlush.mockResolvedValue(undefined);
     mockGetByTaskId.mockResolvedValue(null);
+    mockGenerateText.mockResolvedValue({
+      data: 'Compressed session: user is iterating on a Telegram Gmail draft; preserve recipient and latest constraints.',
+      usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120, latencyMs: 1 },
+      model: 'test-model',
+    });
     mockFrom.mockReset();
   });
 
@@ -251,10 +268,9 @@ describe('processQueuedTask', () => {
       },
     ];
 
-    let tasksQuery!: SupabaseQueryMock;
     const tasksEqSpy = vi.fn((_key: string, _value: unknown) => tasksQuery);
 
-    tasksQuery = {
+    const tasksQuery: SupabaseQueryMock = {
       select: () => tasksQuery,
       eq: tasksEqSpy,
       in: () => tasksQuery,
@@ -301,5 +317,96 @@ describe('processQueuedTask', () => {
       expect.any(Object),
     );
     expect(tasksEqSpy).toHaveBeenCalledWith('user_id', userId);
+  });
+
+  it('compresses long telegram thread history while keeping recent turns verbatim', async () => {
+    const organizationId = '11111111-1111-1111-1111-111111111111';
+    const userId = '22222222-2222-4222-8222-222222222222';
+    const currentTaskId = '99999999-9999-4999-8999-999999999999';
+    const updateSpy = vi.fn(() => ({
+      eq: vi.fn().mockReturnThis(),
+    }));
+
+    type SupabaseQueryMock = {
+      select: (columns: string) => SupabaseQueryMock;
+      eq: (key: string, value: unknown) => SupabaseQueryMock;
+      in?: (key: string, values: unknown[]) => SupabaseQueryMock;
+      neq?: (key: string, value: unknown) => SupabaseQueryMock;
+      order?: (key: string, options?: { ascending?: boolean }) => SupabaseQueryMock;
+      limit?: (count: number) => SupabaseQueryMock;
+      update?: (values: Record<string, unknown>) => { eq: (key: string, value: unknown) => unknown };
+      then?: (resolve: (value: { data: unknown; error: null }) => unknown) => Promise<unknown>;
+    };
+
+    const longText = 'Older telegram turn with Gmail drafting constraints. '.repeat(450);
+    const taskRows = Array.from({ length: 22 }, (_, index) => ({
+      id: `prev-${index}`,
+      domain_action: index % 2 === 0 ? 'assistant.command' : 'channel.send',
+      status: 'done',
+      payload: {
+        channel: 'telegram',
+        thread_id: 'tg-thread-long',
+        message_text: index < 4 ? `${longText}${index}` : `Recent turn ${index}`,
+        correlation_id: `c-${index}`,
+        ...(index === 0 ? { conversation_summary: 'Previous compacted summary.' } : {}),
+      },
+      created_at: `2026-04-03T10:${String(index).padStart(2, '0')}:00.000Z`,
+    })).reverse();
+
+    const tasksQuery: SupabaseQueryMock = {
+      select: () => tasksQuery,
+      eq: () => tasksQuery,
+      in: () => tasksQuery,
+      neq: () => tasksQuery,
+      order: () => tasksQuery,
+      limit: () => tasksQuery,
+      update: updateSpy,
+      then: (resolve) => Promise.resolve({ data: taskRows, error: null }).then(resolve),
+    };
+
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'tasks') return tasksQuery;
+      throw new Error(`Unexpected table: ${table}`);
+    });
+
+    await processQueuedTask({
+      id: currentTaskId,
+      organization_id: organizationId,
+      user_id: userId,
+      domain_action: 'assistant.command',
+      status: 'queued',
+      payload: {
+        message_text: 'Continue the Telegram thread',
+        channel: 'telegram',
+        source: 'telegram-webhook',
+        user_initiated: true,
+        thread_id: 'tg-thread-long',
+        external_message_id: 'tg-msg-long',
+      },
+      result: {},
+      topic: undefined,
+    });
+
+    expect(mockGenerateText).toHaveBeenCalledOnce();
+    expect(updateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          conversation_summary: expect.stringContaining('Compressed session'),
+        }),
+      }),
+    );
+    expect(mockInvoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        task: expect.objectContaining({
+          payload: expect.objectContaining({
+            conversation_context: expect.arrayContaining([
+              expect.objectContaining({ role: 'system', state: 'compressed' }),
+              expect.objectContaining({ content: 'Recent turn 21' }),
+            ]),
+          }),
+        }),
+      }),
+      expect.any(Object),
+    );
   });
 });

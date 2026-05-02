@@ -5,7 +5,7 @@ import { useRoute } from 'vue-router';
 const route = useRoute();
 
 const navItems = [
-  { label: 'Command Center', icon: 'pi pi-comments', to: '/dashboard/command-center' },
+  { label: 'Assistant', icon: 'pi pi-comments', to: '/dashboard/command-center' },
   { label: 'Dashboard', icon: 'pi pi-home', to: '/dashboard' },
   { label: 'Messages', icon: 'pi pi-envelope', to: '/messages/topic' },
   { label: 'Protocol', icon: 'pi pi-bolt', to: '/dashboard/brain-setup' },

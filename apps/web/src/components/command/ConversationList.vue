@@ -69,7 +69,10 @@ function onSelect(item: ConversationListItem): void {
 </script>
 
 <template>
-  <section class="flex min-h-0 flex-col gap-3" aria-label="Conversation history">
+  <section
+    class="flex min-h-0 flex-col gap-3"
+    aria-label="Conversation history"
+  >
     <div class="flex items-center justify-between gap-3">
       <h2 class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
         Chats
@@ -121,7 +124,10 @@ function onSelect(item: ConversationListItem): void {
               class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600"
               aria-hidden="true"
             >
-              <i class="pi pi-comment" aria-hidden="true" />
+              <i
+                class="pi pi-comment"
+                aria-hidden="true"
+              />
             </span>
 
             <span class="min-w-0 flex-1">
@@ -178,7 +184,10 @@ function onSelect(item: ConversationListItem): void {
                 class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600"
                 aria-hidden="true"
               >
-                <i class="pi pi-comment" aria-hidden="true" />
+                <i
+                  class="pi pi-comment"
+                  aria-hidden="true"
+                />
               </span>
 
               <span class="min-w-0 flex-1">

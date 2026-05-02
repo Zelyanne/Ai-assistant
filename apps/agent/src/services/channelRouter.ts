@@ -83,6 +83,27 @@ function asRecordJson(value: unknown): Record<string, Json | undefined> {
   return toJson(value) as Record<string, Json | undefined>;
 }
 
+function readTopicWatchContext(payload: unknown): Record<string, Json | undefined> | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+
+  const metadata = isRecord(payload.channel_metadata) ? payload.channel_metadata : {};
+  if (metadata.alert_type !== 'topic_watch') {
+    return null;
+  }
+
+  return {
+    role: 'assistant',
+    content: readStringField(payload, 'message_text') ?? 'Topic-watch alert',
+    state: 'done',
+    created_at: typeof payload.created_at === 'string' ? payload.created_at : undefined,
+    correlation_id: readCorrelationId(payload),
+    thread_id: typeof metadata.thread_id === 'string' ? metadata.thread_id : undefined,
+    metadata: toJson(metadata),
+  };
+}
+
 function toLower(value: string | undefined): string {
   return (value ?? '').trim().toLowerCase();
 }
@@ -277,6 +298,33 @@ export class ChannelRouterService {
     return readStringField(data, 'id');
   }
 
+  private async loadTopicWatchConversationContext(normalized: NormalizedInboundEnvelope): Promise<Json | undefined> {
+    if (normalized.channel !== 'telegram' && normalized.channel !== 'whatsapp') {
+      return undefined;
+    }
+
+    if (!normalized.thread_id) {
+      return undefined;
+    }
+
+    const { data, error } = await this.supabaseClient
+      .from('tasks')
+      .select('payload')
+      .eq('organization_id', normalized.organization_id)
+      .eq('domain_action', 'channel.send')
+      .eq('payload->>channel', normalized.channel)
+      .eq('payload->>thread_id', normalized.thread_id)
+      .maybeSingle();
+
+    if (error) {
+      return undefined;
+    }
+
+    const context = readTopicWatchContext(isRecord(data) ? data.payload : null);
+
+    return context ? [context] : undefined;
+  }
+
   private async resolveDeliveryTaskId(event: DeliveryEventEnvelope): Promise<string | undefined> {
     if (event.task_id) {
       return event.task_id;
@@ -307,6 +355,9 @@ export class ChannelRouterService {
     const correlationId = normalized.correlation_id ?? randomUUID();
     const isUserInitiatedCommand = resolvedDomainAction === 'assistant.command'
       && (normalized.channel === 'telegram' || normalized.channel === 'whatsapp');
+    const conversationContext = isUserInitiatedCommand
+      ? await this.loadTopicWatchConversationContext(normalized)
+      : undefined;
 
     const { data: existingTask, error: existingError } = await this.supabaseClient
       .from('tasks')
@@ -371,6 +422,7 @@ export class ChannelRouterService {
         user_id: normalized.user_id ?? null,
         message_text: normalized.message_text,
         correlation_id: correlationId,
+        conversation_context: conversationContext,
         channel_metadata: toJson(normalized.channel_metadata),
         raw_payload: toJson(normalized.raw_payload),
       },

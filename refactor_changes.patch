@@ -1,0 +1,682 @@
+diff --git a/apps/agent/src/controller/graph.spec.ts b/apps/agent/src/controller/graph.spec.ts
+index c1d86ef..4dd80ae 100644
+--- a/apps/agent/src/controller/graph.spec.ts
++++ b/apps/agent/src/controller/graph.spec.ts
+@@ -1,5 +1,6 @@
+ import { beforeEach, describe, expect, it, vi } from 'vitest';
+ import { graph } from './graph.js';
++import { AssistantCommandProcessor } from '../processors/AssistantCommandProcessor.js';
+ import { AgencyService } from '../services/agency.js';
+ 
+ vi.mock('../services/SafetyControlsService.js', () => ({
+@@ -45,6 +46,7 @@ const {
+   mockCheckCapabilityReadiness,
+   mockResolveToolName,
+   mockExecuteWorkerTool,
++  createAgentMock,
+   mockLoadStartupMemoryContext,
+   mockLoadShortTermMemory,
+   mockUpdateTaskState,
+@@ -52,11 +54,27 @@ const {
+   mockCheckCapabilityReadiness: vi.fn(),
+   mockResolveToolName: vi.fn(),
+   mockExecuteWorkerTool: vi.fn(),
++  createAgentMock: vi.fn(),
+   mockLoadStartupMemoryContext: vi.fn(),
+   mockLoadShortTermMemory: vi.fn(),
+   mockUpdateTaskState: vi.fn(),
+ }));
+ 
++vi.mock('langchain', () => ({
++  createAgent: (...args: unknown[]) => createAgentMock(...args),
++  modelCallLimitMiddleware: vi.fn(() => ({ name: 'modelCallLimitMiddleware' })),
++}));
++
++vi.mock('@langchain/mistralai', () => {
++  class ChatMistralAI {
++    constructor(..._args: unknown[]) {}
++  }
++
++  return {
++    ChatMistralAI,
++  };
++});
++
+ vi.mock('../services/mcp.js', () => ({
+   mcpService: {
+     checkCapabilityReadiness: mockCheckCapabilityReadiness,
+@@ -205,10 +223,75 @@ describe('Agent Controller Graph planner-worker flow', () => {
+ 
+   beforeEach(() => {
+     vi.clearAllMocks();
++    AssistantCommandProcessor.setPlannerForTests(null);
+     db.tasks.clear();
+     db.execution_runs.clear();
+     db.agent_activity_log.length = 0;
+ 
++    createAgentMock.mockImplementation(({ tools }: { tools: Array<{ name: string; invoke: (args: Record<string, unknown>) => Promise<unknown> }> }) => ({
++      invoke: async () => {
++        const toolNames = tools.map((tool) => tool.name);
++
++        if (toolNames.includes('get_drive_file_content')) {
++          await tools.find((tool) => tool.name === 'get_drive_file_content')?.invoke({ file_id: 'file-123' });
++          return { messages: [{ content: 'Drive context loaded.' }] };
++        }
++
++        if (toolNames.includes('create_doc')) {
++          await tools.find((tool) => tool.name === 'create_doc')?.invoke({
++            title: 'Generated doc',
++            content: 'Drive source loaded',
++          });
++          await tools.find((tool) => tool.name === 'modify_doc_text')?.invoke({
++            document_id: 'doc-1',
++            text: 'Drive source loaded',
++            start_index: 1,
++          });
++          return { messages: [{ content: 'Docs artifact created and populated.' }] };
++        }
++
++        if (toolNames.includes('send_gmail_message')) {
++          await tools.find((tool) => tool.name === 'send_gmail_message')?.invoke({
++            to: 'alexis@example.com',
++            subject: 'Status update',
++            body: 'Document ready.',
++          });
++          return { messages: [{ content: 'Gmail send completed.' }] };
++        }
++
++        if (toolNames.includes('draft_gmail_message')) {
++          await tools.find((tool) => tool.name === 'draft_gmail_message')?.invoke({
++            to: 'alexis@example.com',
++            subject: 'Status update',
++            body: 'Document ready.',
++          });
++          return { messages: [{ content: 'Gmail draft completed.' }] };
++        }
++
++        if (toolNames.includes('manage_event')) {
++          await tools.find((tool) => tool.name === 'manage_event')?.invoke({
++            action: 'create',
++            summary: 'Status sync',
++            start_time: '2026-03-21T10:00:00Z',
++            end_time: '2026-03-21T10:30:00Z',
++          });
++          return { messages: [{ content: 'Calendar event created.' }] };
++        }
++
++        if (toolNames.includes('create_spreadsheet')) {
++          await tools.find((tool) => tool.name === 'create_spreadsheet')?.invoke({ title: 'Generated sheet' });
++          return { messages: [{ content: 'Spreadsheet created.' }] };
++        }
++
++        if (toolNames.includes('create_presentation')) {
++          await tools.find((tool) => tool.name === 'create_presentation')?.invoke({ title: 'Generated deck' });
++          return { messages: [{ content: 'Presentation created.' }] };
++        }
++
++        return { messages: [{ content: 'Worker completed.' }] };
++      },
++    }));
++
+     mockCheckCapabilityReadiness.mockResolvedValue({
+       worker_type: 'gmail',
+       ready: true,
+@@ -743,7 +826,36 @@ describe('Agent Controller Graph planner-worker flow', () => {
+     expect(result.task.result.reason).toBe('Command is ambiguous');
+   });
+ 
+-  it('pauses trusted chat commands with a confirmation recap for high-risk sends', async () => {
++  it('pauses with a clarification prompt when assistant.command needs more details', async () => {
++    AssistantCommandProcessor.setPlannerForTests(async () => ({
++      decision: 'clarify',
++      summary: 'Need calendar timing details',
++      clarification_prompt: 'What title, start time, and end time should I use for this calendar event?',
++      steps: [],
++    }));
++
++    const task = {
++      ...baseTask,
++      topic: 'Command Center',
++      domain_action: 'assistant.command',
++      payload: {
++        command: 'Put dinner with Sam on my calendar',
++        source: 'dashboard-command-center',
++        channel: 'web',
++        user_initiated: true,
++      },
++    };
++
++    db.tasks.set(task.id, clone(task));
++
++    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
++
++    expect(result.task.status).toBe('paused');
++    expect(result.task.result.reason).toBe('Additional details required');
++    expect(result.task.result.prompt).toBe('What title, start time, and end time should I use for this calendar event?');
++  });
++
++  it('executes trusted chat email sends without explicit confirmation pause', async () => {
+     const task = {
+       ...baseTask,
+       topic: 'Command Center',
+@@ -764,9 +876,8 @@ describe('Agent Controller Graph planner-worker flow', () => {
+ 
+     const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+ 
+-    expect(result.task.status).toBe('paused');
+-    expect(result.task.result.reason).toBe('High-risk command requires confirmation');
+-    expect(result.task.result.prompt).toContain('Quick recap: you asked me to "send an email now"');
++    expect(result.task.status).not.toBe('paused');
++    expect(result.execution_run.status).toBe('completed');
+     expect(AgencyService.getTierForTopic).not.toHaveBeenCalled();
+   });
+ 
+diff --git a/apps/agent/src/controller/graph.ts b/apps/agent/src/controller/graph.ts
+index 6e48f6d..2600fcd 100644
+--- a/apps/agent/src/controller/graph.ts
++++ b/apps/agent/src/controller/graph.ts
+@@ -965,8 +965,13 @@ async function processAssistantCommand(
+     const confirmationPrompt = safeMessage.startsWith("CONFIRMATION_REQUIRED:")
+       ? safeMessage.slice("CONFIRMATION_REQUIRED:".length).trim()
+       : null;
++    const clarificationPrompt = safeMessage.startsWith("COMMAND_CLARIFICATION_REQUIRED:")
++      ? safeMessage.slice("COMMAND_CLARIFICATION_REQUIRED:".length).trim()
++      : null;
+     const reason = safeMessage.startsWith("CONFIRMATION_REQUIRED")
+       ? "High-risk command requires confirmation"
++      : clarificationPrompt
++        ? "Additional details required"
+       : safeMessage.startsWith("COMMAND_AMBIGUOUS")
+           ? "Command is ambiguous"
+           : safeMessage.startsWith("COMMAND_INVALID")
+@@ -992,6 +997,8 @@ async function processAssistantCommand(
+       prompt:
+         reason === "High-risk command requires confirmation"
+           ? confirmationPrompt ?? "Confirm this high-risk command before queueing execution."
++          : clarificationPrompt
++            ? clarificationPrompt
+           : "Please provide explicit command details and retry.",
+       confidenceScore: 0,
+       trigger: "ambiguity_detected",
+diff --git a/apps/agent/src/processors/AssistantCommandProcessor.spec.ts b/apps/agent/src/processors/AssistantCommandProcessor.spec.ts
+index e698afa..d48e845 100644
+--- a/apps/agent/src/processors/AssistantCommandProcessor.spec.ts
++++ b/apps/agent/src/processors/AssistantCommandProcessor.spec.ts
+@@ -1,4 +1,4 @@
+-import { describe, expect, it } from 'vitest';
++import { afterEach, describe, expect, it } from 'vitest';
+ import { AssistantCommandProcessor } from './AssistantCommandProcessor.js';
+ import type { Task } from '@ai-assistant/shared';
+ 
+@@ -12,6 +12,10 @@ const baseTask: Task = {
+ };
+ 
+ describe('AssistantCommandProcessor', () => {
++  afterEach(() => {
++    AssistantCommandProcessor.setPlannerForTests(null);
++  });
++
+   it('builds a planner intent for explicit email draft commands', async () => {
+     const processor = new AssistantCommandProcessor();
+ 
+@@ -101,10 +105,10 @@ describe('AssistantCommandProcessor', () => {
+     ).rejects.toThrow('CONFIRMATION_REQUIRED');
+   });
+ 
+-  it('requires recap confirmation for Command Center web send commands', async () => {
++  it('allows trusted Command Center web send commands without explicit confirmation', async () => {
+     const processor = new AssistantCommandProcessor();
+ 
+-    await expect(processor.process({
++    const result = await processor.process({
+       ...baseTask,
+       topic: 'Command Center',
+       payload: {
+@@ -116,7 +120,18 @@ describe('AssistantCommandProcessor', () => {
+         subject: 'Status',
+         body: 'Ship it',
+       },
+-    })).rejects.toThrow('Quick recap: you asked me to "send an email now". Reply YES to confirm or reply with changes.');
++    });
++
++    expect(result.planner_intent).toBeDefined();
++    expect(result.planner_intent.requested_steps[0]).toMatchObject({
++      worker_type: 'gmail',
++      action: 'send_email',
++      input: expect.objectContaining({
++        recipient: 'alexis@example.com',
++        subject: 'Status',
++        body: 'Ship it',
++      }),
++    });
+   });
+ 
+   it('requires recap confirmation for trusted WhatsApp send commands', async () => {
+@@ -134,7 +149,7 @@ describe('AssistantCommandProcessor', () => {
+     })).rejects.toThrow('Quick recap: you want me to send a whatsapp message. Message: "Hello from the assistant". Reply YES to confirm or reply with changes.');
+   });
+ 
+-  it('parses a French send-email command from Command Center after explicit confirmation', async () => {
++  it('parses a French send-email command from Command Center without explicit confirmation', async () => {
+     const processor = new AssistantCommandProcessor();
+ 
+     const result = await processor.process({
+@@ -145,7 +160,6 @@ describe('AssistantCommandProcessor', () => {
+         source: 'dashboard-command-center',
+         channel: 'web',
+         user_initiated: true,
+-        confirmed: true,
+       },
+     });
+ 
+@@ -162,6 +176,34 @@ describe('AssistantCommandProcessor', () => {
+     });
+   });
+ 
++  it('allows trusted multi-step doc plus email commands without explicit confirmation', async () => {
++    const processor = new AssistantCommandProcessor();
++
++    const result = await processor.process({
++      ...baseTask,
++      topic: 'Command Center',
++      payload: {
++        command: 'Bonjour s il te plait envoie crée moi un doc qui s appelle "danse avec les star" puis envoie le par mail à othily.g@gmail.com en lui disant que c est pour qu il aie des idées',
++        source: 'dashboard-command-center',
++        channel: 'web',
++        user_initiated: true,
++        high_risk: true,
++      },
++    });
++
++    expect(result.planner_intent).toBeDefined();
++    expect(result.planner_intent.mode).toBe('multi_step');
++    expect(result.planner_intent.requested_steps.map((step: { worker_type: string; action: string }) => `${step.worker_type}:${step.action}`)).toEqual([
++      'docs:create_document',
++      'gmail:send_email',
++    ]);
++    expect(result.planner_intent.requested_steps[1]).toMatchObject({
++      input: expect.objectContaining({
++        recipient: 'othily.g@gmail.com',
++      }),
++    });
++  });
++
+   it('derives approval metadata for confirmed email send plans', async () => {
+     const processor = new AssistantCommandProcessor();
+ 
+@@ -252,4 +294,84 @@ describe('AssistantCommandProcessor', () => {
+ 
+     expect(result.delegated_domain_action).toBe('schedule.manage');
+   });
++
++  it('asks for clarification when the agentic planner needs missing calendar details', async () => {
++    AssistantCommandProcessor.setPlannerForTests(async () => ({
++      decision: 'clarify',
++      summary: 'Need calendar timing details',
++      clarification_prompt: 'What title, start time, and end time should I use for this calendar event?',
++      steps: [],
++    }));
++
++    const processor = new AssistantCommandProcessor();
++
++    await expect(processor.process({
++      ...baseTask,
++      topic: 'Command Center',
++      payload: {
++        command: 'Put dinner with Sam on my calendar',
++        source: 'dashboard-command-center',
++        channel: 'web',
++        user_initiated: true,
++      },
++    })).rejects.toThrow('COMMAND_CLARIFICATION_REQUIRED: What title, start time, and end time should I use for this calendar event?');
++  });
++
++  it('accepts agentic multi-step workspace plans', async () => {
++    AssistantCommandProcessor.setPlannerForTests(async () => ({
++      decision: 'plan',
++      summary: 'Plan a document plus email follow-up',
++      steps: [
++        {
++          title: 'Create Google Doc artifact',
++          worker_type: 'docs',
++          action: 'create_document',
++          input: {
++            title: 'Launch notes',
++            content: 'Initial launch notes',
++          },
++          requested_tools: ['create_doc', 'modify_doc_text'],
++          recoverable: true,
++        },
++        {
++          title: 'Send Gmail message',
++          worker_type: 'gmail',
++          action: 'send_email',
++          input: {
++            recipient: 'alexis@example.com',
++            subject: 'Launch notes ready',
++            body: 'I drafted the launch notes for review.',
++          },
++          requested_tools: ['send_gmail_message'],
++          recoverable: true,
++        },
++      ],
++    }));
++
++    const processor = new AssistantCommandProcessor();
++
++    const result = await processor.process({
++      ...baseTask,
++      topic: 'Command Center',
++      payload: {
++        command: 'Create launch notes in a doc and send them to Alexis',
++        source: 'dashboard-command-center',
++        channel: 'web',
++        user_initiated: true,
++        confirmed: true,
++      },
++    });
++
++    expect(result.planner_intent).toBeDefined();
++    expect(result.planner_intent.requested_steps.map((step: { worker_type: string; action: string }) => `${step.worker_type}:${step.action}`)).toEqual([
++      'docs:create_document',
++      'gmail:send_email',
++    ]);
++    expect(result.planner_intent.requested_steps[1].input).toMatchObject({
++      recipient: 'alexis@example.com',
++      to: 'alexis@example.com',
++      approved_by: baseTask.user_id,
++      source_task_id: baseTask.id,
++    });
++  });
+ });
+diff --git a/apps/agent/src/processors/AssistantCommandProcessor.ts b/apps/agent/src/processors/AssistantCommandProcessor.ts
+index 978088c..ee2dd21 100644
+--- a/apps/agent/src/processors/AssistantCommandProcessor.ts
++++ b/apps/agent/src/processors/AssistantCommandProcessor.ts
+@@ -6,6 +6,11 @@ import {
+   type Task,
+ } from '@ai-assistant/shared';
+ import { BaseProcessor, type ProcessorResult } from './BaseProcessor.js';
++import {
++  type AssistantCommandPlanner,
++  type CommandPlanningResponse,
++  planAssistantCommandWithAgent,
++} from './assistant-command/CommandPlanningAgent.js';
+ import { AuditLogger } from '../services/AuditLogger.js';
+ 
+ function extractContextReferences(text: string): ContextReference[] {
+@@ -165,6 +170,29 @@ function buildConfirmationRecap(
+   return 'Confirm this high-risk command before queueing execution.';
+ }
+ 
++function isTrustedUserInitiatedEmailSend(
++  task: Task,
++  payload: AssistantCommandPayload,
++  commandText: string,
++  explicitAction: SupportedDelegationAction | null,
++): boolean {
++  if (!isTrustedUserInitiatedCommand(task, payload)) {
++    return false;
++  }
++
++  if (explicitAction === 'email.send') {
++    return true;
++  }
++
++  const commandLower = commandText.toLowerCase();
++  const wantsEmail = /\b(email|mail)\b/.test(commandLower);
++  const wantsSend = /\b(send|envoie|envoyer)\b/.test(commandLower);
++  const hasRecipient = Boolean(normalizeRecipient(payload) ?? extractEmailAddressFromText(commandText));
++  const hasContent = Boolean(asString(payload.body) ?? extractEmailBodyFromText(commandText));
++
++  return wantsEmail && wantsSend && hasRecipient && hasContent;
++}
++
+ function isHighRisk(payload: AssistantCommandPayload): boolean {
+   return payload.high_risk === true;
+ }
+@@ -291,15 +319,15 @@ function getDefaultRequestedTools(step: {
+   }
+ 
+   if (step.worker_type === 'docs') {
+-    return ['create_doc'];
++    return ['create_doc', 'modify_doc_text', 'get_doc_content'];
+   }
+ 
+   if (step.worker_type === 'sheets') {
+-    return ['modify_sheet_values'];
++    return ['create_spreadsheet', 'modify_sheet_values', 'read_sheet_values'];
+   }
+ 
+   if (step.worker_type === 'slides') {
+-    return ['create_presentation'];
++    return ['create_presentation', 'batch_update_presentation', 'get_presentation'];
+   }
+ 
+   return [];
+@@ -397,7 +425,7 @@ function buildExplicitPlan(
+     const body = asString(mergedPayload.body) ?? asString(payload.body);
+ 
+     if (!recipient || !subject || !body) {
+-      throw new Error(`COMMAND_AMBIGUOUS: ${explicitAction} command missing recipient/subject/body payload fields.`);
++      throw new Error(`COMMAND_CLARIFICATION_REQUIRED: I need the recipient, subject, and body before I can ${explicitAction === 'email.send' ? 'send' : 'draft'} the email.`);
+     }
+ 
+     const step = makePlanStep(0, {
+@@ -432,7 +460,7 @@ function buildExplicitPlan(
+     const endTime = asString(mergedPayload.endTime) ?? asString(mergedPayload.end_time) ?? asString(payload.endTime) ?? asString(payload.end_time);
+ 
+     if (!summary || !startTime || !endTime) {
+-      throw new Error('COMMAND_AMBIGUOUS: Calendar command missing summary/start/end payload fields.');
++      throw new Error('COMMAND_CLARIFICATION_REQUIRED: I need the event title, start time, and end time before I can create the calendar event.');
+     }
+ 
+     const step = makePlanStep(0, {
+@@ -460,6 +488,96 @@ function buildExplicitPlan(
+   return null;
+ }
+ 
++function normalizeAgenticPlanStep(
++  task: Task,
++  payload: AssistantCommandPayload,
++  step: {
++    title: string;
++    worker_type: AssistantCommandIntentStep['worker_type'];
++    action: string;
++    requested_tools?: string[];
++    input?: Record<string, unknown>;
++    recoverable?: boolean;
++  },
++  index: number,
++): AssistantCommandIntentStep {
++  const input = asRecord(step.input);
++
++  if (step.worker_type === 'gmail') {
++    const recipient = asString(input.recipient) ?? asString(input.to);
++    const normalizedInput: Record<string, unknown> = {
++      ...input,
++      recipient: recipient ?? undefined,
++      to: recipient ?? undefined,
++      subject: asString(input.subject) ?? 'Planner update',
++      body: asString(input.body) ?? extractEmailBodyFromText(String(payload.command ?? '')) ?? undefined,
++      body_format: asString(input.body_format) ?? 'plain',
++    };
++
++    if (step.action === 'send_email') {
++      Object.assign(normalizedInput, buildSendApprovalFields(task, payload, input));
++    }
++
++    return makePlanStep(index, {
++      ...step,
++      input: normalizedInput,
++    });
++  }
++
++  if (step.worker_type === 'calendar') {
++    return makePlanStep(index, {
++      ...step,
++      input: {
++        ...input,
++        summary: asString(input.summary) ?? undefined,
++        startTime: asString(input.startTime) ?? asString(input.start_time) ?? undefined,
++        endTime: asString(input.endTime) ?? asString(input.end_time) ?? undefined,
++        description: asString(input.description) ?? undefined,
++        location: asString(input.location) ?? undefined,
++      },
++    });
++  }
++
++  if (step.worker_type === 'drive') {
++    return makePlanStep(index, {
++      ...step,
++      input: {
++        ...input,
++        context_references: Array.isArray(input.context_references) ? input.context_references : payload.context_references,
++      },
++    });
++  }
++
++  return makePlanStep(index, {
++    ...step,
++    input,
++  });
++}
++
++function validatePlannerIntent(intent: AssistantCommandIntent): string | null {
++  for (const step of intent.requested_steps) {
++    const input = asRecord(step.input);
++
++    if (step.worker_type === 'gmail') {
++      const recipient = asString(input.recipient) ?? asString(input.to);
++      if (!recipient) {
++        return 'I need the recipient email address before I can draft or send that email.';
++      }
++    }
++
++    if (step.worker_type === 'calendar') {
++      const summary = asString(input.summary);
++      const startTime = asString(input.startTime) ?? asString(input.start_time);
++      const endTime = asString(input.endTime) ?? asString(input.end_time);
++      if (!summary || !startTime || !endTime) {
++        return 'I need the event title, start time, and end time before I can schedule that calendar event.';
++      }
++    }
++  }
++
++  return null;
++}
++
+ function inferWorkspacePlan(
+   task: Task,
+   payload: AssistantCommandPayload,
+@@ -547,7 +665,7 @@ function inferWorkspacePlan(
+     const endTime = asString(payload.endTime) ?? asString(payload.end_time);
+ 
+     if (!summary || !startTime || !endTime) {
+-      throw new Error('COMMAND_AMBIGUOUS: Calendar command missing summary/start/end payload fields.');
++      throw new Error('COMMAND_CLARIFICATION_REQUIRED: I need the event title, start time, and end time before I can create the calendar event.');
+     }
+ 
+     steps.push(
+@@ -571,7 +689,7 @@ function inferWorkspacePlan(
+     const body = asString(payload.body) ?? extractEmailBodyFromText(commandText);
+ 
+     if (!recipient) {
+-      throw new Error('COMMAND_AMBIGUOUS: Email command missing recipient payload field.');
++      throw new Error('COMMAND_CLARIFICATION_REQUIRED: I need the recipient email address before I can draft or send that email.');
+     }
+ 
+     steps.push(
+@@ -606,6 +724,16 @@ function inferWorkspacePlan(
+ }
+ 
+ export class AssistantCommandProcessor extends BaseProcessor {
++  private static plannerOverride: AssistantCommandPlanner | null = null;
++
++  static setPlannerForTests(planner: AssistantCommandPlanner | null): void {
++    this.plannerOverride = planner;
++  }
++
++  constructor(private readonly planner: AssistantCommandPlanner = planAssistantCommandWithAgent) {
++    super();
++  }
++
+   async process(task: Task): Promise<ProcessorResult> {
+     this.clearTrace();
+ 
+@@ -616,7 +744,11 @@ export class AssistantCommandProcessor extends BaseProcessor {
+       throw new Error('COMMAND_INVALID: Missing command text.');
+     }
+ 
+-    const confirmed = isConfirmed(payload);
++    const explicitAction = resolveExplicitAction(payload);
++    const confirmed = isConfirmed(payload)
++      || isTrustedUserInitiatedEmailSend(task, payload, commandText, explicitAction)
++      || (isTrustedUserInitiatedCommand(task, payload) && isHighRisk(payload));
++
+     if (isHighRisk(payload) && !confirmed) {
+       throw new Error(`CONFIRMATION_REQUIRED: ${buildConfirmationRecap(task, payload, commandText)}`);
+     }
+@@ -626,7 +758,6 @@ export class AssistantCommandProcessor extends BaseProcessor {
+     const existingRefs = asContextReferences(payload.context_references);
+     const contextReferences = [...existingRefs, ...extractedRefs];
+ 
+-    const explicitAction = resolveExplicitAction(payload);
+     if (explicitAction && requiresConfirmation(explicitAction) && !confirmed) {
+       throw new Error(`CONFIRMATION_REQUIRED: ${buildConfirmationRecap(task, payload, commandText, explicitAction)}`);
+     }
+@@ -731,6 +862,54 @@ export class AssistantCommandProcessor extends BaseProcessor {
+       };
+     }
+ 
++    const planner = AssistantCommandProcessor.plannerOverride ?? this.planner;
++    let agenticDecision: CommandPlanningResponse | null = null;
++    try {
++      agenticDecision = await planner({
++        task,
++        commandText,
++        contextReferences,
++        knownFields: payload as Record<string, unknown>,
++      });
++    } catch (err: unknown) {
++      this.addTraceStep('command_intent_agentic_fallback', `Agentic planning failed: ${err instanceof Error ? err.message : String(err)}`, 0);
++      agenticDecision = null;
++    }
++
++    if (agenticDecision && agenticDecision.decision === 'clarify') {
++      const clarificationPrompt = agenticDecision.clarification_prompt
++        ?? 'I need a bit more detail before I can plan this command.';
++      this.addTraceStep('command_intent_clarification', clarificationPrompt, 0.72);
++      throw new Error(`COMMAND_CLARIFICATION_REQUIRED: ${clarificationPrompt}`);
++    }
++
++    if (agenticDecision && agenticDecision.decision === 'plan' && agenticDecision.steps.length > 0) {
++      const plannerIntent = buildPlannerIntent(
++        commandText,
++        payload,
++        contextReferences,
++        agenticDecision.steps.map((step: any, index: number) => normalizeAgenticPlanStep(task, payload, step, index)),
++        agenticDecision.summary,
++      );
++
++      const validationError = validatePlannerIntent(plannerIntent);
++      if (validationError) {
++        throw new Error(`COMMAND_CLARIFICATION_REQUIRED: ${validationError}`);
++      }
++
++      if (plannerIntent.requested_steps.some((step) => step.action === 'send_email') && !confirmed) {
++        throw new Error(`CONFIRMATION_REQUIRED: ${buildConfirmationRecap(task, payload, commandText, 'email.send')}`);
++      }
++
++      this.addTraceStep('command_intent_agentic', `Agentically planned ${plannerIntent.requested_steps.length} workspace steps`, 0.9);
++      return {
++        planner_intent: plannerIntent,
++        summary: plannerIntent.summary,
++        trace: this.getTrace(),
++        citations,
++      };
++    }
++
+     const inferredPlan = inferWorkspacePlan(task, payload, commandText, contextReferences);
+     if (inferredPlan) {
+       if (inferredPlan.requested_steps.some((step) => step.action === 'send_email') && !confirmed) {

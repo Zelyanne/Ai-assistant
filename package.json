@@ -1,6 +1,7 @@
 {
   "name": "ai-assistant",
   "private": true,
+  "packageManager": "pnpm@10.30.3",
   "description": "Multi-tenant AI Assistant Monorepo",
   "scripts": {
     "dev": "pnpm -r --filter \"./apps/*\" dev",

@@ -19,6 +19,17 @@ interface WorkspaceIntegrationRow {
   last_sync_at: string | null;
   label_preferences: unknown;
 }
+
+interface MessagingChannelLinkRow {
+  id: string;
+  channel: string;
+  status: string;
+  username: string | null;
+  display_name: string | null;
+  linked_at: string | null;
+  last_seen_at: string | null;
+}
+
 const SOCIAL_PROVIDERS = ['telegram', 'whatsapp'] as const;
 
 const userStore = useUserStore();
@@ -26,10 +37,13 @@ const toast = useToast();
 const integration = ref<WorkspaceIntegrationRow | null>(null);
 const telegramIntegration = ref<WorkspaceIntegrationRow | null>(null);
 const whatsappIntegration = ref<WorkspaceIntegrationRow | null>(null);
+const telegramLink = ref<MessagingChannelLinkRow | null>(null);
 const settingsError = ref<string | null>(null);
+const telegramLinkError = ref<string | null>(null);
 const currentPreferences = ref<string[]>([]);
 const hasChanges = ref(false);
 const saving = ref(false);
+const connectingTelegram = ref(false);
 
 function socialStatusLabel(item: WorkspaceIntegrationRow | null): string {
   if (!item) return 'Not configured';
@@ -44,9 +58,16 @@ function socialStatusClass(item: WorkspaceIntegrationRow | null): string {
 }
 
 const telegramStatusLabel = computed(() => socialStatusLabel(telegramIntegration.value));
-const telegramStatusClass = computed(() => socialStatusClass(telegramIntegration.value));
+const telegramStatusClass = computed(() => telegramLink.value?.status === 'active' ? 'bg-emerald-100 text-emerald-700' : socialStatusClass(telegramIntegration.value));
 const whatsappStatusLabel = computed(() => socialStatusLabel(whatsappIntegration.value));
 const whatsappStatusClass = computed(() => socialStatusClass(whatsappIntegration.value));
+const telegramConnectionLabel = computed(() => {
+  if (telegramLink.value?.status === 'active') {
+    return telegramLink.value.display_name || telegramLink.value.username || 'Telegram connected';
+  }
+
+  return telegramStatusLabel.value;
+});
 
 async function fetchIntegration(): Promise<void> {
   settingsError.value = null;
@@ -74,6 +95,62 @@ async function fetchIntegration(): Promise<void> {
   currentPreferences.value = Array.isArray(googleIntegration?.label_preferences)
     ? googleIntegration.label_preferences.filter((value): value is string => typeof value === 'string')
     : [];
+
+  const { data: linkRows, error: linkError } = await supabase
+    .from('messaging_channel_links')
+    .select('id, channel, status, username, display_name, linked_at, last_seen_at')
+    .eq('organization_id', userStore.profile.organization_id)
+    .eq('user_id', userStore.profile.id)
+    .eq('channel', 'telegram')
+    .eq('status', 'active')
+    .order('updated_at', { ascending: false })
+    .limit(1);
+
+  if (linkError) {
+    telegramLink.value = null;
+    telegramLinkError.value = 'Unable to load Telegram connection status.';
+  } else {
+    telegramLink.value = (linkRows?.[0] as MessagingChannelLinkRow | undefined) ?? null;
+    telegramLinkError.value = null;
+  }
+}
+
+async function connectTelegram(): Promise<void> {
+  telegramLinkError.value = null;
+  connectingTelegram.value = true;
+
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+    if (!accessToken) {
+      throw new Error('Sign in again before connecting Telegram.');
+    }
+
+    const agentUrl = import.meta.env.VITE_AGENT_URL || 'http://localhost:3001';
+    const response = await fetch(`${agentUrl}/api/integrations/telegram/link-token`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    const payload = await response.json() as { deepLink?: string; error?: string };
+    if (!response.ok || !payload.deepLink) {
+      throw new Error(payload.error ?? 'Unable to create Telegram link.');
+    }
+
+    window.open(payload.deepLink, '_blank', 'noopener,noreferrer');
+    toast.add({
+      severity: 'info',
+      summary: 'Telegram Link Created',
+      detail: 'Telegram opened in a new tab. Press Start in the bot to finish connecting.',
+      life: 5000,
+    });
+  } catch (error) {
+    telegramLinkError.value = error instanceof Error ? error.message : 'Failed to connect Telegram.';
+  } finally {
+    connectingTelegram.value = false;
+  }
 }
 
 function handlePreferenceUpdate(prefs: string[]): void {
@@ -177,21 +254,38 @@ onMounted(fetchIntegration);
                 class="rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide"
                 :class="telegramStatusClass"
               >
-                {{ telegramStatusLabel }}
+                {{ telegramConnectionLabel }}
               </span>
             </div>
 
             <ul class="mt-4 space-y-2 text-sm text-slate-600">
-              <li>Bot token and webhook secret token must be configured on the agent.</li>
-              <li>Point Telegram webhooks at the Telegram webhook route with `organization_id` on the request.</li>
-              <li>Use the same bot identity for inbound validation and outbound replies.</li>
+              <li>Click Connect Telegram to generate a short-lived private bot link.</li>
+              <li>Press Start in Telegram to bind your chat to this workspace account.</li>
+              <li>After linking, direct Telegram messages use the same assistant command flow as the web Command Center.</li>
             </ul>
 
+            <Message
+              v-if="telegramLinkError"
+              severity="warn"
+              class="mt-4"
+              :closable="false"
+            >
+              {{ telegramLinkError }}
+            </Message>
+
+            <Button
+              class="mt-5"
+              :label="telegramLink?.status === 'active' ? 'Reconnect Telegram' : 'Connect Telegram'"
+              icon="pi pi-send"
+              :loading="connectingTelegram"
+              @click="connectTelegram"
+            />
+
             <p
-              v-if="telegramIntegration?.last_sync_at"
+              v-if="telegramLink?.last_seen_at || telegramLink?.linked_at || telegramIntegration?.last_sync_at"
               class="mt-4 text-xs italic text-slate-400"
             >
-              Last activity: {{ new Date(telegramIntegration.last_sync_at).toLocaleString() }}
+              Last activity: {{ new Date(telegramLink?.last_seen_at || telegramLink?.linked_at || telegramIntegration?.last_sync_at || '').toLocaleString() }}
             </p>
           </article>
 

@@ -57,12 +57,12 @@ Full-stack Web Application (Vue.js + TypeScript) with Supabase Backend.
 ### Starter Options Considered
 
 1. **Vite Vue + Supabase (Selected):** A modern, high-performance foundation with first-class TypeScript support and native Supabase integration.
-2. **PrimeVue (UX Framework):** To fulfill the "Executive Calm" Material 3 UX specification, providing accessible, themeable components.
+2. **MUI 3 (Selected UX Framework):** To fulfill the "Executive Calm" Material 3 UX specification, providing accessible, themeable components.
 
-### Selected Starter: Vue 3 + TypeScript + Supabase
+### Selected Starter: Vue 3 + TypeScript + Supabase + MUI 3
 
 **Rationale for Selection:**
-The combination of Vue 3's reactivity and Supabase's real-time capabilities is ideal for the "Ai assistant" Morning Brief. We will utilize a **Database-Centric Event Loop** pattern where the frontend writes tasks to Supabase, and the Hetzner-hosted Agent (via Realtime subscription) processes them and updates the DB state incrementally.
+The combination of Vue 3's reactivity and Supabase's real-time capabilities is ideal for the "Ai assistant" Morning Brief. We will utilize a **Database-Centric Event Loop** pattern where the frontend writes tasks to Supabase, and the Hetzner-hosted Agent (via Realtime subscription) processes them and updates the DB state incrementally. MUI 3 is selected for its superior Material You integration.
 
 **Initialization Command:**
 
@@ -70,8 +70,8 @@ The combination of Vue 3's reactivity and Supabase's real-time capabilities is i
 # Frontend Initialization
 npm create vite@latest ai-assistant -- --template vue-ts
 
-# Supabase Integration
-npm install @supabase/supabase-js
+# Supabase & MUI Integration
+npm install @supabase/supabase-js @mui/material @emotion/react @emotion/styled
 ```
 
 ### Architectural Decisions Provided by Starter:
@@ -80,7 +80,7 @@ npm install @supabase/supabase-js
 TypeScript (v5.0+) for end-to-end type safety.
 
 **Styling Solution:**
-Tailwind CSS + PrimeVue (Material 3 Theme) to satisfy the "Structured Hub" UX requirements.
+Tailwind CSS + MUI 3 (Material 3 Theme) to satisfy the "Structured Hub" UX requirements.
 
 **Build Tooling:**
 Vite for ultra-fast development.
@@ -128,10 +128,11 @@ Standard Vue 3 directory structure.
 
 ### Infrastructure & Deployment
 
-*   **Frontend:** Vercel (or Hetzner Static) for the Vue 3 App.
+*   **Frontend:** Vercel (or Hetzner Static) for the Vue 3 App (Configuration & Testing Hub).
 *   **Agent Host:** Hetzner Cloud (VPS) running a **TypeScript (Node.js)** Agent Controller.
-    *   **Integration:** The TS Controller utilizes the `mcp-sdk` to orchestrate the Python-based Google Workspace MCP server as a subprocess.
-*   **Scaling:** Vertical scaling for the Hetzner node initially; horizontal sharding by `organization_id` post-MVP.
+    *   **Integration:** The TS Controller utilizes the `mcp-sdk` and integrates with **WhatsApp/Telegram APIs** via webhooks.
+    *   **Scheduler:** A dedicated Cron service for polling JSON-based schedules from the DB.
+*   **Memory Storage:** File-based Markdown storage on the Hetzner node (backed up to Supabase or Object Storage).
 
 ### Decision Impact Analysis
 

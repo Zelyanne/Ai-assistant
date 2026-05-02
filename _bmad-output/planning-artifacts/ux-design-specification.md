@@ -58,8 +58,8 @@ Ai assistant is a high-agency, autonomous digital 'Chief of Staff' designed for 
 The core experience is defined by a **"Review & Delegate" loop** powered by background automation. The primary daily touchpoint is the **Morning Brief**, a synthesized overview of business momentum and pending tasks. The secondary, high-frequency action is **Contextual Delegation**, where users provide natural language instructions (e.g., "Please send an email to this for that") that the AI executes within its authorized perimeter.
 
 ### Platform Strategy
-- **Web & Desktop Application:** The primary interface for complex management, deep-dive transparency logs, and configuring the "Agency Perimeters" and "Nudging Protocols."
-- **Mobile Experience:** A companion interface optimized for real-time delegation, quick triage, and receiving "Silent Win" notifications or escalation alerts.
+- **Messaging First:** The primary interface for high-frequency mobile interaction (Morning Brief, Delegation, Nudges) is **WhatsApp/Telegram**.
+- **Web Testing & Interaction Hub:** The web application serves as both a testing platform (monitoring memory and traces) and a direct conversational interface, allowing the user to chat with the agent and manage configuration in one place.
 
 ### Effortless Interactions
 - **Autonomous Data Gathering:** The system automatically pulls from Google Workspace, Slack, and other connected channels to build the Morning Brief and status reports without user intervention.

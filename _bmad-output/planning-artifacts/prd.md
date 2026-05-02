@@ -59,11 +59,13 @@ This classification reflects the platform's nature as a B2B productivity tool wi
 ## Product Scope
 
 ### MVP - Minimum Viable Product
+*   **Messaging-First Interaction:** Primary interaction via WhatsApp/Telegram for delegation and morning briefs.
+*   **Layered Brain & Memory System:** MD-based memory architecture (Persona, Short-Term, Weekly, Long-Term) for high-agency context.
+*   **JSON Scheduling Tool:** Natural language scheduling stored in DB and triggered by Cron.
 *   **Self-Evolving Nudging Protocols:** Ability for users to describe their nudging style and have the AI generate and execute a personalized `.md` protocol.
-*   **Core Proxy Agency:** Autonomous responses for "Allowed Topics" (Tier 1: Public) with configurable confidence thresholds.
+*   **Web Testing Hub:** Command Center and configuration interface for testing and debugging agent logic.
 *   **Relancing Engine:** Proactive status chasing across Gmail and mobile messaging.
-*   **Smart Summarization:** Intelligent daily briefs and email thread summarization to reduce CEO reading time.
-*   **Basic Task Assistance:** Automated drafting of routine status reports and information responses.
+*   **Smart Summarization:** Intelligent daily briefs sent via messaging apps.
 
 ### Growth Features (Post-MVP)
 *   **Team Cohesion Analytics:** Visualizing team response patterns and identifying systemic bottlenecks.
@@ -191,24 +193,29 @@ To address the high-sensitivity nature of executive data, we will apply the foll
 
 ## Functional Requirements
 
-### 1. Adaptive Protocol Management
+### 1. Adaptive Protocol & Memory Management
 *   **FR1:** The user can describe their "nudging philosophy" and leadership style in natural language.
 *   **FR2:** The system can convert the user's natural language philosophy into a structured, stored `.md` protocol.
-*   **FR3:** The user can review, edit, and manually approve the generated `.md` protocols.
-*   **FR4:** The system can execute bidirectional nudges (team members can report blockers directly to the AI).
-*   **FR5:** The system can pause or adjust active nudge cycles based on team member responses (e.g., detecting a "Blocker").
+*   **FR3:** The system maintains a layered memory system:
+    *   **Persona (`persona.md`):** Permanent identity and role definition.
+    *   **Short-Term Memory (`short-term.md`):** Daily task history, resets EOD.
+    *   **Weekly Memory (`weekly-memory.md`):** EOD summaries, resets EOM.
+    *   **Long-Term Memory (`long-term.md`):** Monthly distilled insights.
+*   **FR4:** The system uses a `task-state.json` file to track steps and status for the current active task.
+*   **FR5:** The system automatically executes EOD, EOW, and EOM memory aggregation and rotation logic.
 
-### 2. Autonomous Proxy Agency
-*   **FR6:** The user can define "Agency Tiers" (Public, Controlled, Restricted) for specific topics or contacts.
-*   **FR7:** The system can autonomously provide information and resolve requests for topics classified as "Public."
-*   **FR8:** The system can draft responses for "Controlled" topics and present them for user approval.
-*   **FR9:** The system can identify and escalate "Restricted" topics to the human user immediately.
-*   **FR10:** The system can evaluate its own confidence level before taking an autonomous action.
-*   **FR11:** The user can invoke an "Emergency Brake" to instantly halt all autonomous proxy actions.
+### 2. Messaging-First Proxy Agency
+*   **FR6:** The primary user interface for delegation and morning briefs is WhatsApp/Telegram, but the system also supports a full chat interface within the Web Testing Hub.
+*   **FR7:** The system can initiate conversations for morning briefs, high-priority alerts, or task updates across both messaging and web channels.
+*   **FR8:** The user can schedule tasks or routines via natural language in chat, stored as JSON in the database.
+*   **FR9:** A Cron service triggers the agent based on stored schedules for execution at the correct time.
+*   **FR10:** The user can define "Agency Tiers" (Public, Controlled, Restricted) for specific topics or contacts.
+*   **FR11:** The system can evaluate its own confidence level before taking an autonomous action.
+*   **FR12:** The user can invoke an "Emergency Brake" to instantly halt all autonomous proxy actions.
 
 ### 3. Google Workspace Core Integration
-*   **FR12:** The system can monitor and categorize incoming Gmail threads in real-time.
-*   **FR13:** The system can resolve logistical calendar conflicts using executive-level reasoning.
+*   **FR13:** The system can monitor and categorize incoming Gmail threads in real-time.
+*   **FR14:** The system can resolve logistical calendar conflicts using executive-level reasoning.
 *   **FR14:** The system can gather context from Google Docs and Sheets to inform its proxy actions.
 *   **FR15:** The system can create and update calendar events based on natural language commands.
 *   **FR16:** The system can draft and send emails on behalf of the user within authorized perimeters.

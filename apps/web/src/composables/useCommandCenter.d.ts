@@ -16,6 +16,8 @@ declare const timeline: import("vue").Ref<{
     state?: CommandState | undefined;
     taskId?: string | undefined;
     correlationId?: string | undefined;
+    threadId?: string | undefined;
+    metadata?: Record<string, unknown> | undefined;
     executionRun?: {
         id: string;
         status: string;
@@ -37,6 +39,8 @@ declare const timeline: import("vue").Ref<{
     state?: CommandState | undefined;
     taskId?: string | undefined;
     correlationId?: string | undefined;
+    threadId?: string | undefined;
+    metadata?: Record<string, unknown> | undefined;
     executionRun?: {
         id: string;
         status: string;

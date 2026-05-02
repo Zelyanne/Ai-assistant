@@ -30,6 +30,40 @@ pnpm dev
 
 This starts the workspace apps under `apps/*`.
 
+## Docker Deployment
+
+The root `Dockerfile` builds two production targets:
+
+- `agent` - Node.js backend worker/API on port `3001`
+- `web` - Nginx-served Vue dashboard on port `80`
+
+For a single-server launch with Docker Compose:
+
+```bash
+cp apps/agent/.env.example apps/agent/.env
+cp apps/web/.env.example apps/web/.env
+# Fill both env files with production values before starting.
+docker compose --env-file apps/web/.env up --build -d
+```
+
+Default exposed ports:
+
+- Web dashboard: `http://<server-ip>:8080`
+- Agent API and webhooks: `http://<server-ip>:3001`
+
+Set `VITE_AGENT_URL` in `apps/web/.env` to the public URL that browsers should use for the agent, for example `https://api.example.com` or `http://<server-ip>:3001`. Vite embeds this value at image build time, so rebuild the `web` image after changing it.
+
+For reverse-proxy deployments, route these public paths to the agent service:
+
+- `/api/*`
+- `/webhooks/telegram`
+- `/webhooks/whatsapp`
+
+Health checks:
+
+- Agent: `GET /health` on port `3001`
+- Web: `GET /health` on port `8080`
+
 ## WhatsApp and Telegram Webhook Setup
 
 The agent service exposes these public webhook endpoints:

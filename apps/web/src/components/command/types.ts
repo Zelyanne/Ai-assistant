@@ -31,5 +31,7 @@ export interface CommandTimelineEntry {
   state?: CommandState;
   taskId?: string;
   correlationId?: string;
+  threadId?: string;
+  metadata?: Record<string, unknown>;
   executionRun?: CommandExecutionRunSummary;
 }

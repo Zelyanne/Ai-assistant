@@ -23,6 +23,7 @@ import { PerimeterGuard } from '../../guards/PerimeterGuard.js';
 import { ScheduleManageProcessor } from '../../processors/ScheduleManageProcessor.js';
 import { getSpecialistPrompt } from '../../prompts/specialistPrompts.js';
 import { createCurrentTimeTool } from '../../tools/timeDateTool.js';
+import { createWatchTopicTools } from '../../tools/watchTopicTools.js';
 import type { AgentState } from '../graph.js';
 import { buildEscalationPayload } from '../escalation.js';
 
@@ -100,6 +101,7 @@ function sanitizeRunErrorForUser(raw: string | null | undefined): string | null 
   }
 
   const redacted = runErrorGuard.redactPII(normalized)
+    // eslint-disable-next-line no-control-regex
     .replace(/[\x00-\x1F\x7F]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -166,12 +168,19 @@ function buildConversationContextBlock(entries: ConversationContextEntry[]): str
     return '';
   }
 
-  const recent = entries.slice(-16);
+  const compressedSummary = entries.slice().reverse().find((entry) => entry.role === 'system' && entry.state === 'compressed');
+  const recent = entries
+    .filter((entry) => entry !== compressedSummary)
+    .slice(-16);
+  const promptEntries = compressedSummary ? [compressedSummary, ...recent] : recent;
 
-  const lines = recent.map((entry) => {
+  const lines = promptEntries.map((entry) => {
     const stateSuffix = entry.state ? ` (${entry.state})` : '';
     const roleLabel = entry.role.toUpperCase();
-    return `${roleLabel}${stateSuffix}: ${entry.content}`;
+    const content = entry === compressedSummary && entry.content.length > 900
+      ? `${entry.content.slice(0, 897)}...`
+      : entry.content;
+    return `${roleLabel}${stateSuffix}: ${content}`;
   });
 
   return truncateConversationBlock(`CONVERSATION CONTEXT (most recent last):\n${lines.join('\n')}`);
@@ -223,6 +232,16 @@ const GeneralAgentScheduleResultSchema = z.object({
 });
 
 type GeneralAgentScheduleResult = z.infer<typeof GeneralAgentScheduleResultSchema>;
+
+const GeneralAgentWatchTopicResultSchema = z.object({
+  outcome: z.string().trim().min(1).optional(),
+  confirmation_message: z.string().trim().min(1).optional(),
+  total: z.number().int().nonnegative().optional(),
+  topics: z.array(z.unknown()).optional(),
+  topic: z.unknown().optional(),
+});
+
+type GeneralAgentWatchTopicResult = z.infer<typeof GeneralAgentWatchTopicResultSchema>;
 
 function buildScheduleManageToolPayload(
   task: Task,
@@ -338,7 +357,7 @@ const PlanStepSchema = z.object({
  * If confidence < threshold, steps will be empty and clarification fields filled.
  */
 const GeneralAgentResponseSchema = z.object({
-  outcome: z.enum(['plan', 'schedule']).default('plan').describe('Use "schedule" only after you have already created the schedule via schedule_agent_request.'),
+  outcome: z.enum(['plan', 'schedule', 'watch_topic']).default('plan').describe('Use "schedule" only after you have already created the schedule via schedule_agent_request. Use "watch_topic" only after calling a watch-topic tool.'),
   confidence: z.number().min(0).max(1).describe('Confidence in understanding the request (0-1). Be generous — most natural language requests should be >= 0.8.'),
   interpretation: z.string().describe('How you interpreted the user request'),
   needs_clarification: z.boolean().describe('True ONLY if the request is truly ambiguous (e.g. missing recipient, subject is unclear, dates are completely vague). Default false for clear requests.'),
@@ -347,9 +366,8 @@ const GeneralAgentResponseSchema = z.object({
   reasoning: z.string().describe('Brief reasoning for the plan structure'),
   steps: z.array(PlanStepSchema).describe('Ordered execution steps. Empty if clarification needed.'),
   schedule_result: GeneralAgentScheduleResultSchema.optional().describe('Required when outcome is "schedule". Copy the JSON returned by schedule_agent_request.'),
+  watch_topic_result: GeneralAgentWatchTopicResultSchema.optional().describe('Required when outcome is "watch_topic". Copy the JSON returned by manage_watch_topic or list_watch_topics.'),
 });
-
-type GeneralAgentResponse = z.input<typeof GeneralAgentResponseSchema>;
 
 const CheckpointStepSchema = z.object({
   key: z.string().min(1),
@@ -439,6 +457,7 @@ async function buildPlanFromUserInput(
 ): Promise<{
   plan: ExecutionPlan | null;
   scheduleResult: GeneralAgentScheduleResult | null;
+  watchTopicResult: GeneralAgentWatchTopicResult | null;
   confidence: number;
   needsClarification: boolean;
   clarificationPrompt: string | null;
@@ -469,6 +488,7 @@ async function buildPlanFromUserInput(
     return {
       plan,
       scheduleResult: null,
+      watchTopicResult: null,
       confidence: 1.0,
       needsClarification: false,
       clarificationPrompt: null,
@@ -523,6 +543,7 @@ async function buildPlanFromUserInput(
     ...safeTools,
     createCurrentTimeTool(),
     createScheduleAgentRequestTool(task),
+    ...createWatchTopicTools({ organizationId: task.organization_id, userId: task.user_id }),
   ];
 
   const agent = createAgent({
@@ -548,6 +569,8 @@ async function buildPlanFromUserInput(
         '- When using run_at_iso, set request to the action text to run later (remove timing words so the scheduled command does not re-schedule itself).',
         '- Do NOT produce immediate execution steps for clearly scheduled requests unless the user explicitly wants both now and later.',
         '- If you set outcome="schedule", include schedule_result copied from the schedule_agent_request tool output and leave steps empty.',
+        '- If the request is to watch, monitor, alert on, list, or update mail topics, use manage_watch_topic or list_watch_topics, set outcome="watch_topic", include watch_topic_result copied from the tool output, and leave steps empty.',
+        '- Watch-topic requests are mail triage preferences, not calendar alarms. Do not create calendar steps for them.',
         '- worker_type MUST be one of: "gmail", "calendar", "docs", "sheets", "slides", "drive".',
         '- Do NOT specify tool names in your plan — specialists select their own tools.',
         '- If an email task has only a person name and no email after contact lookup, ask the user to provide the email address directly.',
@@ -588,11 +611,26 @@ async function buildPlanFromUserInput(
     return {
       plan: null,
       scheduleResult: scheduleError ? null : scheduleResult,
+      watchTopicResult: null,
       confidence: parsed.confidence,
       needsClarification: parsed.needs_clarification || parsed.confidence < CONFIDENCE_THRESHOLD || !scheduleResult || Boolean(scheduleError),
       clarificationPrompt: scheduleError
         ?? parsed.clarification_prompt
         ?? (!scheduleResult ? 'I could not schedule this yet. Share the exact timing and I will create it now.' : null),
+    };
+  }
+
+  if (parsed.outcome === 'watch_topic') {
+    const watchTopicResult = parsed.watch_topic_result ?? null;
+    const error = watchTopicResult ? null : 'I could not update watch topics yet. Please rephrase the topic you want me to watch.';
+
+    return {
+      plan: null,
+      scheduleResult: null,
+      watchTopicResult,
+      confidence: parsed.confidence,
+      needsClarification: parsed.needs_clarification || parsed.confidence < CONFIDENCE_THRESHOLD || Boolean(error),
+      clarificationPrompt: error ?? parsed.clarification_prompt ?? null,
     };
   }
 
@@ -620,6 +658,7 @@ async function buildPlanFromUserInput(
   return {
     plan,
     scheduleResult: null,
+    watchTopicResult: null,
     confidence: parsed.confidence,
     needsClarification: parsed.needs_clarification
       || parsed.confidence < CONFIDENCE_THRESHOLD
@@ -659,7 +698,7 @@ function validateHandoffContent(content: unknown): string | null {
 function hasExplicitSubjectInUserRequest(userRequest: string): boolean {
   const lower = userRequest.toLowerCase();
   return (
-    /\b(subject|objet|titre|title)\s*[:\-]/.test(lower)
+    /\b(subject|objet|titre|title)\s*[:-]/.test(lower)
     || /\b(avec\s+pour\s+objet|avec\s+comme\s+objet|with\s+subject)\b/.test(lower)
   );
 }
@@ -912,7 +951,7 @@ export async function generalAgentNode(state: AgentState): Promise<Partial<Agent
       ?? '';
 
     const normalizedRawRequest = String(rawUserRequest).trim();
-    const confirmationMatch = normalizedRawRequest.match(/^(?:confirm|yes)\s*[:\-]?\s+([\s\S]+)$/i);
+    const confirmationMatch = normalizedRawRequest.match(/^(?:confirm|yes)\s*[:-]?\s+([\s\S]+)$/i);
     const confirmedByPrefix = Boolean(confirmationMatch?.[1]?.trim());
 
     const conversationEntries = parseConversationContext(payload.conversation_context);
@@ -952,7 +991,7 @@ export async function generalAgentNode(state: AgentState): Promise<Partial<Agent
     const conversationContextBlock = buildConversationContextBlock(conversationEntries);
     const planningContextBlock = [memoryContextBlock, conversationContextBlock].filter((part) => Boolean(part)).join('\n\n');
 
-    const { plan, scheduleResult, confidence, needsClarification, clarificationPrompt } = await buildPlanFromUserInput(
+    const { plan, scheduleResult, watchTopicResult, confidence, needsClarification, clarificationPrompt } = await buildPlanFromUserInput(
       state.task,
       userRequest,
       plannerIntent,
@@ -977,6 +1016,31 @@ export async function generalAgentNode(state: AgentState): Promise<Partial<Agent
         router_completed_step_key: null,
         trace: [
           AuditLogger.createStep('General Agent', 'Created scheduled request', {
+            output_summary: summary,
+          }),
+        ],
+      };
+    }
+
+    if (watchTopicResult) {
+      const listedCount = typeof watchTopicResult.total === 'number' ? watchTopicResult.total : null;
+      const summary = watchTopicResult.confirmation_message
+        ?? (listedCount !== null
+          ? `You have ${listedCount} watch topic${listedCount === 1 ? '' : 's'}.`
+          : 'Watch topics updated.');
+
+      return {
+        task: {
+          ...state.task,
+          result: {
+            summary,
+            watch_topic: watchTopicResult,
+            outcome: 'watch_topic_updated',
+          },
+        },
+        router_completed_step_key: null,
+        trace: [
+          AuditLogger.createStep('General Agent', 'Handled watch-topic request', {
             output_summary: summary,
           }),
         ],

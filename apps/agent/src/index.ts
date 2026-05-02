@@ -15,6 +15,7 @@ import { initOTel, shutdownOTel } from './services/llm/otel-setup.js';
 import { telegramWebhookRouter } from './routes/webhooks/telegram.js';
 import { whatsAppWebhookRouter } from './routes/webhooks/whatsapp.js';
 import { processQueuedTask } from './services/taskSubscriber.js';
+import { messagingChannelLinkService } from './services/MessagingChannelLinkService.js';
 
 // Initialize OpenTelemetry
 if (config.ENABLE_LANGFUSE_TRACING) {
@@ -137,6 +138,46 @@ app.get('/api/gmail/labels', async (req, res) => {
   } catch (err: any) {
     console.error('Error fetching Gmail labels:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+function readBearerToken(headerValue: string | undefined): string | null {
+  if (!headerValue) return null;
+  const match = headerValue.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() ?? null;
+}
+
+app.post('/api/integrations/telegram/link-token', async (req, res) => {
+  const token = readBearerToken(req.header('authorization'));
+  if (!token) {
+    return res.status(401).json({ error: 'Missing bearer token' });
+  }
+
+  const { data: authData, error: authError } = await supabase.auth.getUser(token);
+  if (authError || !authData.user) {
+    return res.status(401).json({ error: 'Invalid bearer token' });
+  }
+
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('id, organization_id')
+    .eq('id', authData.user.id)
+    .single();
+
+  if (profileError || !profile?.organization_id) {
+    return res.status(403).json({ error: 'User profile or organization not found' });
+  }
+
+  try {
+    const link = await messagingChannelLinkService.createTelegramLinkToken({
+      organizationId: profile.organization_id,
+      userId: profile.id,
+    });
+
+    res.json(link);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to create Telegram link token';
+    res.status(500).json({ error: message });
   }
 });
 

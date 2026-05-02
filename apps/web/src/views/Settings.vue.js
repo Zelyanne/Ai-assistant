@@ -15,10 +15,13 @@ const toast = useToast();
 const integration = ref(null);
 const telegramIntegration = ref(null);
 const whatsappIntegration = ref(null);
+const telegramLink = ref(null);
 const settingsError = ref(null);
+const telegramLinkError = ref(null);
 const currentPreferences = ref([]);
 const hasChanges = ref(false);
 const saving = ref(false);
+const connectingTelegram = ref(false);
 function socialStatusLabel(item) {
     if (!item)
         return 'Not configured';
@@ -32,9 +35,15 @@ function socialStatusClass(item) {
         : 'bg-emerald-100 text-emerald-700';
 }
 const telegramStatusLabel = computed(() => socialStatusLabel(telegramIntegration.value));
-const telegramStatusClass = computed(() => socialStatusClass(telegramIntegration.value));
+const telegramStatusClass = computed(() => telegramLink.value?.status === 'active' ? 'bg-emerald-100 text-emerald-700' : socialStatusClass(telegramIntegration.value));
 const whatsappStatusLabel = computed(() => socialStatusLabel(whatsappIntegration.value));
 const whatsappStatusClass = computed(() => socialStatusClass(whatsappIntegration.value));
+const telegramConnectionLabel = computed(() => {
+    if (telegramLink.value?.status === 'active') {
+        return telegramLink.value.display_name || telegramLink.value.username || 'Telegram connected';
+    }
+    return telegramStatusLabel.value;
+});
 async function fetchIntegration() {
     settingsError.value = null;
     const { data: { user } } = await supabase.auth.getUser();
@@ -57,6 +66,58 @@ async function fetchIntegration() {
     currentPreferences.value = Array.isArray(googleIntegration?.label_preferences)
         ? googleIntegration.label_preferences.filter((value) => typeof value === 'string')
         : [];
+    const { data: linkRows, error: linkError } = await supabase
+        .from('messaging_channel_links')
+        .select('id, channel, status, username, display_name, linked_at, last_seen_at')
+        .eq('organization_id', userStore.profile.organization_id)
+        .eq('user_id', userStore.profile.id)
+        .eq('channel', 'telegram')
+        .eq('status', 'active')
+        .order('updated_at', { ascending: false })
+        .limit(1);
+    if (linkError) {
+        telegramLink.value = null;
+        telegramLinkError.value = 'Unable to load Telegram connection status.';
+    }
+    else {
+        telegramLink.value = linkRows?.[0] ?? null;
+        telegramLinkError.value = null;
+    }
+}
+async function connectTelegram() {
+    telegramLinkError.value = null;
+    connectingTelegram.value = true;
+    try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const accessToken = sessionData.session?.access_token;
+        if (!accessToken) {
+            throw new Error('Sign in again before connecting Telegram.');
+        }
+        const agentUrl = import.meta.env.VITE_AGENT_URL || 'http://localhost:3001';
+        const response = await fetch(`${agentUrl}/api/integrations/telegram/link-token`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+            },
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.deepLink) {
+            throw new Error(payload.error ?? 'Unable to create Telegram link.');
+        }
+        window.open(payload.deepLink, '_blank', 'noopener,noreferrer');
+        toast.add({
+            severity: 'info',
+            summary: 'Telegram Link Created',
+            detail: 'Telegram opened in a new tab. Press Start in the bot to finish connecting.',
+            life: 5000,
+        });
+    }
+    catch (error) {
+        telegramLinkError.value = error instanceof Error ? error.message : 'Failed to connect Telegram.';
+    }
+    finally {
+        connectingTelegram.value = false;
+    }
 }
 function handlePreferenceUpdate(prefs) {
     currentPreferences.value = prefs;
@@ -191,18 +252,60 @@ __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.
     ...{ class: "rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide" },
     ...{ class: (__VLS_ctx.telegramStatusClass) },
 });
-(__VLS_ctx.telegramStatusLabel);
+(__VLS_ctx.telegramConnectionLabel);
 __VLS_asFunctionalElement(__VLS_intrinsicElements.ul, __VLS_intrinsicElements.ul)({
     ...{ class: "mt-4 space-y-2 text-sm text-slate-600" },
 });
 __VLS_asFunctionalElement(__VLS_intrinsicElements.li, __VLS_intrinsicElements.li)({});
 __VLS_asFunctionalElement(__VLS_intrinsicElements.li, __VLS_intrinsicElements.li)({});
 __VLS_asFunctionalElement(__VLS_intrinsicElements.li, __VLS_intrinsicElements.li)({});
-if (__VLS_ctx.telegramIntegration?.last_sync_at) {
+if (__VLS_ctx.telegramLinkError) {
+    const __VLS_14 = {}.Message;
+    /** @type {[typeof __VLS_components.Message, typeof __VLS_components.Message, ]} */ ;
+    // @ts-ignore
+    const __VLS_15 = __VLS_asFunctionalComponent(__VLS_14, new __VLS_14({
+        severity: "warn",
+        ...{ class: "mt-4" },
+        closable: (false),
+    }));
+    const __VLS_16 = __VLS_15({
+        severity: "warn",
+        ...{ class: "mt-4" },
+        closable: (false),
+    }, ...__VLS_functionalComponentArgsRest(__VLS_15));
+    __VLS_17.slots.default;
+    (__VLS_ctx.telegramLinkError);
+    var __VLS_17;
+}
+const __VLS_18 = {}.Button;
+/** @type {[typeof __VLS_components.Button, ]} */ ;
+// @ts-ignore
+const __VLS_19 = __VLS_asFunctionalComponent(__VLS_18, new __VLS_18({
+    ...{ 'onClick': {} },
+    ...{ class: "mt-5" },
+    label: (__VLS_ctx.telegramLink?.status === 'active' ? 'Reconnect Telegram' : 'Connect Telegram'),
+    icon: "pi pi-send",
+    loading: (__VLS_ctx.connectingTelegram),
+}));
+const __VLS_20 = __VLS_19({
+    ...{ 'onClick': {} },
+    ...{ class: "mt-5" },
+    label: (__VLS_ctx.telegramLink?.status === 'active' ? 'Reconnect Telegram' : 'Connect Telegram'),
+    icon: "pi pi-send",
+    loading: (__VLS_ctx.connectingTelegram),
+}, ...__VLS_functionalComponentArgsRest(__VLS_19));
+let __VLS_22;
+let __VLS_23;
+let __VLS_24;
+const __VLS_25 = {
+    onClick: (__VLS_ctx.connectTelegram)
+};
+var __VLS_21;
+if (__VLS_ctx.telegramLink?.last_seen_at || __VLS_ctx.telegramLink?.linked_at || __VLS_ctx.telegramIntegration?.last_sync_at) {
     __VLS_asFunctionalElement(__VLS_intrinsicElements.p, __VLS_intrinsicElements.p)({
         ...{ class: "mt-4 text-xs italic text-slate-400" },
     });
-    (new Date(__VLS_ctx.telegramIntegration.last_sync_at).toLocaleString());
+    (new Date(__VLS_ctx.telegramLink?.last_seen_at || __VLS_ctx.telegramLink?.linked_at || __VLS_ctx.telegramIntegration?.last_sync_at || '').toLocaleString());
 }
 __VLS_asFunctionalElement(__VLS_intrinsicElements.article, __VLS_intrinsicElements.article)({
     ...{ class: "rounded-2xl border border-slate-200 bg-slate-50 p-5" },
@@ -269,8 +372,8 @@ __VLS_asFunctionalElement(__VLS_intrinsicElements.h2, __VLS_intrinsicElements.h2
 });
 /** @type {[typeof ScheduleManager, ]} */ ;
 // @ts-ignore
-const __VLS_14 = __VLS_asFunctionalComponent(ScheduleManager, new ScheduleManager({}));
-const __VLS_15 = __VLS_14({}, ...__VLS_functionalComponentArgsRest(__VLS_14));
+const __VLS_26 = __VLS_asFunctionalComponent(ScheduleManager, new ScheduleManager({}));
+const __VLS_27 = __VLS_26({}, ...__VLS_functionalComponentArgsRest(__VLS_26));
 if (__VLS_ctx.integration) {
     __VLS_asFunctionalElement(__VLS_intrinsicElements.section, __VLS_intrinsicElements.section)({
         ...{ class: "bg-white p-8 rounded-executive border border-slate-200 shadow-sm" },
@@ -288,10 +391,10 @@ if (__VLS_ctx.integration) {
         ...{ class: "text-xl font-bold text-executive-primary font-sans" },
     });
     if (__VLS_ctx.hasChanges) {
-        const __VLS_17 = {}.Button;
+        const __VLS_29 = {}.Button;
         /** @type {[typeof __VLS_components.Button, ]} */ ;
         // @ts-ignore
-        const __VLS_18 = __VLS_asFunctionalComponent(__VLS_17, new __VLS_17({
+        const __VLS_30 = __VLS_asFunctionalComponent(__VLS_29, new __VLS_29({
             ...{ 'onClick': {} },
             label: "Save Changes",
             icon: "pi pi-check",
@@ -299,41 +402,41 @@ if (__VLS_ctx.integration) {
             severity: "success",
             size: "small",
         }));
-        const __VLS_19 = __VLS_18({
+        const __VLS_31 = __VLS_30({
             ...{ 'onClick': {} },
             label: "Save Changes",
             icon: "pi pi-check",
             loading: (__VLS_ctx.saving),
             severity: "success",
             size: "small",
-        }, ...__VLS_functionalComponentArgsRest(__VLS_18));
-        let __VLS_21;
-        let __VLS_22;
-        let __VLS_23;
-        const __VLS_24 = {
+        }, ...__VLS_functionalComponentArgsRest(__VLS_30));
+        let __VLS_33;
+        let __VLS_34;
+        let __VLS_35;
+        const __VLS_36 = {
             onClick: (__VLS_ctx.savePreferences)
         };
-        var __VLS_20;
+        var __VLS_32;
     }
     /** @type {[typeof GmailLabelSelector, ]} */ ;
     // @ts-ignore
-    const __VLS_25 = __VLS_asFunctionalComponent(GmailLabelSelector, new GmailLabelSelector({
+    const __VLS_37 = __VLS_asFunctionalComponent(GmailLabelSelector, new GmailLabelSelector({
         ...{ 'onUpdate:preferences': {} },
         organizationId: (__VLS_ctx.integration.organization_id),
         initialPreferences: (__VLS_ctx.currentPreferences),
     }));
-    const __VLS_26 = __VLS_25({
+    const __VLS_38 = __VLS_37({
         ...{ 'onUpdate:preferences': {} },
         organizationId: (__VLS_ctx.integration.organization_id),
         initialPreferences: (__VLS_ctx.currentPreferences),
-    }, ...__VLS_functionalComponentArgsRest(__VLS_25));
-    let __VLS_28;
-    let __VLS_29;
-    let __VLS_30;
-    const __VLS_31 = {
+    }, ...__VLS_functionalComponentArgsRest(__VLS_37));
+    let __VLS_40;
+    let __VLS_41;
+    let __VLS_42;
+    const __VLS_43 = {
         'onUpdate:preferences': (__VLS_ctx.handlePreferenceUpdate)
     };
-    var __VLS_27;
+    var __VLS_39;
 }
 /** @type {__VLS_StyleScopedClasses['space-y-8']} */ ;
 /** @type {__VLS_StyleScopedClasses['p-6']} */ ;
@@ -439,6 +542,8 @@ if (__VLS_ctx.integration) {
 /** @type {__VLS_StyleScopedClasses['space-y-2']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-slate-600']} */ ;
+/** @type {__VLS_StyleScopedClasses['mt-4']} */ ;
+/** @type {__VLS_StyleScopedClasses['mt-5']} */ ;
 /** @type {__VLS_StyleScopedClasses['mt-4']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
 /** @type {__VLS_StyleScopedClasses['italic']} */ ;
@@ -550,14 +655,18 @@ const __VLS_self = (await import('vue')).defineComponent({
             integration: integration,
             telegramIntegration: telegramIntegration,
             whatsappIntegration: whatsappIntegration,
+            telegramLink: telegramLink,
             settingsError: settingsError,
+            telegramLinkError: telegramLinkError,
             currentPreferences: currentPreferences,
             hasChanges: hasChanges,
             saving: saving,
-            telegramStatusLabel: telegramStatusLabel,
+            connectingTelegram: connectingTelegram,
             telegramStatusClass: telegramStatusClass,
             whatsappStatusLabel: whatsappStatusLabel,
             whatsappStatusClass: whatsappStatusClass,
+            telegramConnectionLabel: telegramConnectionLabel,
+            connectTelegram: connectTelegram,
             handlePreferenceUpdate: handlePreferenceUpdate,
             savePreferences: savePreferences,
         };
