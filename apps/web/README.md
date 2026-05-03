@@ -20,6 +20,6 @@ Create `apps/web/.env` from `apps/web/.env.example`.
 
 Required values:
 
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
-- `VITE_AGENT_URL` (defaults to `http://localhost:3001`)
+- `VITE_SUPABASE_URL_PROJECT_GOOGLE_ASSITANT`
+- `VITE_SUPABASE_ANON_KEY_PROJECT_GOOGLE_ASSITANT`
+- `VITE_AGENT_URL_PROJECT_GOOGLE_ASSITANT` (defaults to `http://localhost:3001`)

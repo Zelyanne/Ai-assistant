@@ -11,7 +11,7 @@
 import type { AssistantCommandIntent, ExecutionPlan, Task } from '@ai-assistant/shared';
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { ChatMistralAI } from '@langchain/mistralai';
-import { createAgent, modelCallLimitMiddleware, toolStrategy } from 'langchain';
+import { createAgent, toolStrategy } from 'langchain';
 import { z } from 'zod';
 import { config } from '../../config/index.js';
 import { tracingService } from '../../services/llm/tracing.js';
@@ -23,6 +23,7 @@ import { PerimeterGuard } from '../../guards/PerimeterGuard.js';
 import { ScheduleManageProcessor } from '../../processors/ScheduleManageProcessor.js';
 import { getSpecialistPrompt } from '../../prompts/specialistPrompts.js';
 import { createCurrentTimeTool } from '../../tools/timeDateTool.js';
+import { createSearchWebResearchTool } from '../../tools/researchTools.js';
 import { createWatchTopicTools } from '../../tools/watchTopicTools.js';
 import type { AgentState } from '../graph.js';
 import { buildEscalationPayload } from '../escalation.js';
@@ -357,7 +358,7 @@ const PlanStepSchema = z.object({
  * If confidence < threshold, steps will be empty and clarification fields filled.
  */
 const GeneralAgentResponseSchema = z.object({
-  outcome: z.enum(['plan', 'schedule', 'watch_topic']).default('plan').describe('Use "schedule" only after you have already created the schedule via schedule_agent_request. Use "watch_topic" only after calling a watch-topic tool.'),
+  outcome: z.enum(['chat', 'plan', 'schedule', 'watch_topic']).default('plan').describe('Use "chat" for ordinary conversation that does not require Google Workspace action. Use "schedule" only after you have already created the schedule via schedule_agent_request. Use "watch_topic" only after calling a watch-topic tool.'),
   confidence: z.number().min(0).max(1).describe('Confidence in understanding the request (0-1). Be generous — most natural language requests should be >= 0.8.'),
   interpretation: z.string().describe('How you interpreted the user request'),
   needs_clarification: z.boolean().describe('True ONLY if the request is truly ambiguous (e.g. missing recipient, subject is unclear, dates are completely vague). Default false for clear requests.'),
@@ -365,6 +366,7 @@ const GeneralAgentResponseSchema = z.object({
   summary: z.string().describe('One-line summary of the plan'),
   reasoning: z.string().describe('Brief reasoning for the plan structure'),
   steps: z.array(PlanStepSchema).describe('Ordered execution steps. Empty if clarification needed.'),
+  chat_response: z.string().optional().describe('Required when outcome is "chat". A concise, natural reply to the user.'),
   schedule_result: GeneralAgentScheduleResultSchema.optional().describe('Required when outcome is "schedule". Copy the JSON returned by schedule_agent_request.'),
   watch_topic_result: GeneralAgentWatchTopicResultSchema.optional().describe('Required when outcome is "watch_topic". Copy the JSON returned by manage_watch_topic or list_watch_topics.'),
 });
@@ -458,6 +460,7 @@ async function buildPlanFromUserInput(
   plan: ExecutionPlan | null;
   scheduleResult: GeneralAgentScheduleResult | null;
   watchTopicResult: GeneralAgentWatchTopicResult | null;
+  chatResponse: string | null;
   confidence: number;
   needsClarification: boolean;
   clarificationPrompt: string | null;
@@ -489,6 +492,7 @@ async function buildPlanFromUserInput(
       plan,
       scheduleResult: null,
       watchTopicResult: null,
+      chatResponse: null,
       confidence: 1.0,
       needsClarification: false,
       clarificationPrompt: null,
@@ -541,6 +545,7 @@ async function buildPlanFromUserInput(
 
   const generalAgentTools = [
     ...safeTools,
+    createSearchWebResearchTool(),
     createCurrentTimeTool(),
     createScheduleAgentRequestTool(task),
     ...createWatchTopicTools({ organizationId: task.organization_id, userId: task.user_id }),
@@ -551,7 +556,6 @@ async function buildPlanFromUserInput(
     tools: generalAgentTools,
     systemPrompt: getSpecialistPrompt('generalAgent'),
     responseFormat: toolStrategy(GeneralAgentResponseSchema),
-    middleware: [modelCallLimitMiddleware({ runLimit: 10 })],
   });
 
   const result = await agent.invoke({
@@ -564,6 +568,9 @@ async function buildPlanFromUserInput(
         'Interpret this request and produce an execution plan.',
         '',
         'HARD CONSTRAINTS:',
+        '- If the request is ordinary conversation, greeting, small talk, or a general assistant question that does not require Google Workspace action, set outcome="chat", answer in chat_response, and leave steps empty.',
+        '- Use search_web_research only when the request needs current/public external facts, news, market data, or source-backed research. Do not use web research for greetings, small talk, private user data, or Google Workspace content.',
+        '- If search_web_research returns ok=false, continue gracefully: answer that web research is unavailable or ask whether to proceed without external research.',
         '- If the request is clearly future-oriented or recurring, call get_current_time first, then call schedule_agent_request, and set outcome="schedule".',
         '- For relative one-off timing (e.g. "in 10 minutes"), compute an absolute datetime and pass it in schedule_agent_request.run_at_iso.',
         '- When using run_at_iso, set request to the action text to run later (remove timing words so the scheduled command does not re-schedule itself).',
@@ -597,6 +604,18 @@ async function buildPlanFromUserInput(
   tracingService.handleSuccess();
   await tracingService.flush();
 
+  if (parsed.outcome === 'chat') {
+    return {
+      plan: null,
+      scheduleResult: null,
+      watchTopicResult: null,
+      chatResponse: parsed.chat_response ?? parsed.summary,
+      confidence: parsed.confidence,
+      needsClarification: false,
+      clarificationPrompt: null,
+    };
+  }
+
   if (parsed.outcome === 'schedule') {
     let scheduleResult = parsed.schedule_result ?? null;
 
@@ -612,6 +631,7 @@ async function buildPlanFromUserInput(
       plan: null,
       scheduleResult: scheduleError ? null : scheduleResult,
       watchTopicResult: null,
+      chatResponse: null,
       confidence: parsed.confidence,
       needsClarification: parsed.needs_clarification || parsed.confidence < CONFIDENCE_THRESHOLD || !scheduleResult || Boolean(scheduleError),
       clarificationPrompt: scheduleError
@@ -628,6 +648,7 @@ async function buildPlanFromUserInput(
       plan: null,
       scheduleResult: null,
       watchTopicResult,
+      chatResponse: null,
       confidence: parsed.confidence,
       needsClarification: parsed.needs_clarification || parsed.confidence < CONFIDENCE_THRESHOLD || Boolean(error),
       clarificationPrompt: error ?? parsed.clarification_prompt ?? null,
@@ -655,10 +676,24 @@ async function buildPlanFromUserInput(
     })),
   };
 
+  const hasNoExecutableSteps = plan.steps.length === 0;
+  if (hasNoExecutableSteps && !parsed.needs_clarification && unsupportedWorkerTypes.length === 0) {
+    return {
+      plan: null,
+      scheduleResult: null,
+      watchTopicResult: null,
+      chatResponse: parsed.chat_response ?? parsed.summary,
+      confidence: parsed.confidence,
+      needsClarification: false,
+      clarificationPrompt: null,
+    };
+  }
+
   return {
     plan,
     scheduleResult: null,
     watchTopicResult: null,
+    chatResponse: null,
     confidence: parsed.confidence,
     needsClarification: parsed.needs_clarification
       || parsed.confidence < CONFIDENCE_THRESHOLD
@@ -991,12 +1026,27 @@ export async function generalAgentNode(state: AgentState): Promise<Partial<Agent
     const conversationContextBlock = buildConversationContextBlock(conversationEntries);
     const planningContextBlock = [memoryContextBlock, conversationContextBlock].filter((part) => Boolean(part)).join('\n\n');
 
-    const { plan, scheduleResult, watchTopicResult, confidence, needsClarification, clarificationPrompt } = await buildPlanFromUserInput(
+    const { plan, scheduleResult, watchTopicResult, chatResponse, confidence, needsClarification, clarificationPrompt } = await buildPlanFromUserInput(
       state.task,
       userRequest,
       plannerIntent,
       planningContextBlock,
     );
+
+    if (chatResponse) {
+      return {
+        task: {
+          ...state.task,
+          result: {
+            summary: chatResponse,
+            chat_response: chatResponse,
+            outcome: 'chat_response',
+          },
+        },
+        router_completed_step_key: null,
+        trace: [AuditLogger.createStep('General Agent', 'Responded conversationally', { output_summary: chatResponse })],
+      };
+    }
 
     if (scheduleResult) {
       const nextRun = asNonEmptyString(scheduleResult.next_run);

@@ -183,9 +183,9 @@ describe('EmailTriageProcessor', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    delete process.env.TRIAGE_BATCH_CONCURRENCY;
-    delete process.env.TRIAGE_BATCH_INPUT_TOKENS;
-    delete process.env.TRIAGE_BATCH_OUTPUT_TOKENS;
+    delete process.env.TRIAGE_BATCH_CONCURRENCY_PROJECT_GOOGLE_ASSITANT;
+    delete process.env.TRIAGE_BATCH_INPUT_TOKENS_PROJECT_GOOGLE_ASSITANT;
+    delete process.env.TRIAGE_BATCH_OUTPUT_TOKENS_PROJECT_GOOGLE_ASSITANT;
 
     state = {
       threads: [],

@@ -20,7 +20,7 @@ const fetchLabels = async () => {
   loading.value = true;
   error.value = null;
   try {
-    const agentUrl = import.meta.env.VITE_AGENT_URL || 'http://localhost:3001';
+    const agentUrl = import.meta.env.VITE_AGENT_URL_PROJECT_GOOGLE_ASSITANT || 'http://localhost:3001';
     const response = await fetch(`${agentUrl}/api/gmail/labels?organizationId=${props.organizationId}`);
     
     if (!response.ok) {

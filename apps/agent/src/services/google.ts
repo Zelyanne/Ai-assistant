@@ -6,12 +6,9 @@ import TurndownService from 'turndown';
 import { runWithConcurrency } from './emailBatching.js';
 
 const ENCRYPTION_SECRET = config.ENCRYPTION_SECRET;
-const DEFAULT_MAX_RESULTS = parseInt(process.env.INGESTION_MAX_RESULTS || '20', 10);
+const DEFAULT_MAX_RESULTS = config.INGESTION_MAX_RESULTS;
 const MAX_BODY_SIZE = 1024 * 1024; // 1MB limit
-const DEFAULT_THREAD_DETAIL_CONCURRENCY = parseInt(
-  process.env.GMAIL_THREAD_DETAIL_CONCURRENCY || '4',
-  10,
-);
+const DEFAULT_THREAD_DETAIL_CONCURRENCY = config.GMAIL_THREAD_DETAIL_CONCURRENCY;
 
 export class GoogleIngestionService {
   private maxResults: number;

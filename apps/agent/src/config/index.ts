@@ -6,6 +6,11 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const envPath = path.resolve(__dirname, '../../.env');
 const UTC_TIME_LABEL_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+const PROJECT_ENV_SUFFIX = '_PROJECT_GOOGLE_ASSITANT';
+
+export function readProjectEnv(name: string): string | undefined {
+  return process.env[`${name}${PROJECT_ENV_SUFFIX}`];
+}
 
 // Check if .env exists, if not, try current dir (dist/ or src/)
 import { existsSync } from 'fs';
@@ -28,7 +33,7 @@ function parseEodTriggerTimeOverrides(
   } catch {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: 'EOD_TRIGGER_TIME_BY_ORG_JSON must be valid JSON',
+      message: 'EOD_TRIGGER_TIME_BY_ORG_JSON_PROJECT_GOOGLE_ASSITANT must be valid JSON',
     });
     return z.NEVER;
   }
@@ -36,7 +41,7 @@ function parseEodTriggerTimeOverrides(
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: 'EOD_TRIGGER_TIME_BY_ORG_JSON must be a JSON object keyed by organization id',
+      message: 'EOD_TRIGGER_TIME_BY_ORG_JSON_PROJECT_GOOGLE_ASSITANT must be a JSON object keyed by organization id',
     });
     return z.NEVER;
   }
@@ -84,6 +89,11 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((val, ctx) => parseEodTriggerTimeOverrides(val, ctx)),
+  INGESTION_MAX_RESULTS: z.coerce.number().int().positive().default(20),
+  GMAIL_THREAD_DETAIL_CONCURRENCY: z.coerce.number().int().positive().default(4),
+  TRIAGE_BATCH_INPUT_TOKENS: z.coerce.number().int().positive().default(13_000),
+  TRIAGE_BATCH_CONCURRENCY: z.coerce.number().int().positive().default(1),
+  TRIAGE_BATCH_OUTPUT_TOKENS: z.coerce.number().int().positive().default(1_800),
   GOOGLE_OAUTH_CLIENT_ID: z.string().min(1).transform((val) => val.trim()),
   GOOGLE_OAUTH_CLIENT_SECRET: z.string().min(1).transform((val) => val.trim()),
   GOOGLE_OAUTH_REDIRECT_URI: z.string().url().transform((val) => val.trim()),
@@ -118,10 +128,14 @@ const envSchema = z.object({
   LANGSMITH_PROJECT: z.string().min(1).default('ai-assistant').transform((val) => val.trim()),
 });
 
-const _env = envSchema.safeParse(process.env);
+const projectEnv = Object.fromEntries(
+  Object.keys(envSchema.shape).map((key) => [key, readProjectEnv(key)]),
+);
+
+const _env = envSchema.safeParse(projectEnv);
 
 if (!_env.success) {
-  console.error('❌ Invalid environment variables:', _env.error.format());
+  console.error(`❌ Invalid environment variables. Expected names use suffix ${PROJECT_ENV_SUFFIX}:`, _env.error.format());
   process.exit(1);
 }
 
@@ -130,13 +144,13 @@ export const config = _env.data;
 // Validate Langfuse configuration if enabled
 if (config.ENABLE_LANGFUSE_TRACING) {
   if (!config.LANGFUSE_PUBLIC_KEY || !config.LANGFUSE_SECRET_KEY) {
-    console.warn('[Config Warning] ENABLE_LANGFUSE_TRACING is enabled but LANGFUSE_PUBLIC_KEY or LANGFUSE_SECRET_KEY is missing');
+    console.warn('[Config Warning] ENABLE_LANGFUSE_TRACING_PROJECT_GOOGLE_ASSITANT is enabled but LANGFUSE_PUBLIC_KEY_PROJECT_GOOGLE_ASSITANT or LANGFUSE_SECRET_KEY_PROJECT_GOOGLE_ASSITANT is missing');
   }
 }
 
 // Legacy LangSmith validation (deprecated)
 if (config.LANGSMITH_TRACING && !config.LANGSMITH_API_KEY) {
-  console.warn('[Config Warning] LANGSMITH_TRACING is enabled but LANGSMITH_API_KEY is missing (LangSmith is deprecated)');
+  console.warn('[Config Warning] LANGSMITH_TRACING_PROJECT_GOOGLE_ASSITANT is enabled but LANGSMITH_API_KEY_PROJECT_GOOGLE_ASSITANT is missing (LangSmith is deprecated)');
 }
 
 console.log(`[Config] Loaded configuration for Supabase URL: ${config.SUPABASE_URL}`);

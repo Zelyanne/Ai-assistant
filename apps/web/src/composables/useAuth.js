@@ -28,7 +28,7 @@ export function useAuth() {
             const organizationId = session.user.user_metadata.organization_id;
             const userId = session.user.id;
             if (organizationId) {
-                const agentUrl = import.meta.env.VITE_AGENT_URL || 'http://localhost:3001';
+                const agentUrl = import.meta.env.VITE_AGENT_URL_PROJECT_GOOGLE_ASSITANT || 'http://localhost:3001';
                 await fetch(`${agentUrl}/api/tokens`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },

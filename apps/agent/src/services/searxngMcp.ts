@@ -26,7 +26,7 @@ export class SearxngMcpService {
     }
 
     // Dev auto-discovery default: use local MCP endpoint when no env is provided.
-    return 'http://127.0.0.1:3000/mcp';
+    return 'http://127.0.0.1:3100/mcp';
   }
 
   private requestHeaders(): Headers {

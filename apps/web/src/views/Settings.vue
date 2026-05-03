@@ -126,7 +126,7 @@ async function connectTelegram(): Promise<void> {
       throw new Error('Sign in again before connecting Telegram.');
     }
 
-    const agentUrl = import.meta.env.VITE_AGENT_URL || 'http://localhost:3001';
+    const agentUrl = import.meta.env.VITE_AGENT_URL_PROJECT_GOOGLE_ASSITANT || 'http://localhost:3001';
     const response = await fetch(`${agentUrl}/api/integrations/telegram/link-token`, {
       method: 'POST',
       headers: {
@@ -314,8 +314,8 @@ onMounted(fetchIntegration);
                   Meta Cloud API
                 </h4>
                 <ul class="mt-2 space-y-2 text-sm text-slate-600">
-                  <li>`WHATSAPP_API_KEY` and `WHATSAPP_PHONE_NUMBER_ID` are required for outbound sends.</li>
-                  <li>`WHATSAPP_WEBHOOK_SECRET` secures inbound webhook validation and verification.</li>
+                  <li>`WHATSAPP_API_KEY_PROJECT_GOOGLE_ASSITANT` and `WHATSAPP_PHONE_NUMBER_ID_PROJECT_GOOGLE_ASSITANT` are required for outbound sends.</li>
+                  <li>`WHATSAPP_WEBHOOK_SECRET_PROJECT_GOOGLE_ASSITANT` secures inbound webhook validation and verification.</li>
                   <li>Configure the WhatsApp webhook route for both incoming messages and delivery callbacks.</li>
                 </ul>
               </div>
@@ -325,8 +325,8 @@ onMounted(fetchIntegration);
                   Twilio
                 </h4>
                 <ul class="mt-2 space-y-2 text-sm text-slate-600">
-                  <li>`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_WHATSAPP_PHONE_NUMBER` are required.</li>
-                  <li>`WHATSAPP_WEBHOOK_SECRET` is also used to validate Twilio webhook signatures.</li>
+                  <li>`TWILIO_ACCOUNT_SID_PROJECT_GOOGLE_ASSITANT`, `TWILIO_AUTH_TOKEN_PROJECT_GOOGLE_ASSITANT`, and `TWILIO_WHATSAPP_PHONE_NUMBER_PROJECT_GOOGLE_ASSITANT` are required.</li>
+                  <li>`WHATSAPP_WEBHOOK_SECRET_PROJECT_GOOGLE_ASSITANT` is also used to validate Twilio webhook signatures.</li>
                   <li>Set the inbound webhook URL to the WhatsApp route and keep the phone number in WhatsApp format.</li>
                 </ul>
               </div>

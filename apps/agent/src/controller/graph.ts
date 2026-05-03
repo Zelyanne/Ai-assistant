@@ -165,6 +165,11 @@ interface ChannelContext {
   correlationId?: string;
 }
 
+interface CommandCenterReplyContext {
+  conversationId: string;
+  correlationId: string;
+}
+
 type UserInitiatedChannel = "web" | "telegram" | "whatsapp";
 
 function extractChannelContext(payload: unknown): ChannelContext {
@@ -194,6 +199,12 @@ function asRecord(value: unknown): Record<string, unknown> {
   }
 
   return value as Record<string, unknown>;
+}
+
+function asNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : null;
 }
 
 function getUserInitiatedCommandChannel(task: Task): UserInitiatedChannel | null {
@@ -250,6 +261,18 @@ function isUserInitiatedConversationTask(task: Task): boolean {
   return payload.user_initiated === true;
 }
 
+function extractCommandCenterReplyContext(task: Task): CommandCenterReplyContext | null {
+  if (getUserInitiatedCommandChannel(task) !== "web") return null;
+
+  const payload = asRecord(task.payload);
+  const conversationId = asNonEmptyString(payload.conversation_id);
+  const correlationId = asNonEmptyString(payload.correlation_id);
+
+  if (!conversationId || !correlationId) return null;
+
+  return { conversationId, correlationId };
+}
+
 function buildUserFacingReplyMessage(
   task: Task,
   status: Task["status"],
@@ -262,6 +285,7 @@ function buildUserFacingReplyMessage(
   const summary = typeof resultRecord.summary === "string" ? resultRecord.summary.trim() : "";
   const reason = typeof resultRecord.reason === "string" ? resultRecord.reason.trim() : "";
   const prompt = typeof resultRecord.prompt === "string" ? resultRecord.prompt.trim() : "";
+  const chatResponse = typeof resultRecord.chat_response === "string" ? resultRecord.chat_response.trim() : "";
 
   const isInternalRunSummary = (value: string): boolean => {
     const lower = value.toLowerCase();
@@ -284,6 +308,10 @@ function buildUserFacingReplyMessage(
   if (status === "escalation" || status === "error") {
     const detail = prompt || reason || stateError || `La tâche s’est terminée avec le statut ${status}.`;
     return `Je n’ai pas pu terminer automatiquement.\n\n${detail}`;
+  }
+
+  if (chatResponse) {
+    return chatResponse;
   }
 
   const lines: string[] = [];
@@ -320,6 +348,78 @@ function buildUserFacingReplyMessage(
   }
 
   return lines.join("\n");
+}
+
+async function syncCommandCenterAssistantMessage(
+  task: Task,
+  status: Task["status"],
+  result: Json,
+  stateError: string | null,
+): Promise<void> {
+  if (!task.id) return;
+
+  const replyContext = extractCommandCenterReplyContext(task);
+  if (!replyContext) return;
+
+  const taskForReply: Task = {
+    ...task,
+    status,
+    result: result as unknown as Task["result"],
+  };
+  const content = buildUserFacingReplyMessage(taskForReply, status, stateError);
+  const now = new Date().toISOString();
+
+  const { data: existingMessage, error: selectError } = await supabase
+    .from("command_messages")
+    .select("id")
+    .eq("organization_id", task.organization_id)
+    .eq("conversation_id", replyContext.conversationId)
+    .eq("correlation_id", replyContext.correlationId)
+    .eq("role", "assistant")
+    .maybeSingle();
+
+  if (selectError) {
+    throw new Error(selectError.message);
+  }
+
+  const existingId = asNonEmptyString((existingMessage as { id?: unknown } | null)?.id);
+
+  if (existingId) {
+    const { error: updateError } = await supabase
+      .from("command_messages")
+      .update({
+        state: status,
+        content,
+        source_task_id: task.id,
+        updated_at: now,
+      })
+      .eq("id", existingId);
+
+    if (updateError) {
+      throw new Error(updateError.message);
+    }
+
+    return;
+  }
+
+  const { error: insertError } = await supabase
+    .from("command_messages")
+    .insert({
+      conversation_id: replyContext.conversationId,
+      organization_id: task.organization_id,
+      role: "assistant",
+      content,
+      state: status,
+      channel: "web",
+      source_task_id: task.id,
+      correlation_id: replyContext.correlationId,
+      metadata: { generated_by: "agent_finalize" },
+      updated_at: now,
+    });
+
+  if (insertError) {
+    throw new Error(insertError.message);
+  }
 }
 
 function isHighRiskPayload(payload: unknown): boolean {
@@ -1665,6 +1765,20 @@ async function finalizeTask(
       .eq("id", state.task.id);
 
     if (taskError) throw new Error(taskError.message);
+
+    try {
+      await syncCommandCenterAssistantMessage(
+        state.task,
+        status,
+        persistedResult,
+        state.error ?? null,
+      );
+    } catch (commandMessageError: unknown) {
+      const safeMessage = redactErrorMessage(commandMessageError);
+      console.error(
+        `[Graph][${state.task.id}] Command Center reply sync failed: ${safeMessage}`,
+      );
+    }
 
     // 2. Flush Audit Log
     const channelContext = extractChannelContext(state.task.payload);

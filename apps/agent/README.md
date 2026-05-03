@@ -32,24 +32,24 @@ Required groups:
 - Supabase: URL + service role key
 - LLM provider keys and default model
 - Google OAuth client values
-- 32-character `ENCRYPTION_SECRET`
+- 32-character `ENCRYPTION_SECRET_PROJECT_GOOGLE_ASSITANT`
 - Optional tracing controls (Langfuse, legacy LangSmith)
-- Scheduler controls such as `EOD_TRIGGER_TIME_UTC` (UTC `HH:MM`, default `23:00`) and optional per-org overrides via `EOD_TRIGGER_TIME_BY_ORG_JSON`
+- Scheduler controls such as `EOD_TRIGGER_TIME_UTC_PROJECT_GOOGLE_ASSITANT` (UTC `HH:MM`, default `23:00`) and optional per-org overrides via `EOD_TRIGGER_TIME_BY_ORG_JSON_PROJECT_GOOGLE_ASSITANT`
 
 ## Observability
 
-- Primary tracing path is Langfuse (`ENABLE_LANGFUSE_TRACING=true`).
+- Primary tracing path is Langfuse (`ENABLE_LANGFUSE_TRACING_PROJECT_GOOGLE_ASSITANT=true`).
 - Legacy LangSmith flags remain for rollback compatibility.
 - Task execution metadata includes task/org/action context for filtering.
 
 ## Schedule Cron Runbook
 
-The user schedule cron loop starts with the agent process and polls on `CRON_POLL_INTERVAL_MS`.
+The user schedule cron loop starts with the agent process and polls on `CRON_POLL_INTERVAL_MS_PROJECT_GOOGLE_ASSITANT`.
 
 ### Production checks
 
 - Confirm boot logs include `[CronSchedulerService] Starting cron scheduler monitor...`.
-- Confirm env values are present in deployment: `CRON_POLL_INTERVAL_MS`, `DEFAULT_TIMEZONE`, `MAX_SCHEDULE_FAILURES`.
+- Confirm env values are present in deployment: `CRON_POLL_INTERVAL_MS_PROJECT_GOOGLE_ASSITANT`, `DEFAULT_TIMEZONE_PROJECT_GOOGLE_ASSITANT`, `MAX_SCHEDULE_FAILURES_PROJECT_GOOGLE_ASSITANT`.
 - Validate queueing by checking fresh `tasks` rows with `payload.schedule_id` for due schedules.
 
 ### Poll interval monitoring

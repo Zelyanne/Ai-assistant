@@ -8,7 +8,8 @@ services:
       - ./apps/agent/.env
     environment:
       NODE_ENV: production
-      PORT: 3001
+      PORT_PROJECT_GOOGLE_ASSITANT: 3001
+      NODE_ENV_PROJECT_GOOGLE_ASSITANT: production
     ports:
       - "3001:3001"
     restart: unless-stopped
@@ -19,9 +20,9 @@ services:
       dockerfile: Dockerfile
       target: web
       args:
-        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
-        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
-        VITE_AGENT_URL: ${VITE_AGENT_URL:-http://localhost:3001}
+        VITE_SUPABASE_URL_PROJECT_GOOGLE_ASSITANT: ${VITE_SUPABASE_URL_PROJECT_GOOGLE_ASSITANT:-}
+        VITE_SUPABASE_ANON_KEY_PROJECT_GOOGLE_ASSITANT: ${VITE_SUPABASE_ANON_KEY_PROJECT_GOOGLE_ASSITANT:-}
+        VITE_AGENT_URL_PROJECT_GOOGLE_ASSITANT: ${VITE_AGENT_URL_PROJECT_GOOGLE_ASSITANT:-http://localhost:3001}
     ports:
       - "8080:80"
     depends_on:
