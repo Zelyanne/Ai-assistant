@@ -20,6 +20,7 @@ import {
 } from '../services/emailBatching.js';
 import { isStructuredOutputError } from '../services/llm/structuredOutput.js';
 import { topicWatchAlertService } from '../services/TopicWatchAlertService.js';
+import { config } from '../config/index.js';
 
 const DEFAULT_BATCH_INPUT_TOKENS = 13_000;
 const MIN_BATCH_INPUT_TOKENS = 12_000;
@@ -1195,7 +1196,7 @@ The JSON object must follow this exact structure:
 
   private resolveBatchInputTokenBudget(): number {
     const configured = Number.parseInt(
-      process.env.TRIAGE_BATCH_INPUT_TOKENS || `${DEFAULT_BATCH_INPUT_TOKENS}`,
+      `${config.TRIAGE_BATCH_INPUT_TOKENS}`,
       10,
     );
 
@@ -1211,7 +1212,7 @@ The JSON object must follow this exact structure:
 
   private resolveBatchConcurrencyLimit(): number {
     const configured = Number.parseInt(
-      process.env.TRIAGE_BATCH_CONCURRENCY || `${DEFAULT_BATCH_CONCURRENCY}`,
+      `${config.TRIAGE_BATCH_CONCURRENCY}`,
       10,
     );
 
@@ -1227,7 +1228,7 @@ The JSON object must follow this exact structure:
 
   private resolveOutputTokenReserve(): number {
     const configured = Number.parseInt(
-      process.env.TRIAGE_BATCH_OUTPUT_TOKENS || `${DEFAULT_OUTPUT_TOKEN_RESERVE}`,
+      `${config.TRIAGE_BATCH_OUTPUT_TOKENS}`,
       10,
     );
 

@@ -153,6 +153,7 @@ type QueryState = {
 const db = {
   tasks: new Map<string, Record<string, unknown>>(),
   execution_runs: new Map<string, Record<string, unknown>>(),
+  command_messages: new Map<string, Record<string, unknown>>(),
   agent_activity_log: [] as Record<string, unknown>[],
 };
 
@@ -195,6 +196,18 @@ function createQuery(table: string) {
             updated_at: new Date().toISOString(),
             ...row,
           }));
+        } else if (table === 'command_messages') {
+          const id = String(
+            row.id ??
+              `11111111-1111-4111-8111-${String(db.command_messages.size + 1).padStart(12, '0')}`,
+          );
+          db.command_messages.set(id, clone({
+            id,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            metadata: {},
+            ...row,
+          }));
         } else if (table === 'agent_activity_log') {
           db.agent_activity_log.push(clone(row));
         }
@@ -228,6 +241,11 @@ function createQuery(table: string) {
       return Promise.resolve({ data: rows[0] ?? null, error: null });
     }
 
+    if (table === 'command_messages') {
+      const rows = Array.from(db.command_messages.values()).filter((row) => matches(row, state.filters));
+      return Promise.resolve({ data: rows[0] ?? null, error: null });
+    }
+
     return Promise.resolve({ data: null, error: null });
   }
 
@@ -244,6 +262,14 @@ function createQuery(table: string) {
       for (const [taskId, row] of db.execution_runs.entries()) {
         if (matches(row, state.filters)) {
           db.execution_runs.set(taskId, { ...row, ...clone(state.updatePatch ?? {}) });
+        }
+      }
+    }
+
+    if (table === 'command_messages') {
+      for (const [id, row] of db.command_messages.entries()) {
+        if (matches(row, state.filters)) {
+          db.command_messages.set(id, { ...row, ...clone(state.updatePatch ?? {}) });
         }
       }
     }
@@ -272,6 +298,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
     vi.clearAllMocks();
     db.tasks.clear();
     db.execution_runs.clear();
+    db.command_messages.clear();
     db.agent_activity_log.length = 0;
 
     // Reset ChatMistralAI mock to default (high confidence, plan with steps)
@@ -1030,6 +1057,111 @@ describe('Agent Controller Graph planner-worker flow', () => {
 
     expect(result.task.status).not.toBe('paused');
     expect(result.execution_run.status).toBe('completed');
+  });
+
+  it('responds conversationally to simple telegram chat without creating an execution run', async () => {
+    mockChatMistralResponse.current = {
+      outcome: 'chat',
+      confidence: 1,
+      needs_clarification: false,
+      interpretation: 'Greeting and small talk',
+      summary: 'Salut ! Ça va bien, merci. Et toi ?',
+      reasoning: 'No Google Workspace action requested.',
+      steps: [],
+      chat_response: 'Salut ! Ça va bien, merci. Et toi ?',
+    };
+
+    const task = {
+      ...baseTask,
+      id: '123e4567-e89b-12d3-a456-426614174333',
+      domain_action: 'assistant.command',
+      payload: {
+        message_text: 'Hello comment ça va ?',
+        channel: 'telegram',
+        source: 'telegram-webhook',
+        user_initiated: true,
+        thread_id: 'tg-chat-hello',
+        external_message_id: 'tg-msg-hello',
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+    const generalAgentCreateCall = createAgentMock.mock.calls.find(([arg]) => {
+      const config = arg as { responseFormat?: unknown };
+      return Boolean(config.responseFormat);
+    });
+    const generalAgentConfig = generalAgentCreateCall?.[0] as { tools?: Array<{ name?: string }> } | undefined;
+
+    expect(result.execution_run).toBeNull();
+    expect(generalAgentConfig?.tools?.map((tool) => tool.name)).toContain('search_web_research');
+    expect(result.task.result).toMatchObject({
+      outcome: 'chat_response',
+      chat_response: 'Salut ! Ça va bien, merci. Et toi ?',
+    });
+    expect(mockChannelEnqueueOutbound).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: 'telegram',
+        thread_id: 'tg-chat-hello',
+        message_text: 'Salut ! Ça va bien, merci. Et toi ?',
+      }),
+    );
+  });
+
+  it('persists completed Command Center chat replies back to command messages', async () => {
+    mockChatMistralResponse.current = {
+      outcome: 'chat',
+      confidence: 1,
+      needs_clarification: false,
+      interpretation: 'Greeting and small talk',
+      summary: 'Salut ! Je vais bien, merci. Et toi ?',
+      reasoning: 'No Google Workspace action requested.',
+      steps: [],
+      chat_response: 'Salut ! Je vais bien, merci. Et toi ?',
+    };
+
+    const conversationId = '223e4567-e89b-42d3-a456-426614174000';
+    const correlationId = 'command-correlation-web-chat';
+    const assistantMessageId = '333e4567-e89b-42d3-a456-426614174000';
+    const task = {
+      ...baseTask,
+      id: '123e4567-e89b-12d3-a456-426614174334',
+      topic: 'Command Center',
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'salut coment ça va ?',
+        channel: 'web',
+        source: 'dashboard-command-center',
+        user_initiated: true,
+        conversation_id: conversationId,
+        correlation_id: correlationId,
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+    db.command_messages.set(assistantMessageId, {
+      id: assistantMessageId,
+      conversation_id: conversationId,
+      organization_id: task.organization_id,
+      role: 'assistant',
+      content: 'Intent preview: "salut coment ça va ?"',
+      state: 'queued',
+      channel: 'web',
+      correlation_id: correlationId,
+      source_task_id: task.id,
+      metadata: {},
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]);
+
+    expect(db.command_messages.get(assistantMessageId)).toEqual(expect.objectContaining({
+      state: 'done',
+      content: 'Salut ! Je vais bien, merci. Et toi ?',
+      source_task_id: task.id,
+    }));
   });
 
   it('pauses through general agent when an existing run is escalated', async () => {

@@ -1,13 +1,26 @@
-version: '3.9'
-
 services:
   searxng:
     image: searxng/searxng:latest
     restart: unless-stopped
     ports:
-      - '8080:8080'
+      - '8081:8080'
     environment:
       - BASE_URL=http://localhost:8080/
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - |
+        cat > /etc/searxng/settings.yml <<'EOF'
+        use_default_settings: true
+
+        server:
+          secret_key: "replace-this-for-production"
+
+        search:
+          formats:
+            - html
+            - json
+        EOF
+        exec /usr/local/searxng/entrypoint.sh
     healthcheck:
       test: ['CMD-SHELL', 'wget -qO- http://localhost:8080/ >/dev/null 2>&1 || exit 1']
       interval: 20s
@@ -29,4 +42,4 @@ services:
       # - USERNAME=your_username
       # - PASSWORD=your_password
     ports:
-      - '3000:3000'
+      - '3100:3000'

@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { Request, Response, Router } from 'express';
 import { ChannelAdapterRegistry, channelAdapterRegistry } from '../../channels/ChannelAdapterRegistry.js';
 import { ChannelRouterService, channelRouter } from '../../services/channelRouter.js';
+import { readProjectEnv } from '../../config/index.js';
 
 export type WhatsAppWebhookDeps = {
   registry: ChannelAdapterRegistry;
@@ -158,7 +159,7 @@ export function createWhatsAppWebhookRouter(deps: WhatsAppWebhookDeps = { regist
     const challenge = req.query['hub.challenge'];
 
     if (mode === 'subscribe') {
-      if (token === process.env.WHATSAPP_WEBHOOK_SECRET) {
+      if (token === readProjectEnv('WHATSAPP_WEBHOOK_SECRET')) {
         res.status(200).send(challenge);
       } else {
         res.sendStatus(403);

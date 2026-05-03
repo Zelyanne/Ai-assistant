@@ -97,6 +97,42 @@ describe('ResearchAgent', () => {
     expect(report.summary).not.toContain('415');
   });
 
+  it('extracts sources from MCP text JSON envelopes', async () => {
+    mockExecuteTool.mockResolvedValueOnce({
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            searches: [
+              {
+                query: 'ovni 2026 actualites',
+                results: [
+                  {
+                    title: 'Source From MCP Text',
+                    link: 'https://example.com/mcp-text',
+                    snippet: 'Nested result snippet',
+                  },
+                ],
+                success: true,
+              },
+            ],
+          }),
+        },
+      ],
+    });
+
+    const agent = new ResearchAgent();
+    const report = await agent.run({ query: 'ovni 2026 actualites', language: 'fr' });
+
+    expect(report.sources).toEqual([
+      expect.objectContaining({
+        title: 'Source From MCP Text',
+        url: 'https://example.com/mcp-text',
+        snippet: 'Nested result snippet',
+      }),
+    ]);
+  });
+
   it('throws a clear error when SearXNG MCP is unavailable', async () => {
     mockHealthCheck.mockResolvedValueOnce({
       healthy: false,

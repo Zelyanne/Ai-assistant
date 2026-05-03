@@ -68,7 +68,7 @@ function hashToken(token: string): string {
 export class MessagingChannelLinkService {
   async createTelegramLinkToken(params: { organizationId: string; userId: string }): Promise<{ token: string; deepLink: string; expiresAt: string }> {
     if (!config.TELEGRAM_BOT_USERNAME) {
-      throw new Error('TELEGRAM_BOT_USERNAME is not configured');
+      throw new Error('TELEGRAM_BOT_USERNAME_PROJECT_GOOGLE_ASSITANT is not configured');
     }
 
     const token = randomBytes(32).toString('base64url');
@@ -214,7 +214,7 @@ export class MessagingChannelLinkService {
 
   async sendTelegramText(chatId: string, text: string): Promise<void> {
     if (!config.TELEGRAM_BOT_TOKEN) {
-      throw new Error('TELEGRAM_BOT_TOKEN is not configured');
+      throw new Error('TELEGRAM_BOT_TOKEN_PROJECT_GOOGLE_ASSITANT is not configured');
     }
 
     const response = await fetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/sendMessage`, {

@@ -189,7 +189,7 @@ export class CronSchedulerService {
   constructor(deps: CronSchedulerServiceDeps = {}) {
     this.now = deps.now ?? (() => new Date());
     this.checkIntervalMs = deps.checkIntervalMs ?? DEFAULT_CHECK_INTERVAL_MS;
-    this.maxFailures = deps.maxFailures ?? Number(process.env.MAX_SCHEDULE_FAILURES ?? DEFAULT_MAX_FAILURES);
+    this.maxFailures = deps.maxFailures ?? Number(config.MAX_SCHEDULE_FAILURES ?? DEFAULT_MAX_FAILURES);
     this.supabaseClient = deps.supabaseClient ?? supabase;
     this.auditLogger = deps.auditLogger ?? AuditLogger;
   }

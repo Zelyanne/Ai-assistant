@@ -53,7 +53,7 @@ function extractSourcesFromUnknown(input: unknown): ParsedSource[] {
   const out: ParsedSource[] = [];
 
   const visit = (value: unknown, depth: number): void => {
-    if (depth > 6 || value === null || typeof value === 'undefined') {
+    if (depth > 10 || value === null || typeof value === 'undefined') {
       return;
     }
 

@@ -4,6 +4,18 @@ import { ChannelAdapterRegistry } from '../../channels/ChannelAdapterRegistry.js
 import { ChannelRouterService } from '../../services/channelRouter.js';
 import { WhatsAppWebhookDeps, createWhatsAppWebhookRouter, handleWhatsAppWebhook } from './whatsapp.js';
 
+vi.hoisted(() => {
+  Object.assign(process.env, {
+    SUPABASE_URL_PROJECT_GOOGLE_ASSITANT: 'https://test.supabase.co',
+    SUPABASE_SERVICE_ROLE_KEY_PROJECT_GOOGLE_ASSITANT: 'test-service-role-key',
+    MISTRAL_API_KEY_PROJECT_GOOGLE_ASSITANT: 'test-mistral-key',
+    GOOGLE_OAUTH_CLIENT_ID_PROJECT_GOOGLE_ASSITANT: 'test-google-client-id',
+    GOOGLE_OAUTH_CLIENT_SECRET_PROJECT_GOOGLE_ASSITANT: 'test-google-client-secret',
+    GOOGLE_OAUTH_REDIRECT_URI_PROJECT_GOOGLE_ASSITANT: 'https://example.com/oauth/callback',
+    ENCRYPTION_SECRET_PROJECT_GOOGLE_ASSITANT: '0123456789abcdef0123456789abcdef',
+  });
+});
+
 interface MockResponse {
   statusCode: number;
   body: unknown;
@@ -251,8 +263,8 @@ describe('WhatsApp webhook handler', () => {
   });
 
   it('serves Meta verification challenge on GET when verify token matches', async () => {
-    const previousToken = process.env.WHATSAPP_WEBHOOK_SECRET;
-    process.env.WHATSAPP_WEBHOOK_SECRET = 'meta-secret';
+    const previousToken = process.env.WHATSAPP_WEBHOOK_SECRET_PROJECT_GOOGLE_ASSITANT;
+    process.env.WHATSAPP_WEBHOOK_SECRET_PROJECT_GOOGLE_ASSITANT = 'meta-secret';
 
     try {
       const router = createWhatsAppWebhookRouter({
@@ -281,7 +293,7 @@ describe('WhatsApp webhook handler', () => {
 
       expect(send).toHaveBeenCalledWith('challenge-token');
     } finally {
-      process.env.WHATSAPP_WEBHOOK_SECRET = previousToken;
+      process.env.WHATSAPP_WEBHOOK_SECRET_PROJECT_GOOGLE_ASSITANT = previousToken;
     }
   });
 });

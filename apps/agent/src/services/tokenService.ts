@@ -1,11 +1,12 @@
 import { supabase } from './supabase.js';
 import { encrypt } from '@ai-assistant/shared/utils/encryption.js';
+import { config } from '../config/index.js';
 
 
-const ENCRYPTION_SECRET = process.env.ENCRYPTION_SECRET || '';
+const ENCRYPTION_SECRET = config.ENCRYPTION_SECRET;
 
 if (!ENCRYPTION_SECRET || ENCRYPTION_SECRET.length !== 32) {
-  throw new Error('CRITICAL: ENCRYPTION_SECRET must be exactly 32 characters long.');
+  throw new Error('CRITICAL: ENCRYPTION_SECRET_PROJECT_GOOGLE_ASSITANT must be exactly 32 characters long.');
 }
 
 export interface GoogleTokens {

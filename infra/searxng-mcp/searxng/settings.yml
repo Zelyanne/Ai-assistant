@@ -1,0 +1,9 @@
+use_default_settings: true
+
+server:
+  secret_key: "replace-this-for-production"
+
+search:
+  formats:
+    - html
+    - json

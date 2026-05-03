@@ -2,11 +2,11 @@ import { createClient } from '@supabase/supabase-js';
 import type { Database } from '@ai-assistant/shared';
 
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL_PROJECT_GOOGLE_ASSITANT || '';
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY_PROJECT_GOOGLE_ASSITANT || '';
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn('Supabase credentials missing (VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY).');
+  console.warn('Supabase credentials missing (VITE_SUPABASE_URL_PROJECT_GOOGLE_ASSITANT, VITE_SUPABASE_ANON_KEY_PROJECT_GOOGLE_ASSITANT).');
 }
 
 export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey);
