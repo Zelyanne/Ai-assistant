@@ -94,6 +94,16 @@ const { mockScheduleManageProcess } = vi.hoisted(() => ({
   mockScheduleManageProcess: vi.fn(),
 }));
 
+const { mockResearchRun } = vi.hoisted(() => ({
+  mockResearchRun: vi.fn(),
+}));
+
+vi.mock('../agents/ResearchAgent.js', () => ({
+  researchAgent: {
+    run: mockResearchRun,
+  },
+}));
+
 vi.mock('@langchain/mistralai', () => {
   class ChatMistralAI {
     constructor(..._args: unknown[]) {}
@@ -332,6 +342,12 @@ describe('Agent Controller Graph planner-worker flow', () => {
       },
       summary: 'Schedule created with next run at 2026-03-20T10:30:00.000Z.',
       confirmation_message: 'Confirmed.',
+    });
+
+    mockResearchRun.mockResolvedValue({
+      summary: 'Research completed using 1 source.',
+      key_findings: ['1. Mock source: Mock finding'],
+      sources: [{ title: 'Mock source', url: 'https://example.com/mock', snippet: 'Mock finding' }],
     });
 
     createAgentMock.mockImplementation(({
@@ -1107,6 +1123,78 @@ describe('Agent Controller Graph planner-worker flow', () => {
         message_text: 'Salut ! Ça va bien, merci. Et toi ?',
       }),
     );
+  });
+
+  it('answers current web research requests directly without creating an execution run', async () => {
+    mockResearchRun.mockResolvedValueOnce({
+      summary: 'Research completed for OVNI using 2 sources.',
+      key_findings: [
+        '1. France Culture: Pourquoi les ovnis reviennent dans la politique americaine.',
+        '2. France 24: Les scientifiques rappellent que la recherche reste prudente.',
+      ],
+      sources: [
+        {
+          title: 'France Culture OVNI',
+          url: 'https://example.com/france-culture-ovni',
+          snippet: 'Pourquoi les ovnis reviennent dans la politique americaine.',
+        },
+        {
+          title: 'France 24 OVNI',
+          url: 'https://example.com/france24-ovni',
+          snippet: 'La recherche reste prudente.',
+        },
+      ],
+    });
+
+    const conversationId = '223e4567-e89b-42d3-a456-426614174010';
+    const correlationId = 'command-correlation-web-research';
+    const assistantMessageId = '333e4567-e89b-42d3-a456-426614174010';
+    const task = {
+      ...baseTask,
+      id: '123e4567-e89b-12d3-a456-426614174335',
+      topic: 'Command Center',
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'stp explique moi les actualites OVNI en 2026',
+        channel: 'web',
+        source: 'dashboard-command-center',
+        user_initiated: true,
+        conversation_id: conversationId,
+        correlation_id: correlationId,
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+    db.command_messages.set(assistantMessageId, {
+      id: assistantMessageId,
+      conversation_id: conversationId,
+      organization_id: task.organization_id,
+      role: 'assistant',
+      content: 'Processing command...',
+      state: 'processing',
+      channel: 'web',
+      correlation_id: correlationId,
+      source_task_id: task.id,
+      metadata: {},
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(createAgentMock).not.toHaveBeenCalled();
+    expect(mockResearchRun).toHaveBeenCalledWith(expect.objectContaining({
+      query: 'stp explique moi les actualites OVNI en 2026',
+      language: 'fr',
+      safesearch: 1,
+    }));
+    expect(result.execution_run).toBeNull();
+    expect(result.task.result).toMatchObject({ outcome: 'chat_response' });
+    expect(db.command_messages.get(assistantMessageId)).toEqual(expect.objectContaining({
+      state: 'done',
+      content: expect.stringContaining('Un OVNI est simplement'),
+      source_task_id: task.id,
+    }));
   });
 
   it('persists completed Command Center chat replies back to command messages', async () => {

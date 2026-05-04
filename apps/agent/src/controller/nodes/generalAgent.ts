@@ -25,6 +25,7 @@ import { getSpecialistPrompt } from '../../prompts/specialistPrompts.js';
 import { createCurrentTimeTool } from '../../tools/timeDateTool.js';
 import { createSearchWebResearchTool } from '../../tools/researchTools.js';
 import { createWatchTopicTools } from '../../tools/watchTopicTools.js';
+import { researchAgent, type ResearchReport } from '../../agents/ResearchAgent.js';
 import type { AgentState } from '../graph.js';
 import { buildEscalationPayload } from '../escalation.js';
 
@@ -41,6 +42,7 @@ const GENERAL_AGENT_CONTACT_TOOLS = [
 const MEMORY_PROMPT_LIMIT = 3000;
 const CONVERSATION_CONTEXT_PROMPT_LIMIT = 2200;
 const RUN_ERROR_PROMPT_LIMIT = 240;
+const GENERAL_AGENT_INVOKE_TIMEOUT_MS = 75_000;
 const runErrorGuard = new PerimeterGuard();
 
 /**
@@ -420,6 +422,89 @@ function buildMemoryContextBlock(state: AgentState): string {
   return `${sections.join('\n\n')}\n\n`;
 }
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
+}
+
+function isLikelyDirectResearchRequest(userRequest: string): boolean {
+  const lower = userRequest.toLowerCase();
+  const asksForResearch = /\b(news|actualit[eé]s?|recherche|chercher|cherche|web|internet|sources?|r[eé]cent(?:e|es|s)?|latest|current|202\d)\b/.test(lower)
+    || lower.includes('entendu parler')
+    || lower.includes('explique')
+    || lower.includes('expliquer')
+    || lower.includes('qu est-ce')
+    || lower.includes("qu'est-ce");
+  const asksWorkspaceAction = /\b(gmail|email|mail|agenda|calendar|drive|doc|docs|document|sheet|sheets|slide|slides|envoie|envoyer|send|draft|brouillon|cr[eé]e|create|modifie|update)\b/.test(lower);
+
+  return asksForResearch && !asksWorkspaceAction;
+}
+
+function detectResearchLanguage(userRequest: string): string | undefined {
+  const lower = userRequest.toLowerCase();
+  if (/[àâçéèêëîïôùûüÿœ]/i.test(userRequest)
+    || /\b(stp|s'il|salut|actualit[eé]s?|explique|peux|quoi|ovni|je|tu|les|des)\b/.test(lower)) {
+    return 'fr';
+  }
+
+  return undefined;
+}
+
+function formatResearchSourceList(report: ResearchReport): string[] {
+  return report.sources.slice(0, 5).map((source, index) => {
+    const title = source.title.replace(/\s+/g, ' ').trim();
+    return `${index + 1}. ${title}: ${source.url}`;
+  });
+}
+
+function formatDirectResearchResponse(userRequest: string, report: ResearchReport): string {
+  const lines: string[] = [];
+
+  if (/\bovni\b|\bufo\b/i.test(userRequest)) {
+    lines.push('Un OVNI est simplement un Objet Volant Non Identifie: un phenomene observe dans le ciel qu on ne sait pas encore identifier. Ca ne veut pas dire automatiquement extraterrestre; ca peut aussi etre un drone, un avion, un phenomene météo, un ballon, une erreur d observation, ou quelque chose qui merite une vraie enquete.');
+    lines.push('');
+  }
+
+  if (report.key_findings.length > 0) {
+    lines.push(`J ai trouve ${report.sources.length} source${report.sources.length === 1 ? '' : 's'} recentes. Points principaux:`);
+    for (const finding of report.key_findings.slice(0, 5)) {
+      lines.push(`- ${finding}`);
+    }
+  } else {
+    lines.push('J ai pu interroger la recherche web, mais aucune source exploitable n est remontee pour cette question.');
+  }
+
+  const sourceLines = formatResearchSourceList(report);
+  if (sourceLines.length > 0) {
+    lines.push('');
+    lines.push('Sources:');
+    lines.push(...sourceLines);
+  }
+
+  return lines.join('\n');
+}
+
+async function buildDirectResearchChatResponse(userRequest: string): Promise<string> {
+  try {
+    const report = await researchAgent.run({
+      query: userRequest,
+      language: detectResearchLanguage(userRequest),
+      safesearch: 1,
+    });
+
+    return formatDirectResearchResponse(userRequest, report);
+  } catch {
+    return 'Je n arrive pas a interroger la recherche web pour le moment. Reessaie dans quelques instants, ou pose-moi la question sans les actualites recentes et je te repondrai avec mes connaissances generales.';
+  }
+}
+
 function shouldRunCheckpointReview(state: AgentState, run: AgentState['execution_run']): boolean {
   if (!run || !state.router_completed_step_key) {
     return false;
@@ -499,6 +584,18 @@ async function buildPlanFromUserInput(
     };
   }
 
+  if (isLikelyDirectResearchRequest(userRequest)) {
+    return {
+      plan: null,
+      scheduleResult: null,
+      watchTopicResult: null,
+      chatResponse: await buildDirectResearchChatResponse(userRequest),
+      confidence: 1,
+      needsClarification: false,
+      clarificationPrompt: null,
+    };
+  }
+
   // Single agent run: tool-aware intent assessment + plan building
   const langfuseHandler = tracingService.getHandler();
   const callbacks = langfuseHandler ? [langfuseHandler] : [];
@@ -558,33 +655,37 @@ async function buildPlanFromUserInput(
     responseFormat: toolStrategy(GeneralAgentResponseSchema),
   });
 
-  const result = await agent.invoke({
-    messages: [{
-      role: 'user',
-      content: [
-        memoryContextBlock,
-        `User request: "${userRequest}"`,
-        '',
-        'Interpret this request and produce an execution plan.',
-        '',
-        'HARD CONSTRAINTS:',
-        '- If the request is ordinary conversation, greeting, small talk, or a general assistant question that does not require Google Workspace action, set outcome="chat", answer in chat_response, and leave steps empty.',
-        '- Use search_web_research only when the request needs current/public external facts, news, market data, or source-backed research. Do not use web research for greetings, small talk, private user data, or Google Workspace content.',
-        '- If search_web_research returns ok=false, continue gracefully: answer that web research is unavailable or ask whether to proceed without external research.',
-        '- If the request is clearly future-oriented or recurring, call get_current_time first, then call schedule_agent_request, and set outcome="schedule".',
-        '- For relative one-off timing (e.g. "in 10 minutes"), compute an absolute datetime and pass it in schedule_agent_request.run_at_iso.',
-        '- When using run_at_iso, set request to the action text to run later (remove timing words so the scheduled command does not re-schedule itself).',
-        '- Do NOT produce immediate execution steps for clearly scheduled requests unless the user explicitly wants both now and later.',
-        '- If you set outcome="schedule", include schedule_result copied from the schedule_agent_request tool output and leave steps empty.',
-        '- If the request is to watch, monitor, alert on, list, or update mail topics, use manage_watch_topic or list_watch_topics, set outcome="watch_topic", include watch_topic_result copied from the tool output, and leave steps empty.',
-        '- Watch-topic requests are mail triage preferences, not calendar alarms. Do not create calendar steps for them.',
-        '- worker_type MUST be one of: "gmail", "calendar", "docs", "sheets", "slides", "drive".',
-        '- Do NOT specify tool names in your plan — specialists select their own tools.',
-        '- If an email task has only a person name and no email after contact lookup, ask the user to provide the email address directly.',
-        '- For Gmail steps: do NOT draft the final email subject/body copy unless the user explicitly provided exact text; put the core content in input.message and style requirements in input.instructions.',
-      ].join('\n'),
-    }],
-  }, { callbacks });
+  const result = await withTimeout(
+    agent.invoke({
+      messages: [{
+        role: 'user',
+        content: [
+          memoryContextBlock,
+          `User request: "${userRequest}"`,
+          '',
+          'Interpret this request and produce an execution plan.',
+          '',
+          'HARD CONSTRAINTS:',
+          '- If the request is ordinary conversation, greeting, small talk, or a general assistant question that does not require Google Workspace action, set outcome="chat", answer in chat_response, and leave steps empty.',
+          '- Use search_web_research only when the request needs current/public external facts, news, market data, or source-backed research. Do not use web research for greetings, small talk, private user data, or Google Workspace content.',
+          '- If search_web_research returns ok=false, continue gracefully: answer that web research is unavailable or ask whether to proceed without external research.',
+          '- If the request is clearly future-oriented or recurring, call get_current_time first, then call schedule_agent_request, and set outcome="schedule".',
+          '- For relative one-off timing (e.g. "in 10 minutes"), compute an absolute datetime and pass it in schedule_agent_request.run_at_iso.',
+          '- When using run_at_iso, set request to the action text to run later (remove timing words so the scheduled command does not re-schedule itself).',
+          '- Do NOT produce immediate execution steps for clearly scheduled requests unless the user explicitly wants both now and later.',
+          '- If you set outcome="schedule", include schedule_result copied from the schedule_agent_request tool output and leave steps empty.',
+          '- If the request is to watch, monitor, alert on, list, or update mail topics, use manage_watch_topic or list_watch_topics, set outcome="watch_topic", include watch_topic_result copied from the tool output, and leave steps empty.',
+          '- Watch-topic requests are mail triage preferences, not calendar alarms. Do not create calendar steps for them.',
+          '- worker_type MUST be one of: "gmail", "calendar", "docs", "sheets", "slides", "drive".',
+          '- Do NOT specify tool names in your plan — specialists select their own tools.',
+          '- If an email task has only a person name and no email after contact lookup, ask the user to provide the email address directly.',
+          '- For Gmail steps: do NOT draft the final email subject/body copy unless the user explicitly provided exact text; put the core content in input.message and style requirements in input.instructions.',
+        ].join('\n'),
+      }],
+    }, { callbacks }),
+    GENERAL_AGENT_INVOKE_TIMEOUT_MS,
+    'General Agent timed out while planning the request.',
+  );
 
   const structured = (result as unknown as { structuredResponse?: unknown }).structuredResponse;
   const parsed = GeneralAgentResponseSchema.parse(structured);

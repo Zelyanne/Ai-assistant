@@ -136,6 +136,51 @@ describe('processQueuedTask', () => {
     );
   });
 
+  it('marks the task and command message as error when graph execution fails', async () => {
+    const taskId = '66666666-6666-4666-8666-666666666666';
+    mockInvoke.mockRejectedValueOnce(new Error('planner exploded'));
+
+    const taskEq = vi.fn().mockResolvedValue({ error: null });
+    const taskUpdate = vi.fn(() => ({ eq: taskEq }));
+    const messageEqRole = vi.fn().mockResolvedValue({ error: null });
+    const messageEqTask = vi.fn(() => ({ eq: messageEqRole }));
+    const messageUpdate = vi.fn(() => ({ eq: messageEqTask }));
+
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'tasks') return { update: taskUpdate };
+      if (table === 'command_messages') return { update: messageUpdate };
+      throw new Error(`Unexpected table: ${table}`);
+    });
+
+    await processQueuedTask({
+      id: taskId,
+      organization_id: '11111111-1111-1111-1111-111111111111',
+      user_id: '22222222-2222-4222-8222-222222222222',
+      domain_action: 'assistant.command',
+      status: 'queued',
+      payload: {
+        command: 'research something current',
+      },
+      result: {},
+      topic: 'Command Center',
+    });
+
+    expect(taskUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'error',
+      result: expect.objectContaining({
+        summary: 'Command execution failed before it could finish. Please retry.',
+        error: expect.stringContaining('planner exploded'),
+      }),
+    }));
+    expect(taskEq).toHaveBeenCalledWith('id', taskId);
+    expect(messageUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      state: 'error',
+      content: 'Command execution failed before it could finish. Please retry.',
+    }));
+    expect(messageEqTask).toHaveBeenCalledWith('source_task_id', taskId);
+    expect(messageEqRole).toHaveBeenCalledWith('role', 'assistant');
+  });
+
   it('hydrates command conversation context from Supabase when conversation_id is provided', async () => {
     const organizationId = '11111111-1111-1111-1111-111111111111';
     const userId = '22222222-2222-4222-8222-222222222222';

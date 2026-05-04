@@ -14,7 +14,7 @@ import { cronSchedulerService } from './services/CronSchedulerService.js';
 import { initOTel, shutdownOTel } from './services/llm/otel-setup.js';
 import { telegramWebhookRouter } from './routes/webhooks/telegram.js';
 import { whatsAppWebhookRouter } from './routes/webhooks/whatsapp.js';
-import { processQueuedTask } from './services/taskSubscriber.js';
+import { processQueuedTask, recoverPendingTasks } from './services/taskSubscriber.js';
 import { messagingChannelLinkService } from './services/MessagingChannelLinkService.js';
 
 // Initialize OpenTelemetry
@@ -210,6 +210,10 @@ const taskChannel = supabase
     }
     console.log(`[Realtime] Subscription status: ${status}${err ? ` - Error: ${err.message}` : ''}`);
   });
+
+recoverPendingTasks().catch((error: unknown) => {
+  console.error('[Realtime] Startup task recovery failed:', error);
+});
 
 // --- Ingestion Service ---
 const googleIngestion = new GoogleIngestionService();
