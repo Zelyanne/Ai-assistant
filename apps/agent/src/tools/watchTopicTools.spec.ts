@@ -29,6 +29,7 @@ describe('watchTopicTools', () => {
         topic: 'APSEC',
         priority: 'High',
         keywords_array: ['APSEC'],
+        expires_at: null,
         user_id: 'user-1',
         updated_at: '2026-04-01T00:00:00Z',
       },
@@ -48,6 +49,8 @@ describe('watchTopicTools', () => {
       topic: 'APSEC',
       priority: 'High',
       keywords: undefined,
+      durationDays: undefined,
+      expiresAt: undefined,
     });
     expect(parsed.outcome).toBe('created');
     expect(parsed.confirmation_message).toContain('APSEC');
@@ -60,6 +63,7 @@ describe('watchTopicTools', () => {
         topic: 'Investor updates',
         priority: 'Medium',
         keywords_array: ['Investor updates'],
+        expires_at: '2026-04-15T00:00:00Z',
         user_id: 'user-1',
         updated_at: '2026-04-01T00:00:00Z',
       },
@@ -72,5 +76,21 @@ describe('watchTopicTools', () => {
     expect(watchTopicService.listTopics).toHaveBeenCalledWith('org-1', 'user-1');
     expect(parsed.total).toBe(1);
     expect(parsed.topics[0]?.topic).toBe('Investor updates');
+  });
+
+  it('passes finite duration fields through manage_watch_topic', async () => {
+    const tool = createManageWatchTopicTool({ organizationId: 'org-1', userId: 'user-1' });
+
+    await tool.invoke({ action: 'upsert', topic: 'APSEC', priority: 'High', duration_days: 14 });
+
+    expect(watchTopicService.upsertTopic).toHaveBeenCalledWith({
+      organizationId: 'org-1',
+      userId: 'user-1',
+      topic: 'APSEC',
+      priority: 'High',
+      keywords: undefined,
+      durationDays: 14,
+      expiresAt: undefined,
+    });
   });
 });

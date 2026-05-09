@@ -7,7 +7,7 @@
  * Task 16: Write Unit Tests for Specialist Nodes
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { getSpecialistPrompt, buildSpecialistUserPrompt, SPECIALIST_CAPABILITIES, SPECIALIST_SYSTEM_PROMPTS } from '../../prompts/specialistPrompts.js';
 import type { SpecialistNodeContext, SpecialistNodeResult, ToolInvocationRecord } from './types.js';
 
@@ -112,7 +112,6 @@ describe('specialistPrompts', () => {
     expect(SPECIALIST_SYSTEM_PROMPTS.slides).toBeDefined();
     expect(SPECIALIST_SYSTEM_PROMPTS.drive).toBeDefined();
     expect(SPECIALIST_SYSTEM_PROMPTS.generalAgent).toBeDefined();
-    expect(SPECIALIST_SYSTEM_PROMPTS.router).toBeDefined();
   });
 
   it('should have capabilities for all worker types', () => {
@@ -146,6 +145,30 @@ describe('specialistPrompts', () => {
       expect(prompt).toContain('handoff');
       expect(prompt).toContain('HANDOFF');
     }
+  });
+
+  it('injects the appropriate static skill playbook into every specialist prompt', () => {
+    const expectations = {
+      gmail: 'Gmail Agent Skill',
+      calendar: 'Google Calendar Agent Skill',
+      docs: 'Google Docs Agent Skill',
+      sheets: 'Google Sheets Agent Skill',
+      slides: 'Google Slides Agent Skill',
+      drive: 'Google Drive Agent Skill',
+    } as const;
+
+    for (const [key, title] of Object.entries(expectations) as Array<[keyof typeof expectations, string]>) {
+      const prompt = getSpecialistPrompt(key);
+      expect(prompt).toContain('PROJECT SKILL PLAYBOOK (MUST FOLLOW)');
+      expect(prompt).toContain(title);
+      expect(prompt).toContain('Runtime Tool Access In This Project');
+      expect(prompt).toContain('Fast Decision Map');
+      expect(prompt).toContain('Completion Checklist');
+    }
+  });
+
+  it('does not inject specialist skill playbooks into the general prompt', () => {
+    expect(getSpecialistPrompt('generalAgent')).not.toContain('PROJECT SKILL PLAYBOOK (MUST FOLLOW)');
   });
 
   it('should build user prompt with correct context', () => {

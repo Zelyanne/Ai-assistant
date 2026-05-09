@@ -24,9 +24,8 @@ import { loadMemoryNode, loadShortTermMemoryNode } from "./nodes/memory.js";
 import { loadWorkspaceContext } from "./nodes/workspaceContext.js";
 import { escalateNode } from "./nodes/escalate.js";
 import { calendarConflictNode } from "./nodes/calendarConflict.js";
-import { plannerNode, workspaceWorkerNode } from "./nodes/planner.js";
 import { generalAgentNode } from "./nodes/generalAgent.js";
-import { routerNode } from "./nodes/router.js";
+import { executionVerifierNode } from "./nodes/executionVerifier.js";
 import { AuditLogger } from "../services/AuditLogger.js";
 import { tracingService } from "../services/llm/tracing.js";
 import { LLMProviderFactory } from "../services/llm/factory.js";
@@ -153,6 +152,14 @@ export const AgentStateAnnotation = Annotation.Root({
   router_completed_step_key: Annotation<string | null>({
     reducer: (_x, y) => y ?? null,
     default: () => null,
+  }),
+  review_feedback: Annotation<string | null>({
+    reducer: (x, y) => (typeof y === "undefined" ? x ?? null : y),
+    default: () => null,
+  }),
+  review_attempts: Annotation<number>({
+    reducer: (x, y) => y ?? x ?? 0,
+    default: () => 0,
   }),
 });
 
@@ -321,11 +328,15 @@ function buildUserFacingReplyMessage(
   if (isEmailDraft) {
     const recipient = typeof payload.recipient === "string" ? payload.recipient : null;
     const subject = typeof payload.subject === "string" ? payload.subject : null;
+    const body = typeof payload.body === "string" ? payload.body.trim() : "";
 
     lines.push("", "Détails:");
     if (recipient) lines.push(`- Destinataire: ${recipient}`);
     if (subject) lines.push(`- Sujet: ${subject}`);
-    lines.push("- Contenu complet du brouillon conservé hors du chat.");
+    if (body) {
+      lines.push("", "Email complet:", body);
+    }
+    lines.push("", "Si c’est bon pour toi, réponds que tu valides l’envoi et je l’enverrai directement.");
     return lines.join("\n");
   }
 
@@ -604,6 +615,59 @@ function withTaskStateTracking(
     }
 
     return handler(state, config);
+  };
+}
+
+async function markTaskReadyForReview(state: AgentState): Promise<Partial<AgentState>> {
+  if (state.error || !state.task.id || !state.task.user_id) {
+    return {};
+  }
+
+  const result = asRecord(state.task.result);
+  const summary = asNonEmptyString(result.summary) ?? "Specialist execution completed.";
+
+  try {
+    await memoryService.updateTaskState(
+      state.task.organization_id,
+      state.task.user_id,
+      state.task.id,
+      {
+        status: "review",
+        current_node: "execution_review",
+        domain_action: state.task.domain_action,
+        result_summary: summary,
+      },
+    );
+    await memoryService.appendShortTermMemoryEntry(
+      state.task.organization_id,
+      state.task.user_id,
+      [
+        `### ${new Date().toISOString()} - Execution ready for review`,
+        `- Task: ${state.task.id}`,
+        `- Request type: ${state.task.domain_action}`,
+        `- Status: review`,
+        `- Summary: ${summary}`,
+      ].join("\n"),
+    );
+  } catch (err: unknown) {
+    const safeMessage = redactErrorMessage(err);
+    return {
+      error: `Review-state tracking failed: ${safeMessage}`,
+      trace: [
+        AuditLogger.createStep(
+          "Execution Review",
+          `Failed to mark task for review: ${safeMessage}`,
+        ),
+      ],
+    };
+  }
+
+  return {
+    trace: [
+      AuditLogger.createStep("Execution Review", "Marked task ready for review", {
+        output_summary: summary,
+      }),
+    ],
   };
 }
 
@@ -1999,87 +2063,41 @@ function routeAfterGeneralAgent(state: AgentState) {
     return "finalize";
   }
 
-  if (state.execution_run) {
-    return "router";
+  const taskResult = asRecord(state.task.result);
+  if (taskResult.final_response_ready === true) {
+    return "finalize";
+  }
+
+  if (Array.isArray(taskResult.agent_tool_results) && taskResult.agent_tool_results.length > 0) {
+    return "mark_review";
   }
 
   return "finalize";
 }
 
-function routeAfterPlanner(state: AgentState) {
-  if (state.error || state.task.status === "escalation") {
-    return "finalize";
-  }
-
-  return "router";
-}
-
-function routeAfterRouter(state: AgentState) {
+function routeAfterExecutionVerifier(state: AgentState) {
   if (
     state.error ||
     state.task.status === "escalation" ||
-    state.task.status === "paused"
+    state.task.status === "paused" ||
+    state.task.status === "error"
   ) {
     return "finalize";
   }
 
-  const runStatus = state.execution_run?.status;
-  if (runStatus === "failed" || runStatus === "escalated" || runStatus === "blocked") {
+  const taskResult = asRecord(state.task.result);
+  const verification = asRecord(taskResult.agent_tool_verification);
+  const review = asRecord(taskResult.agent_tool_review);
+
+  if (review.status === "failed" && state.review_feedback) {
     return "general_agent";
   }
 
-  if (runStatus === "completed") {
-    return "finalize";
-  }
-
-  if (shouldRouteToGeneralAgentCheckpoint(state)) {
+  if (verification.status === "passed" && taskResult.final_response_ready !== true) {
     return "general_agent";
   }
 
-  // Loop back to router for next step
-  return "router";
-}
-
-export function shouldRouteToGeneralAgentCheckpoint(state: AgentState): boolean {
-  const run = state.execution_run;
-  const completedStepKey = state.router_completed_step_key;
-  if (!run || !completedStepKey) {
-    return false;
-  }
-
-  const totalSteps = run.plan_json.steps.length;
-  const hasPendingSteps = run.plan_json.steps.some(
-    (step) => step.status === "pending" || step.status === "in_progress",
-  );
-  const doneStepCount = run.plan_json.steps.filter((step) =>
-    step.status === "completed" ||
-    step.status === "skipped" ||
-    step.status === "failed" ||
-    step.status === "blocked",
-  ).length;
-
-  return totalSteps > 3 && hasPendingSteps && doneStepCount > 0 && doneStepCount % 3 === 0;
-}
-
-/**
- * @deprecated Use routeAfterRouter instead. Kept for backward compatibility.
- */
-function routeAfterWorkspaceWorker(state: AgentState) {
-  if (state.error || state.task.status === "escalation") {
-    return "finalize";
-  }
-
-  const runStatus = state.execution_run?.status;
-  if (
-    runStatus === "completed" ||
-    runStatus === "failed" ||
-    runStatus === "escalated" ||
-    runStatus === "blocked"
-  ) {
-    return "finalize";
-  }
-
-  return "workspace_worker";
+  return "finalize";
 }
 
 /**
@@ -2186,12 +2204,11 @@ const workflow = new StateGraph(AgentStateAnnotation)
     "skills_manage",
     withTaskStateTracking("skills_manage", executeProcessor),
   )
-  .addNode("planner", withTaskStateTracking("planner", plannerNode))
   .addNode("general_agent", withTaskStateTracking("general_agent", generalAgentNode))
-  .addNode("router", withTaskStateTracking("router", routerNode))
+  .addNode("mark_review", markTaskReadyForReview)
   .addNode(
-    "workspace_worker",
-    withTaskStateTracking("workspace_worker", workspaceWorkerNode),
+    "execution_verifier",
+    withTaskStateTracking("execution_verifier", executionVerifierNode),
   )
   .addNode(
     "system_optimize_protocol",
@@ -2216,9 +2233,8 @@ const workflow = new StateGraph(AgentStateAnnotation)
   .addConditionalEdges("load_workspace_context", routeAfterWorkspaceContext)
   .addConditionalEdges("calendar_conflict", routeAfterCalendarConflict)
   .addConditionalEdges("general_agent", routeAfterGeneralAgent)
-  .addConditionalEdges("planner", routeAfterPlanner)
-  .addConditionalEdges("router", routeAfterRouter)
-  .addConditionalEdges("workspace_worker", routeAfterWorkspaceWorker)
+  .addEdge("mark_review", "execution_verifier")
+  .addConditionalEdges("execution_verifier", routeAfterExecutionVerifier)
   .addConditionalEdges("reasoning", routeAfterReasoning)
 
   .addEdge("escalate", "finalize")

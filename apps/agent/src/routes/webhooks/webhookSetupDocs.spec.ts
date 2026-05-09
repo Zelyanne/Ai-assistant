@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 describe('Webhook setup documentation', () => {
   it('documents required WhatsApp and Telegram env variables in apps/agent/.env.example', () => {
     const envExample = readFileSync(new URL('../../../.env.example', import.meta.url), 'utf8');
+    const projectSuffix = '_PROJECT_GOOGLE_ASSITANT';
 
     const requiredVariables = [
       'WHATSAPP_PROVIDER',
@@ -22,7 +23,7 @@ describe('Webhook setup documentation', () => {
     ];
 
     for (const variable of requiredVariables) {
-      expect(envExample).toMatch(new RegExp(`^${variable}=`, 'm'));
+      expect(envExample).toMatch(new RegExp(`^${variable}${projectSuffix}=`, 'm'));
     }
   });
 

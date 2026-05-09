@@ -8,11 +8,10 @@
  * Task 21: Date Validation Tests
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   parseRelativeDate,
   formatDateTime,
-  getCurrentTime,
   validateDate,
   validateTimezone,
   createDateParserTool,
@@ -87,7 +86,7 @@ describe('parseRelativeDate', () => {
     expect(result).toBeDefined();
     expect(result).toMatch(/^\d{4}-\d{2}-\d{2}/);
     const parsed = new Date(result);
-    expect(parsed.getDay()).toBe(1); // Monday = 1
+    expect(parsed.getUTCDay()).toBe(1); // Monday = 1
   });
 
   it('should parse "last Friday" correctly', () => {
@@ -95,7 +94,7 @@ describe('parseRelativeDate', () => {
     expect(result).toBeDefined();
     expect(result).toMatch(/^\d{4}-\d{2}-\d{2}/);
     const parsed = new Date(result);
-    expect(parsed.getDay()).toBe(5); // Friday = 5
+    expect(parsed.getUTCDay()).toBe(5); // Friday = 5
   });
 
   it('should parse explicit ISO dates as-is', () => {

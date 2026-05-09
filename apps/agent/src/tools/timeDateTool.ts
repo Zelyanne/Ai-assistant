@@ -12,7 +12,6 @@ import { z } from 'zod';
 // --- Pure Utility Functions ---
 
 const DAY_MS = 86_400_000;
-const WEEK_MS = 7 * DAY_MS;
 
 const IANA_TIMEZONE_RE = /^[A-Za-z_]+\/[A-Za-z_]+(?:\/[A-Za-z_]+)?$/;
 
@@ -306,7 +305,7 @@ function addDays(date: Date, days: number): Date {
 
 function findNextDayOfWeek(from: Date, targetDay: number, direction: 'forward' | 'backward'): Date {
   const current = new Date(from);
-  const currentDay = current.getDay();
+  const currentDay = current.getUTCDay();
   let diff = targetDay - currentDay;
 
   if (direction === 'forward') {

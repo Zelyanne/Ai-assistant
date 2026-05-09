@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MCPService } from './mcp.js';
 import { spawn } from 'child_process';
+import type { ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 
 // Mock child_process.spawn
@@ -19,7 +20,7 @@ vi.mock('../guards/PerimeterGuard.js', () => ({
 
 vi.mock('../config/index.js', () => ({
   config: {
-    ENCRYPTION_SECRET: 'secret',
+    ENCRYPTION_SECRET: '0123456789abcdef0123456789abcdef',
     GOOGLE_OAUTH_CLIENT_ID: 'id',
     GOOGLE_OAUTH_CLIENT_SECRET: 'secret'
   }
@@ -33,10 +34,10 @@ vi.mock('./supabase.js', () => ({
 }));
 
 describe('MCPService Startup Logic', () => {
-  let mockSpawn: any;
+  let mockSpawn: ReturnType<typeof vi.mocked<typeof spawn>>;
   let mockStdout: EventEmitter;
   let mockStderr: EventEmitter;
-  let mockChildProcess: EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: any };
+  let mockChildProcess: EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -44,13 +45,13 @@ describe('MCPService Startup Logic', () => {
 
     mockStdout = new EventEmitter();
     mockStderr = new EventEmitter();
-    mockChildProcess = new EventEmitter() as any;
+    mockChildProcess = new EventEmitter() as typeof mockChildProcess;
     mockChildProcess.stdout = mockStdout;
     mockChildProcess.stderr = mockStderr;
     mockChildProcess.kill = vi.fn();
 
     mockSpawn = vi.mocked(spawn);
-    mockSpawn.mockReturnValue(mockChildProcess);
+    mockSpawn.mockReturnValue(mockChildProcess as unknown as ChildProcess);
   });
 
   afterEach(() => {
@@ -98,5 +99,31 @@ describe('MCPService Startup Logic', () => {
 
     await expect(service['serverReady']).rejects.toThrow(/timeout/);
     vi.useRealTimers();
+  });
+
+  it('retries startup once after a previous startup rejection', async () => {
+    delete process.env.TEST_MCP_STARTUP;
+    const service = new MCPService();
+    process.env.TEST_MCP_STARTUP = 'true';
+    const rejectedReady = Promise.reject(new Error('MCP server start timeout after 60 seconds'));
+    rejectedReady.catch(() => undefined);
+    service['serverReady'] = rejectedReady;
+    mockSpawn.mockClear();
+
+    const retryStdout = new EventEmitter();
+    const retryStderr = new EventEmitter();
+    const retryChildProcess = new EventEmitter() as typeof mockChildProcess;
+    retryChildProcess.stdout = retryStdout;
+    retryChildProcess.stderr = retryStderr;
+    retryChildProcess.kill = vi.fn();
+    mockSpawn.mockReturnValue(retryChildProcess as unknown as ChildProcess);
+
+    const retry = service['ensureServerReady']();
+    setTimeout(() => {
+      retryStdout.emit('data', 'Application startup complete.');
+    }, 0);
+
+    await expect(retry).resolves.toBeUndefined();
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
   });
 });

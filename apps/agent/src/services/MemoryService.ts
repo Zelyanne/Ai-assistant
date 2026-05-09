@@ -414,6 +414,44 @@ export class MemoryService {
     );
   }
 
+  async appendShortTermMemoryEntry(
+    organizationId: string,
+    userId: string,
+    entry: string,
+  ): Promise<string> {
+    const artifactPath = this.resolveArtifactPath(organizationId, userId, "short_term");
+    const normalizedEntry = entry.trim();
+
+    await this.ensureUserDirectory(organizationId, userId);
+
+    if (!normalizedEntry) {
+      return artifactPath;
+    }
+
+    return this.withArtifactLock(artifactPath, async () => {
+      const currentMemory = await this.readArtifactOrDefault(
+        artifactPath,
+        "short_term",
+      );
+      const dayHeader = `## ${new Date().toISOString().slice(0, 10)}`;
+      const baseMemory = currentMemory.trimEnd();
+      const nextMemory = [
+        baseMemory,
+        baseMemory.includes(dayHeader) ? null : dayHeader,
+        normalizedEntry,
+      ]
+        .filter((part): part is string => Boolean(part))
+        .join("\n\n");
+
+      await this.writeArtifactFile(
+        artifactPath,
+        "short_term",
+        `${nextMemory}\n`,
+      );
+      return artifactPath;
+    });
+  }
+
   async updateTaskState(
     organizationId: string,
     userId: string,

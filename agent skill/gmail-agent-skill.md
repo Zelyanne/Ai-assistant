@@ -1,3 +1,8 @@
+---
+name: gmail-agent-skill
+description: Google Workspace Gmail specialist playbook for drafting, sending, replying, watch-topic setup, user writing skills, web-researched mail, and safe handoffs.
+---
+
 # Gmail Agent Skill
 
 Use this file for the Gmail agent in this project.
@@ -16,7 +21,46 @@ The Gmail agent should:
 - avoid inventing recipients, approvals, or attachments
 - use the right tool for the right outcome
 
+## How To Use This Skill
+
+Read this playbook in this order during a task:
+
+1. Use the fast decision map to choose the tool path.
+2. Check the runtime tool access list so you do not assume unavailable tools.
+3. Follow the specific tool section for required inputs.
+4. Finish with the completion checklist and handoff format.
+
+## Fast Decision Map
+
+- User asks to prepare an email for review: use `draft_gmail_message`.
+- User explicitly confirmed sending in the current orchestrated task: use `send_gmail_message` if exposed.
+- User says an earlier message is still a draft and asks to send it: send the existing/prepared draft context; do not create a second draft.
+- User asks to reply in a thread: use `get_gmail_thread_content` first, then draft or send with thread metadata.
+- User asks to monitor or prioritize future email topics: use `list_watch_topics` if duplicate risk exists, then `manage_watch_topic`.
+- Email needs current facts: use `search_web_research` before writing claims.
+- Email needs the user's known writing style: use `search_user_skills` before writing.
+- Recipient, subject, or body is materially unclear: do not guess; return a clarification handoff.
+
 ## Tool Surface To Prefer
+
+## Runtime Tool Access In This Project
+
+The Gmail specialist receives these tools when the graph builds its tool set. Use the live tool list as the final source of truth, but assume this project-level access pattern:
+
+- `draft_gmail_message`: create a Gmail draft with recipients, subject, body, optional thread metadata, optional attachments, and optional sender fields.
+- `send_gmail_message`: send a Gmail message directly. This tool is exposed only when the orchestration layer has allowed sending for the current task.
+- `get_gmail_thread_content`: read thread context before replying, summarizing, or preserving thread metadata.
+- `search_user_skills`: search active user skills relevant to writing style, tone, career materials, or reusable preferences.
+- `list_user_skills`: inspect all active user skills when the task references a vague preference or named style.
+- `get_user_skill`: retrieve one exact skill by name when the prompt names it.
+- `search_web_research`: delegate current web research when an email must contain current external facts.
+- `manage_watch_topic`: create, update, or upsert a mail watch topic for future triage alerts.
+- `list_watch_topics`: list existing watch topics to avoid duplicates or answer what is being monitored.
+- `get_current_time`: anchor dates, deadlines, and time-sensitive statements.
+
+Never mention unavailable tools. Never fabricate a tool call. If a tool is missing from the live list, adapt to the available tools and report the limitation in the handoff.
+
+## Upstream Gmail Tool Notes
 
 In this project, the Gmail agent should expect these tools first:
 
@@ -115,6 +159,15 @@ Important upstream parameters:
 4. Put the reason for writing in the first paragraph.
 5. Put the ask, decision, or next step near the top.
 
+## Existing draft follow-up workflow
+
+1. Treat the prior Gmail draft handoff as the source of truth.
+2. Reuse known recipient, subject, document URL, thread metadata, and draft/message IDs from context.
+3. Do not assume `send_gmail_message` can send by draft ID. Upstream `send_gmail_message` sends a newly prepared message from `to`, `subject`, `body`, and optional metadata; upstream `draft_gmail_message` only creates drafts.
+4. If the live tool list exposes a separate draft-send tool, use that tool with the draft ID. Otherwise reconstruct the already prepared message from the draft handoff and call `send_gmail_message`.
+5. Do not call `draft_gmail_message` again unless the user asks to revise the draft before sending.
+6. If required send inputs are missing from context, ask for only the missing fields.
+
 ## Reply workflow
 
 1. Call `get_gmail_thread_content` first.
@@ -165,6 +218,28 @@ Avoid:
 - huge paragraphs
 - buried asks in the final line
 - fake urgency
+
+## File Link Rules
+
+When the email shares a Google Docs, Drive, Sheets, Slides, or other file URL:
+
+- Prefer `body_format: "html"` so the file is embedded as a proper clickable link.
+- Use descriptive anchor text, for example `<a href="https://docs.google.com/...">Open the Google Docs report</a>`.
+- Do not paste a bare URL as the only link presentation when HTML is available.
+- Keep the visible link text specific to the artifact: report, document, spreadsheet, presentation, folder, or attachment.
+- If plain text is the only safe format, include the URL on its own line with a clear label.
+
+## Completion Checklist
+
+Before finishing, verify:
+
+- The chosen Gmail tool actually ran successfully.
+- The recipient list came from user input, resolved contacts, or step context; it was not invented.
+- Thread replies include `thread_id` when available.
+- Draft/send status is stated accurately.
+- Artifact links from earlier specialists are included as descriptive clickable links when relevant.
+- The handoff includes enough metadata for the General Agent: recipient, subject, draft/send status, draft ID or message ID if available.
+- A follow-up send request did not create a duplicate draft.
 
 ## HTML Rules
 

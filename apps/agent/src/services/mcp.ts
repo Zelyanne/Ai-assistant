@@ -80,6 +80,7 @@ export class MCPService {
   private clientCache: Map<string, CachedClient>;
   private toolCache: Map<string, CachedTools>;
   private toolNameCache: Map<string, CachedToolNames>;
+  private toolFetchErrors: Map<string, string>;
   private serverProcess: ChildProcess | null = null;
   private serverReady: Promise<void>;
 
@@ -88,14 +89,37 @@ export class MCPService {
     this.clientCache = new Map();
     this.toolCache = new Map();
     this.toolNameCache = new Map();
+    this.toolFetchErrors = new Map();
     
     // Only start server if not in test environment OR if explicitly requested via env var
     // This allows tests to opt-in to testing the startup logic
     if (process.env.NODE_ENV !== 'test' || process.env.TEST_MCP_STARTUP === 'true') {
-      this.serverReady = this.startSharedServer();
+      this.serverReady = this.createServerReadyPromise();
     } else {
       this.serverReady = Promise.resolve();
     }
+  }
+
+  private createServerReadyPromise(): Promise<void> {
+    return this.startSharedServer().catch((error) => {
+      this.serverProcess = null;
+      throw error;
+    });
+  }
+
+  private async ensureServerReady(): Promise<void> {
+    try {
+      await this.serverReady;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[MCP] Shared server was not ready (${message}); retrying startup once...`);
+      this.serverReady = this.createServerReadyPromise();
+      await this.serverReady;
+    }
+  }
+
+  getLastLangChainToolError(orgId: string): string | null {
+    return this.toolFetchErrors.get(orgId) ?? null;
   }
 
   /**
@@ -293,7 +317,7 @@ export class MCPService {
     orgId: string,
     options: { forceReconnect?: boolean; forceRefresh?: boolean } = {},
   ): Promise<Client> {
-    await this.serverReady;
+    await this.ensureServerReady();
     const now = Date.now();
     
     // Check cache
@@ -710,6 +734,7 @@ export class MCPService {
         tools,
         lastFetched: now
       });
+      this.toolFetchErrors.delete(orgId);
 
       return tools;
     } catch (err: any) {
@@ -725,15 +750,18 @@ export class MCPService {
             tools,
             lastFetched: Date.now(),
           });
+          this.toolFetchErrors.delete(orgId);
 
           return tools;
         } catch (retryErr: any) {
           console.error(`Retry failed fetching LangChain tools for org ${orgId}:`, retryErr);
+          this.toolFetchErrors.set(orgId, retryErr instanceof Error ? retryErr.message : String(retryErr));
           return [];
         }
       }
 
       console.error(`Failed to fetch LangChain tools for org ${orgId}:`, err);
+      this.toolFetchErrors.set(orgId, err instanceof Error ? err.message : String(err));
 
       return [];
     }

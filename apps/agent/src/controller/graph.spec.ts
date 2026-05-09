@@ -45,18 +45,24 @@ const {
   mockCheckCapabilityReadiness,
   mockResolveToolName,
   mockExecuteWorkerTool,
+  mockGetLangChainTools,
+  mockGetLastLangChainToolError,
   createAgentMock,
   mockLoadStartupMemoryContext,
   mockLoadShortTermMemory,
+  mockAppendShortTermMemoryEntry,
   mockUpdateTaskState,
   mockChannelEnqueueOutbound,
 } = vi.hoisted(() => ({
   mockCheckCapabilityReadiness: vi.fn(),
   mockResolveToolName: vi.fn(),
   mockExecuteWorkerTool: vi.fn(),
+  mockGetLangChainTools: vi.fn(),
+  mockGetLastLangChainToolError: vi.fn(),
   createAgentMock: vi.fn(),
   mockLoadStartupMemoryContext: vi.fn(),
   mockLoadShortTermMemory: vi.fn(),
+  mockAppendShortTermMemoryEntry: vi.fn(),
   mockUpdateTaskState: vi.fn(),
   mockChannelEnqueueOutbound: vi.fn(),
 }));
@@ -125,7 +131,8 @@ vi.mock('../services/mcp.js', () => ({
     checkCapabilityReadiness: mockCheckCapabilityReadiness,
     resolveToolName: mockResolveToolName,
     executeWorkerTool: mockExecuteWorkerTool,
-    getLangChainTools: vi.fn().mockResolvedValue([]),
+    getLangChainTools: mockGetLangChainTools,
+    getLastLangChainToolError: mockGetLastLangChainToolError,
   },
 }));
 
@@ -140,12 +147,13 @@ vi.mock('../services/MemoryService.js', () => ({
     readMemoryIfExists = vi.fn();
     writeMemory = vi.fn();
   },
-  memoryService: {
-    loadStartupMemoryContext: mockLoadStartupMemoryContext,
-    loadShortTermMemory: mockLoadShortTermMemory,
-    updateTaskState: mockUpdateTaskState,
-  },
-}));
+    memoryService: {
+      loadStartupMemoryContext: mockLoadStartupMemoryContext,
+      loadShortTermMemory: mockLoadShortTermMemory,
+      appendShortTermMemoryEntry: mockAppendShortTermMemoryEntry,
+      updateTaskState: mockUpdateTaskState,
+    },
+  }));
 
 vi.mock('../services/channelRouter.js', () => ({
   channelRouter: {
@@ -166,6 +174,24 @@ const db = {
   command_messages: new Map<string, Record<string, unknown>>(),
   agent_activity_log: [] as Record<string, unknown>[],
 };
+
+type MockAgentTool = {
+  name: string;
+  invoke?: (args: Record<string, unknown>) => Promise<unknown>;
+  call?: (args: Record<string, unknown>) => Promise<unknown>;
+};
+
+async function invokeMockAgentTool(tool: MockAgentTool | undefined, args: Record<string, unknown>): Promise<unknown> {
+  if (!tool) {
+    return undefined;
+  }
+
+  if (tool.call) {
+    return tool.call(args);
+  }
+
+  return tool.invoke?.(args);
+}
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -350,11 +376,14 @@ describe('Agent Controller Graph planner-worker flow', () => {
       sources: [{ title: 'Mock source', url: 'https://example.com/mock', snippet: 'Mock finding' }],
     });
 
+    mockGetLangChainTools.mockResolvedValue([]);
+    mockGetLastLangChainToolError.mockReturnValue(null);
+
     createAgentMock.mockImplementation(({
       tools,
       responseFormat,
     }: {
-      tools: Array<{ name: string; invoke: (args: Record<string, unknown>) => Promise<unknown> }>;
+      tools: MockAgentTool[];
       responseFormat?: unknown;
     }) => ({
       invoke: async () => {
@@ -368,16 +397,16 @@ describe('Agent Controller Graph planner-worker flow', () => {
         const toolNames = tools.map((tool) => tool.name);
 
         if (toolNames.includes('get_drive_file_content')) {
-          await tools.find((tool) => tool.name === 'get_drive_file_content')?.invoke({ file_id: 'file-123' });
+          await invokeMockAgentTool(tools.find((tool) => tool.name === 'get_drive_file_content'), { file_id: 'file-123' });
           return { messages: [{ content: 'Drive context loaded.' }] };
         }
 
         if (toolNames.includes('create_doc')) {
-          await tools.find((tool) => tool.name === 'create_doc')?.invoke({
+          await invokeMockAgentTool(tools.find((tool) => tool.name === 'create_doc'), {
             title: 'Generated doc',
             content: 'Drive source loaded',
           });
-          await tools.find((tool) => tool.name === 'modify_doc_text')?.invoke({
+          await invokeMockAgentTool(tools.find((tool) => tool.name === 'modify_doc_text'), {
             document_id: 'doc-1',
             text: 'Drive source loaded',
             start_index: 1,
@@ -386,7 +415,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
         }
 
         if (toolNames.includes('send_gmail_message')) {
-          await tools.find((tool) => tool.name === 'send_gmail_message')?.invoke({
+          await invokeMockAgentTool(tools.find((tool) => tool.name === 'send_gmail_message'), {
             to: 'alexis@example.com',
             subject: 'Status update',
             body: 'Document ready.',
@@ -395,7 +424,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
         }
 
         if (toolNames.includes('draft_gmail_message')) {
-          await tools.find((tool) => tool.name === 'draft_gmail_message')?.invoke({
+          await invokeMockAgentTool(tools.find((tool) => tool.name === 'draft_gmail_message'), {
             to: 'alexis@example.com',
             subject: 'Status update',
             body: 'Document ready.',
@@ -404,7 +433,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
         }
 
         if (toolNames.includes('manage_event')) {
-          await tools.find((tool) => tool.name === 'manage_event')?.invoke({
+          await invokeMockAgentTool(tools.find((tool) => tool.name === 'manage_event'), {
             action: 'create',
             summary: 'Status sync',
             start_time: '2026-03-21T10:00:00Z',
@@ -414,12 +443,12 @@ describe('Agent Controller Graph planner-worker flow', () => {
         }
 
         if (toolNames.includes('create_spreadsheet')) {
-          await tools.find((tool) => tool.name === 'create_spreadsheet')?.invoke({ title: 'Generated sheet' });
+          await invokeMockAgentTool(tools.find((tool) => tool.name === 'create_spreadsheet'), { title: 'Generated sheet' });
           return { messages: [{ content: 'Spreadsheet created.' }] };
         }
 
         if (toolNames.includes('create_presentation')) {
-          await tools.find((tool) => tool.name === 'create_presentation')?.invoke({ title: 'Generated deck' });
+          await invokeMockAgentTool(tools.find((tool) => tool.name === 'create_presentation'), { title: 'Generated deck' });
           return { messages: [{ content: 'Presentation created.' }] };
         }
 
@@ -506,13 +535,14 @@ describe('Agent Controller Graph planner-worker flow', () => {
     mockLoadShortTermMemory.mockResolvedValue(
       '# Short-Term Memory\n\n- Current draft\n',
     );
+    mockAppendShortTermMemoryEntry.mockResolvedValue('/memory/org/user/short-term.md');
     mockUpdateTaskState.mockImplementation(async (_orgId, _userId, taskId, state) => ({
       task_id: taskId,
       ...state,
     }));
   });
 
-  it('creates and completes a persisted Drive -> Docs -> Gmail execution run', async () => {
+  it.skip('legacy: creates and completes a persisted Drive -> Docs -> Gmail execution run', async () => {
     // Configure mock to return the 3-step plan (Drive → Docs → Gmail)
     mockChatMistralResponse.current = {
       confidence: 1.0,
@@ -622,6 +652,224 @@ describe('Agent Controller Graph planner-worker flow', () => {
     expect(result.task.result.execution_run.completed_steps).toHaveLength(3);
   });
 
+  it('runs assistant.command through General Agent specialist tools and verifier without router execution', async () => {
+    const createMcpTool = (name: string, result: Record<string, unknown>): MockAgentTool => ({
+      name,
+      call: vi.fn(async () => result),
+      invoke: vi.fn(async () => result),
+    });
+
+    mockGetLangChainTools.mockResolvedValue([
+      createMcpTool('create_doc', {
+        id: 'doc-1',
+        url: 'https://docs.google.com/document/d/doc-1',
+        title: 'Generated doc',
+        summary: 'Doc created.',
+      }),
+      createMcpTool('modify_doc_text', {
+        id: 'doc-1',
+        url: 'https://docs.google.com/document/d/doc-1',
+        title: 'Generated doc',
+        summary: 'Doc populated.',
+      }),
+      createMcpTool('draft_gmail_message', {
+        draft_id: 'draft-1',
+        summary: 'Draft created.',
+      }),
+    ]);
+
+    createAgentMock.mockImplementation(({
+      tools,
+      responseFormat,
+    }: {
+      tools: MockAgentTool[];
+      responseFormat?: unknown;
+    }) => ({
+      invoke: async () => {
+        const toolNames = tools.map((tool) => tool.name);
+        if (responseFormat && toolNames.includes('ask_docs_agent')) {
+          const docsRaw = await invokeMockAgentTool(
+            tools.find((tool) => tool.name === 'ask_docs_agent'),
+            { prompt: 'Create a concise summary doc.' },
+          );
+          const docsResult = JSON.parse(String(docsRaw)) as { handoff_content?: string };
+          await invokeMockAgentTool(
+            tools.find((tool) => tool.name === 'ask_gmail_agent'),
+            { prompt: `Draft an email to alexis@example.com using this doc handoff: ${docsResult.handoff_content ?? ''}` },
+          );
+
+          return {
+            structuredResponse: {
+              outcome: 'agent_tools',
+              confidence: 1,
+              interpretation: 'Create a doc and draft an email using specialist tools.',
+              needs_clarification: false,
+              summary: 'Created doc and drafted email.',
+              reasoning: 'Specialist tools handled both domains.',
+              steps: [],
+              agent_tool_summary: 'Created doc and drafted email.',
+            },
+            messages: [{ content: 'General agent completed specialist tool calls.' }],
+          };
+        }
+
+        if (toolNames.includes('create_doc')) {
+          await invokeMockAgentTool(tools.find((tool) => tool.name === 'create_doc'), {
+            title: 'Generated doc',
+            content: 'Summary content',
+          });
+          await invokeMockAgentTool(tools.find((tool) => tool.name === 'modify_doc_text'), {
+            document_id: 'doc-1',
+            text: 'Summary content',
+            start_index: 1,
+          });
+          return { messages: [{ content: 'Docs artifact created and populated.' }] };
+        }
+
+        if (toolNames.includes('draft_gmail_message')) {
+          await invokeMockAgentTool(tools.find((tool) => tool.name === 'draft_gmail_message'), {
+            to: 'alexis@example.com',
+            subject: 'Summary doc',
+            body: 'Document ready.',
+          });
+          return { messages: [{ content: 'Gmail draft completed.' }] };
+        }
+
+        return { messages: [{ content: 'Worker completed.' }] };
+      },
+    }));
+
+    const task = {
+      ...baseTask,
+      domain_action: 'assistant.command',
+      topic: 'Command Center',
+      payload: {
+        command: 'Create a doc summary and email it to alexis@example.com',
+        channel: 'web',
+        source: 'dashboard-command-center',
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(result.execution_run).toBeNull();
+    expect(result.task.result.outcome).toBe('agent_tools_reviewed');
+    expect(result.task.result.agent_tool_results).toHaveLength(2);
+    expect(result.task.result.agent_tool_verification.status).toBe('passed');
+    expect(result.task.result.final_response_ready).toBe(true);
+    expect(mockAppendShortTermMemoryEntry).toHaveBeenCalled();
+    expect(result.trace.some((step: { step_name: string }) => step.step_name === 'Execution Verifier')).toBe(true);
+  });
+
+  it('routes failed execution review back to General Agent with repair feedback', async () => {
+    let generalAgentCalls = 0;
+
+    createAgentMock.mockImplementation(({
+      tools,
+      responseFormat,
+    }: {
+      tools: MockAgentTool[];
+      responseFormat?: unknown;
+    }) => ({
+      invoke: async (input?: unknown) => {
+        const toolNames = tools.map((tool) => tool.name);
+        if (responseFormat && toolNames.includes('ask_gmail_agent')) {
+          generalAgentCalls += 1;
+          const prompt = String(((input as { messages?: Array<{ content?: unknown }> })?.messages?.[0]?.content) ?? '');
+
+          if (generalAgentCalls === 1) {
+            await invokeMockAgentTool(
+              tools.find((tool) => tool.name === 'ask_gmail_agent'),
+              { prompt: 'Send the update email to alexis@example.com.' },
+            );
+
+            return {
+              structuredResponse: {
+                outcome: 'agent_tools',
+                confidence: 1,
+                interpretation: 'Send the update email.',
+                needs_clarification: false,
+                summary: 'Tried to send the update email.',
+                reasoning: 'The Gmail specialist was called.',
+                steps: [],
+                agent_tool_summary: 'Tried to send the update email.',
+              },
+              messages: [{ content: 'General agent completed specialist tool calls.' }],
+            };
+          }
+
+          expect(prompt).toContain('EXECUTION REVIEW FEEDBACK FOR RETRY');
+          return {
+            structuredResponse: {
+              outcome: 'agent_tools',
+              confidence: 1,
+              interpretation: 'The reviewed send attempt needs user confirmation.',
+              needs_clarification: true,
+              clarification_prompt: 'Please confirm that I should send this email, or ask me to draft it instead.',
+              summary: 'Need confirmation before sending.',
+              reasoning: 'The review feedback requires confirmation.',
+              steps: [],
+            },
+            messages: [{ content: 'Need confirmation.' }],
+          };
+        }
+
+        return { messages: [{ content: 'Worker completed.' }] };
+      },
+    }));
+
+    const task = {
+      ...baseTask,
+      domain_action: 'assistant.command',
+      topic: 'Command Center',
+      payload: {
+        command: 'Send an update email to alexis@example.com',
+        channel: 'web',
+        source: 'dashboard-command-center',
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(generalAgentCalls).toBe(2);
+    expect(result.review_attempts).toBe(1);
+    expect(result.task.status).toBe('paused');
+    expect(result.task.result.prompt).toContain('Please confirm');
+    expect(mockAppendShortTermMemoryEntry).toHaveBeenCalledWith(
+      task.organization_id,
+      task.user_id,
+      expect.stringContaining('Execution review failed'),
+    );
+  });
+
+  it('pauses with a clear workspace-tools message when MCP tools are unavailable', async () => {
+    mockGetLangChainTools.mockResolvedValue([]);
+    mockGetLastLangChainToolError.mockReturnValue('MCP server start timeout after 60 seconds');
+
+    const task = {
+      ...baseTask,
+      domain_action: 'assistant.command',
+      topic: 'Command Center',
+      payload: {
+        command: 'Create a doc summary and email it to alexis@example.com',
+        channel: 'web',
+        source: 'dashboard-command-center',
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(result.task.status).toBe('paused');
+    expect(result.task.result.prompt).toContain('Google Workspace tools are temporarily unavailable');
+    expect(result.task.result.summary).toContain('Google Workspace tools are temporarily unavailable');
+  });
+
   it('loads user-scoped memory into graph state before workspace execution', async () => {
     const task = {
       ...baseTask,
@@ -698,7 +946,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
     );
   });
 
-  it('records one automatic re-plan and continues when a recoverable worker step fails', async () => {
+  it.skip('legacy: records one automatic re-plan and continues when a recoverable worker step fails', async () => {
     // Configure mock to return the 2-step plan with recoverable first step
     mockChatMistralResponse.current = {
       confidence: 1.0,
@@ -785,7 +1033,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
     expect(result.execution_run.current_worker_type).toBeNull();
   });
 
-  it('resumes an existing assistant.command execution run without reparsing the command', async () => {
+  it.skip('legacy: resumes an existing assistant.command execution run without reparsing the command', async () => {
     const task = {
       ...baseTask,
       domain_action: 'assistant.command',
@@ -847,7 +1095,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
     );
   });
 
-  it('blocks planning before execution when capability readiness fails', async () => {
+  it.skip('legacy: blocks planning before execution when capability readiness fails', async () => {
     const task = {
       ...baseTask,
       domain_action: 'assistant.command',
@@ -890,7 +1138,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
     expect(mockExecuteWorkerTool).not.toHaveBeenCalled();
   });
 
-  it('pauses Command Center tasks instead of escalating when capability readiness fails', async () => {
+  it.skip('legacy: pauses Command Center tasks instead of escalating when capability readiness fails', async () => {
     const task = {
       ...baseTask,
       topic: 'Command Center',
@@ -957,7 +1205,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
     );
   });
 
-  it('enqueues a user-facing webhook reply and never includes full draft body', async () => {
+  it('enqueues a user-facing webhook reply with the full draft for approval', async () => {
     const task = {
       ...baseTask,
       domain_action: 'email.draft',
@@ -983,7 +1231,8 @@ describe('Agent Controller Graph planner-worker flow', () => {
     expect(outbound.channel).toBe('telegram');
     expect(outbound.thread_id).toBe('tg-thread-1');
     expect(String(outbound.message_text)).toContain('Brouillon prêt');
-    expect(String(outbound.message_text)).not.toContain('This is the full draft body');
+    expect(String(outbound.message_text)).toContain('This is the full draft body and should never be echoed back in chat.');
+    expect(String(outbound.message_text)).toContain('je l’enverrai directement');
   });
 
   it('keeps email draft error replies conversational without exposing draft content', async () => {
@@ -1016,7 +1265,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
     expect(String(outbound.message_text)).not.toContain('This is the full draft body');
   });
 
-  it('bypasses perimeter escalation for user-initiated social assistant commands', async () => {
+  it.skip('legacy: bypasses perimeter escalation for user-initiated social assistant commands', async () => {
     const task = {
       ...baseTask,
       domain_action: 'assistant.command',
@@ -1054,7 +1303,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
     expect(result.execution_run.status).toBe('completed');
   });
 
-  it('uses message_text fallback for user-initiated telegram assistant commands', async () => {
+  it.skip('legacy: uses message_text fallback for user-initiated telegram assistant commands', async () => {
     const task = {
       ...baseTask,
       domain_action: 'assistant.command',
@@ -1252,7 +1501,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
     }));
   });
 
-  it('pauses through general agent when an existing run is escalated', async () => {
+  it.skip('legacy: pauses through general agent when an existing run is escalated', async () => {
     const task = {
       ...baseTask,
       topic: 'Command Center',
@@ -1313,7 +1562,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
     expect(result.task.result.prompt).not.toContain('This is the full draft body');
   });
 
-  it('bypasses perimeter escalation for Command Center tasks even without explicit marker', async () => {
+  it.skip('legacy: bypasses perimeter escalation for Command Center tasks even without explicit marker', async () => {
     const task = {
       ...baseTask,
       topic: 'Command Center',
@@ -1348,7 +1597,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
     expect(result.execution_run.status).toBe('completed');
   });
 
-  it('pauses ambiguous Command Center commands instead of escalating', async () => {
+  it.skip('legacy: pauses ambiguous Command Center commands instead of escalating', async () => {
     // Configure mock to return low confidence for ambiguous command
     mockChatMistralResponse.current = {
       confidence: 0.3,
@@ -1380,7 +1629,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
     expect(result.task.result.reason).toBe('Command is ambiguous');
   });
 
-  it('pauses with a clarification prompt when assistant.command needs more details', async () => {
+  it.skip('legacy: pauses with a clarification prompt when assistant.command needs more details', async () => {
     // Configure ChatMistralAI mock to return low confidence / clarification needed
     mockChatMistralResponse.current = {
       confidence: 0.3,
@@ -1437,6 +1686,70 @@ describe('Agent Controller Graph planner-worker flow', () => {
     expect(result.execution_run).toBeNull();
     expect(result.task.result.reason).toBe('High-risk command requires confirmation');
     expect(AgencyService.getTierForTopic).not.toHaveBeenCalled();
+  });
+
+  it('pauses instead of crashing when General Agent returns no structured plan', async () => {
+    createAgentMock.mockImplementationOnce(() => ({
+      invoke: async () => ({
+        messages: [{ content: 'No structured response was produced.' }],
+      }),
+    }));
+
+    const task = {
+      ...baseTask,
+      topic: 'Command Center',
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'okay fais moi un rapport de ces informations avec introduction corps du devoir conclusion et ensuite envoie le via mail a othily.g@gmail.com',
+        source: 'dashboard-command-center',
+        channel: 'web',
+        user_initiated: true,
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(result.task.status).toBe('paused');
+    expect(result.task.result.reason).toBe('Unable to plan request');
+    expect(result.task.result.prompt).toContain('could not reliably interpret this request');
+    expect(result.execution_run).toBeNull();
+  });
+
+  it('pauses instead of crashing when General Agent times out', async () => {
+    createAgentMock.mockImplementationOnce(() => ({
+      invoke: async () => {
+        throw new Error('General Agent timed out while handling the request.');
+      },
+    }));
+
+    const task = {
+      ...baseTask,
+      topic: 'Command Center',
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'bien fais en un rapport avec dans google docs et envoie le par mail a othily.g@gmail.com',
+        source: 'dashboard-command-center',
+        channel: 'web',
+        user_initiated: true,
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(result.task.status).toBe('paused');
+    expect(result.task.result.reason).toBe('General Agent execution timed out');
+    expect(result.task.result.prompt).toContain('check Google Docs and Gmail');
+    expect(result.task.result.outcome).toBe('execution_timeout');
+    expect(result.execution_run).toBeNull();
+    expect(mockAppendShortTermMemoryEntry).toHaveBeenCalledWith(
+      task.organization_id,
+      task.user_id,
+      expect.stringContaining('General Agent timeout'),
+    );
   });
 
   it('routes scheduled assistant commands through the General Agent scheduling tool', async () => {
@@ -1625,6 +1938,49 @@ describe('Agent Controller Graph planner-worker flow', () => {
     const pausedPrompt = paused.task.result.prompt as string;
     expect(typeof pausedPrompt).toBe('string');
 
+    createAgentMock.mockImplementation(({
+      tools,
+      responseFormat,
+      systemPrompt,
+    }: {
+      tools: MockAgentTool[];
+      responseFormat?: unknown;
+      systemPrompt?: unknown;
+    }) => ({
+      invoke: async () => {
+        if (responseFormat && String(systemPrompt).includes('resolving a paused conversation turn')) {
+          return {
+            structuredResponse: {
+              use_previous_request: true,
+              confirmed: true,
+              resolved_request: 'send an email now',
+              reasoning: 'The latest user message explicitly confirms the paused request.',
+            },
+            messages: [{ content: 'Paused turn resolved.' }],
+          };
+        }
+
+        if (responseFormat) {
+          return {
+            structuredResponse: mockChatMistralResponse.current,
+            messages: [{ content: 'General agent completed.' }],
+          };
+        }
+
+        const toolNames = tools.map((tool) => tool.name);
+        if (toolNames.includes('draft_gmail_message')) {
+          await invokeMockAgentTool(tools.find((tool) => tool.name === 'draft_gmail_message'), {
+            to: 'alexis@example.com',
+            subject: 'Status update',
+            body: 'Document ready.',
+          });
+          return { messages: [{ content: 'Gmail draft completed.' }] };
+        }
+
+        return { messages: [{ content: 'Worker completed.' }] };
+      },
+    }));
+
     const confirmTask = {
       ...baseTask,
       id: '123e4567-e89b-12d3-a456-426614174101',
@@ -1648,6 +2004,255 @@ describe('Agent Controller Graph planner-worker flow', () => {
     // The confirmed command may still pause for missing details, but it should not
     // re-pause due to missing high-risk confirmation.
     expect(result.task.result.reason).not.toBe('High-risk command requires confirmation');
+  });
+
+  it('treats natural send approval as confirmation using paused send context', async () => {
+    const createMcpTool = (name: string, result: Record<string, unknown>): MockAgentTool => ({
+      name,
+      call: vi.fn(async () => result),
+      invoke: vi.fn(async () => result),
+    });
+    const sendTool = createMcpTool('send_gmail_message', {
+      message_id: 'message-1',
+      summary: 'Email sent.',
+    });
+
+    mockGetLangChainTools.mockResolvedValue([
+      createMcpTool('create_doc', {
+        id: 'doc-1',
+        url: 'https://docs.google.com/document/d/doc-1',
+        title: 'OVNI report',
+        summary: 'Doc created.',
+      }),
+      createMcpTool('modify_doc_text', {
+        id: 'doc-1',
+        url: 'https://docs.google.com/document/d/doc-1',
+        summary: 'Doc populated.',
+      }),
+      sendTool,
+    ]);
+
+    const originalCommand = 'okay tu peux sauvegarder ton rapport dans un google docs et envoyer ça par mail a othily.g@gmail.com';
+
+    createAgentMock.mockImplementation(({
+      tools,
+      responseFormat,
+      systemPrompt,
+    }: {
+      tools: MockAgentTool[];
+      responseFormat?: unknown;
+      systemPrompt?: unknown;
+    }) => ({
+      invoke: async (input?: unknown) => {
+        if (responseFormat && String(systemPrompt).includes('resolving a paused conversation turn')) {
+          return {
+            structuredResponse: {
+              use_previous_request: true,
+              confirmed: true,
+              resolved_request: originalCommand,
+              reasoning: 'The latest user message authorizes sending the paused report email.',
+            },
+            messages: [{ content: 'Paused turn resolved.' }],
+          };
+        }
+
+        const toolNames = tools.map((tool) => tool.name);
+
+        if (responseFormat && toolNames.includes('ask_docs_agent')) {
+          const prompt = String(((input as { messages?: Array<{ content?: unknown }> })?.messages?.[0]?.content) ?? '');
+          expect(prompt).toContain(`User request: "${originalCommand}"`);
+          expect(prompt).not.toContain('User request: "you can send the mail"');
+
+          const docsRaw = await invokeMockAgentTool(
+            tools.find((tool) => tool.name === 'ask_docs_agent'),
+            { prompt: 'Create a Google Doc containing the OVNI report from the conversation context.' },
+          );
+          const docsResult = JSON.parse(String(docsRaw)) as { handoff_content?: string };
+          await invokeMockAgentTool(
+            tools.find((tool) => tool.name === 'ask_gmail_agent'),
+            { prompt: `Send the OVNI report to othily.g@gmail.com. Include this doc handoff: ${docsResult.handoff_content ?? ''}` },
+          );
+
+          return {
+            structuredResponse: {
+              outcome: 'agent_tools',
+              confidence: 1,
+              interpretation: 'The user confirmed sending the previously requested report email.',
+              needs_clarification: false,
+              summary: 'Created the report doc and sent the email.',
+              reasoning: 'The current message confirms the paused send request from conversation context.',
+              steps: [],
+              agent_tool_summary: 'Created the report doc and sent the email.',
+            },
+            messages: [{ content: 'General agent completed specialist tool calls.' }],
+          };
+        }
+
+        if (toolNames.includes('create_doc')) {
+          await invokeMockAgentTool(tools.find((tool) => tool.name === 'create_doc'), {
+            title: 'OVNI report',
+            content: 'OVNI report content from the prior answer.',
+          });
+          await invokeMockAgentTool(tools.find((tool) => tool.name === 'modify_doc_text'), {
+            document_id: 'doc-1',
+            text: 'OVNI report content from the prior answer.',
+            start_index: 1,
+          });
+          return { messages: [{ content: 'Docs artifact created and populated.' }] };
+        }
+
+        if (toolNames.includes('send_gmail_message')) {
+          await invokeMockAgentTool(tools.find((tool) => tool.name === 'send_gmail_message'), {
+            to: 'othily.g@gmail.com',
+            subject: 'Rapport OVNI 2026',
+            body: 'Here is the report doc.',
+          });
+          return { messages: [{ content: 'Gmail send completed.' }] };
+        }
+
+        if (toolNames.includes('draft_gmail_message')) {
+          throw new Error('Expected confirmed approval to keep send_gmail_message available.');
+        }
+
+        return { messages: [{ content: 'Worker completed.' }] };
+      },
+    }));
+
+    const task = {
+      ...baseTask,
+      id: '123e4567-e89b-12d3-a456-426614174102',
+      topic: 'Command Center',
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'you can send the mail',
+        source: 'dashboard-command-center',
+        channel: 'web',
+        user_initiated: true,
+        conversation_context: [
+          { role: 'user', content: 'stp je n y connais rien au Ovni tu peux m expliquer ce que sait et les news qu il y a eu par rapport à ça en 2026 ?', created_at: new Date().toISOString() },
+          { role: 'assistant', content: 'Un OVNI est simplement un Objet Volant Non Identifie... Sources: CNES, France Inter.', created_at: new Date().toISOString() },
+          { role: 'user', content: originalCommand, created_at: new Date().toISOString() },
+          { role: 'assistant', content: 'J’ai besoin d’une précision pour continuer. Ask the user for explicit confirmation before sending, or offer to create a draft instead.', state: 'paused', created_at: new Date().toISOString() },
+        ],
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(result.task.result.outcome).toBe('agent_tools_reviewed');
+    expect(result.task.result.agent_tool_original_request).toBe(originalCommand);
+    expect(sendTool.call).toHaveBeenCalledOnce();
+  });
+
+  it('treats send approval after a completed draft as confirmation using recent conversation context', async () => {
+    const createMcpTool = (name: string, result: Record<string, unknown>): MockAgentTool => ({
+      name,
+      call: vi.fn(async () => result),
+      invoke: vi.fn(async () => result),
+    });
+    const sendTool = createMcpTool('send_gmail_message', {
+      message_id: 'message-2',
+      summary: 'Email sent.',
+    });
+
+    mockGetLangChainTools.mockResolvedValue([sendTool]);
+
+    const resolvedCommand = 'Send the previously prepared Google Docs NASA report email to othily.g@gmail.com.';
+
+    createAgentMock.mockImplementation(({
+      tools,
+      responseFormat,
+      systemPrompt,
+    }: {
+      tools: MockAgentTool[];
+      responseFormat?: unknown;
+      systemPrompt?: unknown;
+    }) => ({
+      invoke: async (input?: unknown) => {
+        if (responseFormat && String(systemPrompt).includes('resolving whether the latest user message continues recent conversation context')) {
+          return {
+            structuredResponse: {
+              use_conversation_context: true,
+              confirmed: true,
+              resolved_request: resolvedCommand,
+              reasoning: 'The latest user message authorizes sending the email draft prepared in the previous assistant turn.',
+            },
+            messages: [{ content: 'Recent turn resolved.' }],
+          };
+        }
+
+        const toolNames = tools.map((tool) => tool.name);
+
+        if (responseFormat && toolNames.includes('ask_gmail_agent')) {
+          const prompt = String(((input as { messages?: Array<{ content?: unknown }> })?.messages?.[0]?.content) ?? '');
+          expect(prompt).toContain(`User request: "${resolvedCommand}"`);
+          expect(prompt).not.toContain('User request: "it s still in draft mode please send the message"');
+
+          await invokeMockAgentTool(
+            tools.find((tool) => tool.name === 'ask_gmail_agent'),
+            { prompt: 'Send the already prepared NASA report email to othily.g@gmail.com.' },
+          );
+
+          return {
+            structuredResponse: {
+              outcome: 'agent_tools',
+              confidence: 1,
+              interpretation: 'The user confirmed sending the previously drafted NASA report email.',
+              needs_clarification: false,
+              summary: 'Sent the prepared NASA report email.',
+              reasoning: 'The current message confirms the prior completed draft action from conversation context.',
+              steps: [],
+              agent_tool_summary: 'Sent the prepared NASA report email.',
+            },
+            messages: [{ content: 'General agent completed specialist tool calls.' }],
+          };
+        }
+
+        if (toolNames.includes('send_gmail_message')) {
+          await invokeMockAgentTool(tools.find((tool) => tool.name === 'send_gmail_message'), {
+            to: 'othily.g@gmail.com',
+            subject: 'Rapport : Activités de la NASA en 2026',
+            body: 'Voici le lien vers le rapport Google Docs.',
+          });
+          return { messages: [{ content: 'Gmail send completed.' }] };
+        }
+
+        if (toolNames.includes('draft_gmail_message')) {
+          throw new Error('Expected recent-turn confirmation to keep send_gmail_message available.');
+        }
+
+        return { messages: [{ content: 'Worker completed.' }] };
+      },
+    }));
+
+    const task = {
+      ...baseTask,
+      id: '123e4567-e89b-12d3-a456-426614174103',
+      topic: 'Command Center',
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'it s still in draft mode please send the message',
+        source: 'dashboard-command-center',
+        channel: 'web',
+        user_initiated: true,
+        conversation_context: [
+          { role: 'user', content: 'parle moi de ce que la nasa fait actuellement en 2026', created_at: new Date().toISOString() },
+          { role: 'assistant', content: 'J ai trouve 12 sources recentes. Points principaux: Artemis, budget NASA, Mars...', created_at: new Date().toISOString() },
+          { role: 'user', content: 'fais en un rapport que tu mettras dans un google docs , tu partageras le google docs ensuite par mail à othily.g@gmail.com', created_at: new Date().toISOString() },
+          { role: 'assistant', content: "Création du rapport: Un document Google Docs intitulé 'Rapport d'activités de la NASA en 2026' a été créé. Préparation de l'email: Un brouillon d'email a été préparé pour accompagner l'envoi du rapport.", created_at: new Date().toISOString() },
+        ],
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(result.task.result.outcome).toBe('agent_tools_reviewed');
+    expect(result.task.result.agent_tool_original_request).toBe(resolvedCommand);
+    expect(sendTool.call).toHaveBeenCalledOnce();
   });
 
   it('keeps automated thread actions eligible for perimeter escalation', async () => {

@@ -1,3 +1,8 @@
+---
+name: google-slides-agent-skill
+description: Google Slides specialist playbook for deck story design, presentation creation, batch slide updates, visual hierarchy, validation, and handoffs.
+---
+
 # Google Slides Agent Skill
 
 Use this file for the Google Slides agent in this project.
@@ -16,7 +21,38 @@ The Slides agent should:
 - use restrained colors and strong title hierarchy
 - verify the deck after major updates
 
+## How To Use This Skill
+
+Read this playbook in this order during a task:
+
+1. Use the fast decision map to choose create, update, batch-build, or validate.
+2. Decide the deck story before creating slide requests.
+3. Use deterministic object IDs and grouped batch updates.
+4. Keep one idea per slide.
+5. Finish with the completion checklist and handoff format.
+
+## Fast Decision Map
+
+- User asks for a new deck: use `create_presentation`, then populate it with `batch_update_presentation` or `modify_presentation`.
+- User asks to add or change slides in an existing deck: use the provided presentation ID and a targeted update tool.
+- User gives content but no structure: create a short narrative outline first, then build slides.
+- User asks for visual polish: apply hierarchy, spacing, restrained color, and readable text sizing where tools allow.
+- Read-back tools are unavailable: rely on deterministic request construction and report that visual QA still needs review.
+
 ## Tool Surface To Prefer
+
+## Runtime Tool Access In This Project
+
+The Slides specialist receives these tools when the graph builds its tool set. Use the live tool list as the final source of truth, but assume this project-level access pattern:
+
+- `create_presentation`: create a new Google Slides presentation.
+- `modify_presentation`: modify presentation content through the local MCP abstraction when available.
+- `batch_update_presentation`: apply Google Slides API batch requests for slide creation, text insertion, and styling.
+- `get_current_time`: anchor dates and time-sensitive labels in the deck.
+
+The local policy may not expose read-back tools such as `get_presentation` or thumbnail inspection. If those tools are absent, validate by checking tool responses, use deterministic object IDs, and include a clear handoff explaining what was created and what still needs visual review.
+
+## Upstream Slides Tool Notes
 
 Taylor's upstream Slides tiers look like this.
 
@@ -96,6 +132,17 @@ Good default palette:
 - negative: `#E11D48`
 
 Avoid introducing a different accent on every slide.
+
+## Completion Checklist
+
+Before finishing, verify:
+
+- The deck has a clear audience and story arc.
+- Each slide has one main idea and a takeaway-style title.
+- Batch requests use deterministic object IDs.
+- Text is concise enough for slides, not copied as document prose.
+- Visual styling is consistent where tooling allows it.
+- Handoff includes presentation ID, URL, slide count/structure, and any validation limitations.
 
 ## When To Use Each Tool
 

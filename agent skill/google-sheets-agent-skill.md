@@ -1,3 +1,8 @@
+---
+name: google-sheets-agent-skill
+description: Google Sheets specialist playbook for spreadsheet creation, data writing, formula design, dashboards, validation, and clean handoffs.
+---
+
 # Google Sheets Agent Skill
 
 Use this file for the Google Sheets agent in this project.
@@ -16,7 +21,38 @@ The Sheets agent should:
 - make dashboards readable and attractive
 - use Apps Script only when formulas and native sheet tools are not enough
 
+## How To Use This Skill
+
+Read this playbook in this order during a task:
+
+1. Use the fast decision map to choose create, read, write, or validate.
+2. Design the workbook layout before writing values.
+3. Use `USER_ENTERED` formulas intentionally.
+4. Read back important ranges after complex writes when possible.
+5. Finish with the completion checklist and handoff format.
+
+## Fast Decision Map
+
+- User asks for a new spreadsheet, tracker, table, model, or dashboard: use `create_spreadsheet`, then `modify_sheet_values`.
+- User asks to inspect or summarize an existing sheet: use `read_sheet_values`; do not write.
+- User asks to update cells or formulas: use `read_sheet_values` first unless the target range is exact and low-risk, then `modify_sheet_values`.
+- User asks for calculations: write formulas with `USER_ENTERED` and prefer helper tables over unreadable mega-formulas.
+- User asks for visual polish but formatting tools are unavailable: build clean structure and state the formatting limitation in the handoff.
+
 ## Tool Surface To Prefer
+
+## Runtime Tool Access In This Project
+
+The Sheets specialist receives these tools when the graph builds its tool set. Use the live tool list as the final source of truth, but assume this project-level access pattern:
+
+- `create_spreadsheet`: create a new spreadsheet, preferably with all planned tabs named up front.
+- `modify_sheet_values`: write values or formulas into a range, clear ranges when requested, and use `USER_ENTERED` for formulas/dates/currency.
+- `read_sheet_values`: inspect existing data before edits and validate results after meaningful writes.
+- `get_current_time`: anchor date labels, report timestamps, and relative-date calculations.
+
+The current local policy does not expose formatting, chart, conditional-formatting, or Apps Script tools to the Sheets specialist unless the live MCP server/tool policy changes. If the user asks for visual polish that requires unavailable formatting tools, still create a well-structured workbook and state which formatting should be applied later.
+
+## Upstream Sheets Tool Notes
 
 Taylor's upstream Sheets tiers look like this.
 
@@ -235,6 +271,17 @@ Official Google Apps Script guidance strongly recommends batching operations and
 - use `IFERROR` near the presentation boundary
 - avoid volatile functions everywhere
 - prefer helper tables over unreadable mega-formulas when maintainability matters
+
+## Completion Checklist
+
+Before finishing, verify:
+
+- The workbook has clear tab names and a logical layout.
+- Headers are present for every table.
+- Formulas use valid ranges and `USER_ENTERED` behavior when needed.
+- Existing data was read before risky updates.
+- Important outputs were read back when practical.
+- Handoff includes spreadsheet ID, URL, created/updated ranges, tab names, and any formatting limitations.
 
 ## Formula Library
 
