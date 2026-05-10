@@ -22,6 +22,7 @@ export type ConversationContextEntry = {
 };
 
 const MAX_CONTEXT_MESSAGES = 40;
+const TELEGRAM_DAILY_CONTEXT_FETCH_LIMIT = 120;
 const RECENT_VERBATIM_MESSAGES = 18;
 const COMPRESSION_CHAR_THRESHOLD = 16_000;
 const SUMMARY_TARGET_CHARS = 3_500;
@@ -166,6 +167,19 @@ function toTaskContextEntry(row: Pick<TaskRow, 'id' | 'domain_action' | 'status'
 
 function contextCharLength(entries: ConversationContextEntry[]): number {
   return entries.reduce((total, entry) => total + entry.content.length, 0);
+}
+
+function getUtcDayWindow(anchorIso?: string | null): { startIso: string; endIso: string } {
+  const anchorMs = anchorIso ? Date.parse(anchorIso) : Number.NaN;
+  const anchor = Number.isFinite(anchorMs) ? new Date(anchorMs) : new Date();
+  const start = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), anchor.getUTCDate()));
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 1);
+
+  return {
+    startIso: start.toISOString(),
+    endIso: end.toISOString(),
+  };
 }
 
 function formatContextEntry(entry: ConversationContextEntry): string {
@@ -329,6 +343,9 @@ export class CommandConversationContextService {
       return task;
     }
 
+    const isTelegram = channel === 'telegram';
+    const queryLimit = isTelegram ? TELEGRAM_DAILY_CONTEXT_FETCH_LIMIT + 1 : MAX_CONTEXT_MESSAGES + 1;
+
     let query = supabase
       .from('tasks')
       .select('id, domain_action, status, payload, created_at')
@@ -336,9 +353,18 @@ export class CommandConversationContextService {
       .eq('user_id', userId)
       .eq('payload->>channel', channel)
       .eq('payload->>thread_id', threadId)
-      .in('domain_action', [...CHANNEL_CONTEXT_ACTIONS])
+      .in('domain_action', [...CHANNEL_CONTEXT_ACTIONS]);
+
+    if (isTelegram) {
+      const { startIso, endIso } = getUtcDayWindow(task.created_at);
+      query = query
+        .gte('created_at', startIso)
+        .lt('created_at', endIso);
+    }
+
+    query = query
       .order('created_at', { ascending: false })
-      .limit(MAX_CONTEXT_MESSAGES + 1);
+      .limit(queryLimit);
 
     if (task.id) {
       query = query.neq('id', task.id);
@@ -349,8 +375,9 @@ export class CommandConversationContextService {
       return task;
     }
 
-    const rowSlice = (rows as Array<Pick<TaskRow, 'id' | 'domain_action' | 'status' | 'payload' | 'created_at'>>)
-      .slice(0, MAX_CONTEXT_MESSAGES);
+    const fetchedRows = rows as Array<Pick<TaskRow, 'id' | 'domain_action' | 'status' | 'payload' | 'created_at'>>;
+    const rowSlice = fetchedRows
+      .slice(0, isTelegram ? TELEGRAM_DAILY_CONTEXT_FETCH_LIMIT : MAX_CONTEXT_MESSAGES);
     const context = rowSlice
       .slice()
       .reverse()
@@ -369,7 +396,7 @@ export class CommandConversationContextService {
       .find((summary): summary is string => Boolean(summary))
       ?? readConversationSummary(payload);
 
-    const shouldCompress = contextCharLength(mergedContext) > COMPRESSION_CHAR_THRESHOLD;
+    const shouldCompress = mergedContext.length > MAX_CONTEXT_MESSAGES || contextCharLength(mergedContext) > COMPRESSION_CHAR_THRESHOLD;
     const recentContext = shouldCompress
       ? mergedContext.slice(-RECENT_VERBATIM_MESSAGES)
       : mergedContext;
