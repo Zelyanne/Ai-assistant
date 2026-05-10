@@ -5,6 +5,17 @@ import { supabase } from './supabase.js';
 
 type MessagingChannelLinkRow = Database['public']['Tables']['messaging_channel_links']['Row'];
 
+type TelegramApiResponse<T> =
+  | { ok: true; result: T }
+  | { ok: false; description?: string };
+
+type TelegramWebhookInfo = {
+  url?: string;
+  pending_update_count?: number;
+  last_error_date?: number;
+  last_error_message?: string;
+};
+
 export type TelegramIdentity = {
   organization_id: string;
   user_id: string;
@@ -65,11 +76,21 @@ function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
+function telegramApiUrl(method: string): string {
+  return `https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/${method}`;
+}
+
+function normalizeWebhookUrl(url: string): string {
+  return url.trim().replace(/\/+$/, '');
+}
+
 export class MessagingChannelLinkService {
   async createTelegramLinkToken(params: { organizationId: string; userId: string }): Promise<{ token: string; deepLink: string; expiresAt: string }> {
     if (!config.TELEGRAM_BOT_USERNAME) {
       throw new Error('TELEGRAM_BOT_USERNAME_PROJECT_GOOGLE_ASSITANT is not configured');
     }
+
+    await this.ensureTelegramWebhookReady();
 
     const token = randomBytes(32).toString('base64url');
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
@@ -227,6 +248,52 @@ export class MessagingChannelLinkService {
       const data = await response.json().catch(() => null) as { description?: string } | null;
       throw new Error(data?.description ?? response.statusText);
     }
+  }
+
+  private async ensureTelegramWebhookReady(): Promise<void> {
+    if (!config.TELEGRAM_BOT_TOKEN) {
+      throw new Error('TELEGRAM_BOT_TOKEN_PROJECT_GOOGLE_ASSITANT is not configured');
+    }
+
+    if (!config.TELEGRAM_WEBHOOK_SECRET) {
+      throw new Error('TELEGRAM_WEBHOOK_SECRET_PROJECT_GOOGLE_ASSITANT is not configured');
+    }
+
+    if (config.TELEGRAM_WEBHOOK_URL) {
+      await this.callTelegramApi<boolean>('setWebhook', {
+        url: config.TELEGRAM_WEBHOOK_URL,
+        secret_token: config.TELEGRAM_WEBHOOK_SECRET,
+        allowed_updates: ['message', 'edited_message', 'callback_query'],
+      });
+      return;
+    }
+
+    const info = await this.callTelegramApi<TelegramWebhookInfo>('getWebhookInfo');
+    if (!info.url) {
+      throw new Error('Telegram webhook is not configured. Set TELEGRAM_WEBHOOK_URL_PROJECT_GOOGLE_ASSITANT to your public https://.../webhooks/telegram URL, or run Telegram setWebhook manually with secret_token matching TELEGRAM_WEBHOOK_SECRET_PROJECT_GOOGLE_ASSITANT.');
+    }
+
+    if (normalizeWebhookUrl(info.url).endsWith('/webhooks/telegram')) {
+      return;
+    }
+
+    throw new Error(`Telegram webhook points to ${info.url}, not this agent's /webhooks/telegram route. Set TELEGRAM_WEBHOOK_URL_PROJECT_GOOGLE_ASSITANT or update Telegram setWebhook.`);
+  }
+
+  private async callTelegramApi<T>(method: string, body?: Record<string, unknown>): Promise<T> {
+    const response = await fetch(telegramApiUrl(method), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+
+    const payload = await response.json().catch(() => null) as TelegramApiResponse<T> | null;
+    if (!response.ok || !payload?.ok) {
+      const description = payload && 'description' in payload ? payload.description : undefined;
+      throw new Error(description ?? response.statusText);
+    }
+
+    return payload.result;
   }
 }
 

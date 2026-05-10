@@ -85,7 +85,9 @@ Required agent environment variables are documented in `apps/agent/.env.example`
 - `TWILIO_AUTH_TOKEN_PROJECT_GOOGLE_ASSITANT`
 - `TWILIO_WHATSAPP_PHONE_NUMBER_PROJECT_GOOGLE_ASSITANT`
 - `TELEGRAM_BOT_TOKEN_PROJECT_GOOGLE_ASSITANT`
+- `TELEGRAM_BOT_USERNAME_PROJECT_GOOGLE_ASSITANT`
 - `TELEGRAM_WEBHOOK_SECRET_PROJECT_GOOGLE_ASSITANT`
+- `TELEGRAM_WEBHOOK_URL_PROJECT_GOOGLE_ASSITANT`
 
 Set `WHATSAPP_PROVIDER_PROJECT_GOOGLE_ASSITANT=auto` to prefer Evolution when configured and fall back to Meta or Twilio, or set it explicitly to `evolution`, `meta`, or `twilio`.
 
@@ -115,8 +117,9 @@ Set `WHATSAPP_PROVIDER_PROJECT_GOOGLE_ASSITANT=auto` to prefer Evolution when co
 ### Telegram BotFather + Bot API
 
 1. Create or manage your bot with BotFather: `https://t.me/BotFather`
-2. Set your webhook via Telegram Bot API: `https://core.telegram.org/bots/api#setwebhook`
-3. Use your `/webhooks/telegram` endpoint and pass `secret_token` matching `TELEGRAM_WEBHOOK_SECRET_PROJECT_GOOGLE_ASSITANT`.
+2. Set `TELEGRAM_WEBHOOK_URL_PROJECT_GOOGLE_ASSITANT` to your public HTTPS `/webhooks/telegram` endpoint so the agent can register the webhook before creating Telegram link tokens.
+3. Or set your webhook manually via Telegram Bot API: `https://core.telegram.org/bots/api#setwebhook`
+4. Use your `/webhooks/telegram` endpoint and pass `secret_token` matching `TELEGRAM_WEBHOOK_SECRET_PROJECT_GOOGLE_ASSITANT`.
 
 ### Production Deployment Checklist
 

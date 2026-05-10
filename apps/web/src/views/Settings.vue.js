@@ -1,4 +1,4 @@
-import { computed, ref, onMounted } from 'vue';
+import { computed, ref, onMounted, onUnmounted } from 'vue';
 import { supabase } from '../services/supabase';
 import { useUserStore } from '../stores/user';
 import { useToast } from 'primevue/usetoast';
@@ -87,6 +87,7 @@ async function fetchIntegration() {
 async function connectTelegram() {
     telegramLinkError.value = null;
     connectingTelegram.value = true;
+    const telegramWindow = window.open('', '_blank');
     try {
         const { data: sessionData } = await supabase.auth.getSession();
         const accessToken = sessionData.session?.access_token;
@@ -104,7 +105,13 @@ async function connectTelegram() {
         if (!response.ok || !payload.deepLink) {
             throw new Error(payload.error ?? 'Unable to create Telegram link.');
         }
-        window.open(payload.deepLink, '_blank', 'noopener,noreferrer');
+        if (telegramWindow) {
+            telegramWindow.opener = null;
+            telegramWindow.location.href = payload.deepLink;
+        }
+        else {
+            window.location.assign(payload.deepLink);
+        }
         toast.add({
             severity: 'info',
             summary: 'Telegram Link Created',
@@ -113,11 +120,15 @@ async function connectTelegram() {
         });
     }
     catch (error) {
+        telegramWindow?.close();
         telegramLinkError.value = error instanceof Error ? error.message : 'Failed to connect Telegram.';
     }
     finally {
         connectingTelegram.value = false;
     }
+}
+function refreshTelegramStatus() {
+    void fetchIntegration();
 }
 function handlePreferenceUpdate(prefs) {
     currentPreferences.value = prefs;
@@ -144,7 +155,13 @@ async function savePreferences() {
     }
     saving.value = false;
 }
-onMounted(fetchIntegration);
+onMounted(() => {
+    void fetchIntegration();
+    window.addEventListener('focus', refreshTelegramStatus);
+});
+onUnmounted(() => {
+    window.removeEventListener('focus', refreshTelegramStatus);
+});
 debugger; /* PartiallyEnd: #3632/scriptSetup.vue */
 const __VLS_ctx = {};
 let __VLS_components;

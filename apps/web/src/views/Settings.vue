@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue';
+import { computed, ref, onMounted, onUnmounted } from 'vue';
 import { supabase } from '../services/supabase';
 import { useUserStore } from '../stores/user';
 import { useToast } from 'primevue/usetoast';
@@ -118,6 +118,7 @@ async function fetchIntegration(): Promise<void> {
 async function connectTelegram(): Promise<void> {
   telegramLinkError.value = null;
   connectingTelegram.value = true;
+  const telegramWindow = window.open('', '_blank');
 
   try {
     const { data: sessionData } = await supabase.auth.getSession();
@@ -139,7 +140,13 @@ async function connectTelegram(): Promise<void> {
       throw new Error(payload.error ?? 'Unable to create Telegram link.');
     }
 
-    window.open(payload.deepLink, '_blank', 'noopener,noreferrer');
+    if (telegramWindow) {
+      telegramWindow.opener = null;
+      telegramWindow.location.href = payload.deepLink;
+    } else {
+      window.location.assign(payload.deepLink);
+    }
+
     toast.add({
       severity: 'info',
       summary: 'Telegram Link Created',
@@ -147,10 +154,15 @@ async function connectTelegram(): Promise<void> {
       life: 5000,
     });
   } catch (error) {
+    telegramWindow?.close();
     telegramLinkError.value = error instanceof Error ? error.message : 'Failed to connect Telegram.';
   } finally {
     connectingTelegram.value = false;
   }
+}
+
+function refreshTelegramStatus(): void {
+  void fetchIntegration();
 }
 
 function handlePreferenceUpdate(prefs: string[]): void {
@@ -181,7 +193,14 @@ async function savePreferences(): Promise<void> {
   saving.value = false;
 }
 
-onMounted(fetchIntegration);
+onMounted(() => {
+  void fetchIntegration();
+  window.addEventListener('focus', refreshTelegramStatus);
+});
+
+onUnmounted(() => {
+  window.removeEventListener('focus', refreshTelegramStatus);
+});
 </script>
 
 <template>

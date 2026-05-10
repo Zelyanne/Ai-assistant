@@ -19,7 +19,9 @@ describe('Webhook setup documentation', () => {
       'TWILIO_AUTH_TOKEN',
       'TWILIO_WHATSAPP_PHONE_NUMBER',
       'TELEGRAM_BOT_TOKEN',
+      'TELEGRAM_BOT_USERNAME',
       'TELEGRAM_WEBHOOK_SECRET',
+      'TELEGRAM_WEBHOOK_URL',
     ];
 
     for (const variable of requiredVariables) {
