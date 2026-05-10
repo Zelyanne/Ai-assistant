@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WatchTopicService, type WatchTopicRow } from './WatchTopicService.js';
 import { supabase } from './supabase.js';
 
@@ -33,6 +33,7 @@ function row(overrides: Partial<WatchTopicRow>): WatchTopicRow {
     topic: 'APSEC',
     priority: 'Medium',
     keywords_array: ['APSEC'],
+    expires_at: null,
     created_at: '2026-04-01T00:00:00Z',
     updated_at: '2026-04-01T00:00:00Z',
     ...overrides,
@@ -54,6 +55,7 @@ function setupSupabaseMock(state: MockState): void {
           topic: String(values.topic),
           priority: values.priority === 'High' || values.priority === 'Low' ? values.priority : 'Medium',
           keywords_array: Array.isArray(values.keywords_array) ? values.keywords_array.filter((value): value is string => typeof value === 'string') : [],
+          expires_at: typeof values.expires_at === 'string' || values.expires_at === null ? values.expires_at : null,
         });
         return mutation(inserted);
       }),
@@ -64,6 +66,7 @@ function setupSupabaseMock(state: MockState): void {
           topic: typeof values.topic === 'string' ? values.topic : state.rows[0]?.topic,
           priority: values.priority === 'High' || values.priority === 'Medium' || values.priority === 'Low' ? values.priority : state.rows[0]?.priority,
           keywords_array: Array.isArray(values.keywords_array) ? values.keywords_array.filter((value): value is string => typeof value === 'string') : state.rows[0]?.keywords_array,
+          expires_at: typeof values.expires_at === 'string' || values.expires_at === null ? values.expires_at : state.rows[0]?.expires_at,
         }));
       }),
       then: (resolve: (value: { data: WatchTopicRow[]; error: null }) => unknown) => Promise.resolve(resolve({ data: state.rows, error: null })),
@@ -87,9 +90,14 @@ describe('WatchTopicService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useRealTimers();
     state = { rows: [], inserts: [], updates: [] };
     setupSupabaseMock(state);
     service = new WatchTopicService();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('prevents duplicates by reusing a case-insensitive topic match', async () => {
@@ -121,7 +129,26 @@ describe('WatchTopicService', () => {
       topic: 'Investor updates',
       priority: 'High',
       keywords_array: ['Investor updates'],
+      expires_at: null,
     });
+  });
+
+  it('creates a finite-duration topic with an expiration timestamp', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-01T00:00:00Z'));
+
+    const result = await service.upsertTopic({
+      organizationId: 'org-1',
+      userId: 'user-1',
+      topic: 'Investor updates',
+      durationDays: 14,
+    });
+
+    expect(result.outcome).toBe('created');
+    expect(state.inserts[0]).toMatchObject({
+      expires_at: '2026-04-15T00:00:00.000Z',
+    });
+    expect(result.confirmation_message).toContain('until 2026-04-15T00:00:00.000Z');
   });
 
   it('does not update a matching organization-wide topic for a user-scoped request', async () => {

@@ -9,6 +9,7 @@ export interface WatchTopicRow {
   topic: string;
   priority: WatchTopicPriority;
   keywords_array: string[];
+  expires_at: string | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -19,6 +20,8 @@ export interface WatchTopicInput {
   topic: string;
   priority?: WatchTopicPriority;
   keywords?: string[];
+  expiresAt?: string | null;
+  durationDays?: number | null;
 }
 
 export interface WatchTopicResult {
@@ -53,9 +56,10 @@ type WatchTopicInsert = {
   topic: string;
   priority: WatchTopicPriority;
   keywords_array: string[];
+  expires_at?: string | null;
 };
 
-type WatchTopicUpdate = Partial<Pick<WatchTopicInsert, 'topic' | 'priority' | 'keywords_array'>> & {
+type WatchTopicUpdate = Partial<Pick<WatchTopicInsert, 'topic' | 'priority' | 'keywords_array' | 'expires_at'>> & {
   updated_at: string;
 };
 
@@ -98,6 +102,40 @@ function normalizeKeywords(keywords: string[] | undefined, topic: string): strin
   );
 }
 
+function normalizeExpiresAt(value: string | null | undefined): string | null | undefined {
+  if (typeof value === 'undefined') {
+    return undefined;
+  }
+
+  if (value === null || value.trim().length === 0) {
+    return null;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error('Invalid watch topic expires_at: expected an ISO-8601 datetime.');
+  }
+
+  return date.toISOString();
+}
+
+function computeExpiresAt(input: WatchTopicInput): string | null | undefined {
+  const explicitExpiresAt = normalizeExpiresAt(input.expiresAt);
+  if (typeof explicitExpiresAt !== 'undefined') {
+    return explicitExpiresAt;
+  }
+
+  if (input.durationDays === null || typeof input.durationDays === 'undefined') {
+    return undefined;
+  }
+
+  if (!Number.isInteger(input.durationDays) || input.durationDays <= 0 || input.durationDays > 366) {
+    throw new Error('Invalid watch topic duration_days: expected 1-366 whole days.');
+  }
+
+  return new Date(Date.now() + input.durationDays * 24 * 60 * 60 * 1000).toISOString();
+}
+
 function normalizedKeywordKey(keywords: string[]): string {
   return keywords.map(normalizeTopic).sort().join('\u0000');
 }
@@ -125,14 +163,16 @@ function assertSafePostgrestFilterValue(value: string): string {
 
 function confirmation(outcome: WatchTopicResult['outcome'], topic: WatchTopicRow): string {
   const verb = outcome === 'created' ? 'created' : outcome === 'updated' ? 'updated' : 'already watching';
-  return `Watch topic ${verb}: ${topic.topic} (${topic.priority} priority).`;
+  const expiry = topic.expires_at ? ` until ${topic.expires_at}` : '';
+  return `Watch topic ${verb}: ${topic.topic} (${topic.priority} priority${expiry}).`;
 }
 
 export class WatchTopicService {
   async listTopics(organizationId: string, userId?: string | null): Promise<WatchTopicRow[]> {
     let query = table()
-      .select('id, organization_id, user_id, topic, priority, keywords_array, created_at, updated_at')
+      .select('id, organization_id, user_id, topic, priority, keywords_array, expires_at, created_at, updated_at')
       .eq('organization_id', organizationId)
+      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
       .order('created_at', { ascending: false });
 
     if (userId && userId.trim().length > 0) {
@@ -155,11 +195,14 @@ export class WatchTopicService {
     const existing = await this.findDuplicate(input.organizationId, scopedUserId, topic);
     const priority = input.priority ?? existing?.priority ?? 'Medium';
     const keywords = normalizeKeywords(input.keywords, topic);
+    const expiresAtPatch = computeExpiresAt(input);
+    const expiresAt = typeof expiresAtPatch === 'undefined' ? existing?.expires_at ?? null : expiresAtPatch;
 
     if (existing) {
       const shouldUpdate = normalizeTopic(existing.topic) !== normalizeTopic(topic)
         || existing.priority !== priority
-        || normalizedKeywordKey(keywords) !== normalizedKeywordKey(existing.keywords_array);
+        || normalizedKeywordKey(keywords) !== normalizedKeywordKey(existing.keywords_array)
+        || existing.expires_at !== expiresAt;
 
       if (!shouldUpdate) {
         return {
@@ -174,10 +217,11 @@ export class WatchTopicService {
           topic,
           priority,
           keywords_array: keywords,
+          expires_at: expiresAt,
           updated_at: new Date().toISOString(),
         })
         .eq('id', existing.id)
-        .select('id, organization_id, user_id, topic, priority, keywords_array, created_at, updated_at')
+        .select('id, organization_id, user_id, topic, priority, keywords_array, expires_at, created_at, updated_at')
         .single();
 
       if (error || !data) {
@@ -198,8 +242,9 @@ export class WatchTopicService {
         topic,
         priority,
         keywords_array: keywords,
+        expires_at: expiresAt,
       })
-      .select('id, organization_id, user_id, topic, priority, keywords_array, created_at, updated_at')
+      .select('id, organization_id, user_id, topic, priority, keywords_array, expires_at, created_at, updated_at')
       .single();
 
     if (error || !data) {

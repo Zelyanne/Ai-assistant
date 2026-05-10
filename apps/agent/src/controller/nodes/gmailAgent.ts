@@ -16,6 +16,8 @@ import { getSpecialistPrompt } from '../../prompts/specialistPrompts.js';
 import { getSpecialistMcpTools, buildSpecialistContextPrompt } from './specialistToolBuilder.js';
 import type { SpecialistNodeContext, SpecialistNodeResult, ToolInvocationRecord } from './types.js';
 
+const SEND_GMAIL_TOOL_NAME = 'send_gmail_message';
+
 // --- Utility ---
 
 function asString(value: unknown): string | null {
@@ -39,6 +41,77 @@ function stringifyContent(content: unknown): string {
   return String(content ?? '');
 }
 
+function parseMaybeJson(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  if (!trimmed || (trimmed[0] !== '{' && trimmed[0] !== '[')) return value;
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+}
+
+function toJson(value: unknown): Json {
+  const parsed = parseMaybeJson(value);
+  if (typeof parsed === 'string' || typeof parsed === 'number' || typeof parsed === 'boolean' || parsed === null) return parsed;
+  if (typeof parsed === 'undefined') return null;
+  if (Array.isArray(parsed)) return parsed.map((entry) => toJson(entry));
+  if (typeof parsed === 'object') {
+    const out: Record<string, Json | undefined> = {};
+    for (const [key, entry] of Object.entries(parsed as Record<string, unknown>)) {
+      out[key] = toJson(entry);
+    }
+    return out;
+  }
+  return String(parsed);
+}
+
+function toJsonRecord(value: unknown): Record<string, Json | undefined> {
+  const parsed = parseMaybeJson(value);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+
+  const out: Record<string, Json | undefined> = {};
+  for (const [key, entry] of Object.entries(parsed as Record<string, unknown>)) {
+    out[key] = toJson(entry);
+  }
+  return out;
+}
+
+function extractGmailArtifacts(invocations: ToolInvocationRecord[]): Record<string, Json | undefined> {
+  const artifacts: Record<string, Json | undefined> = {};
+
+  for (const invocation of invocations) {
+    const result = toJsonRecord(invocation.result);
+    for (const [key, value] of Object.entries(result)) {
+      if (typeof value === 'undefined' || value === null) continue;
+      if (/(^id$|_id$|url$|_url$|link$|html_link$|htmlLink$|thread_id|message_id|draft_id)/i.test(key)) {
+        artifacts[key] = value;
+      }
+    }
+  }
+
+  return artifacts;
+}
+
+function buildInvocationMetadata(invocations: ToolInvocationRecord[]): Json[] {
+  return invocations.map((invocation) => {
+    const result = toJsonRecord(invocation.result);
+    const metadata: Record<string, Json | undefined> = {
+      requested_tool: invocation.requestedTool,
+      tool_name: invocation.toolName,
+    };
+    const summary = asString(result.summary) ?? asString(result.message) ?? asString(result.confirmation_message);
+    if (summary) metadata.summary = summary;
+    if (asString(result.error)) metadata.error = result.error;
+    if (typeof result.success === 'boolean') metadata.success = result.success;
+    if (typeof result.ok === 'boolean') metadata.ok = result.ok;
+    if (asString(result.status)) metadata.status = result.status;
+    return metadata;
+  });
+}
+
 // --- Handoff Note Builder ---
 
 function buildGmailHandoff(
@@ -49,15 +122,19 @@ function buildGmailHandoff(
   const lastResult = lastInvocation?.result;
   const resultRecord = asRecord(lastResult);
   const summary = asString(resultRecord.summary) ?? finalMessage ?? 'Gmail specialist completed.';
+  const artifacts = extractGmailArtifacts(invocations);
 
   return {
     summary,
     nextWorkerNote: summary,
     toolName: lastInvocation?.toolName,
+    toolInvocations: invocations,
     output: {
       summary,
       handoff_content: summary,
       tool_name: lastInvocation?.toolName,
+      tool_invocations: buildInvocationMetadata(invocations),
+      ...artifacts,
     },
   };
 }
@@ -77,7 +154,11 @@ export async function gmailAgentNode(context: SpecialistNodeContext): Promise<Sp
   }
 
   // Wrap with invocation tracking only (for handoff notes)
-  const trackedTools = mcpTools.map((tool) => {
+  const executableTools = context.agentToolPrompt && context.allowHighRiskActions !== true
+    ? mcpTools.filter((tool) => tool.name !== SEND_GMAIL_TOOL_NAME)
+    : mcpTools;
+
+  const trackedTools = executableTools.map((tool) => {
     const originalCall = tool.call.bind(tool);
     return Object.assign(Object.create(Object.getPrototypeOf(tool)), tool, {
       call: async (input: string | Record<string, unknown>) => {

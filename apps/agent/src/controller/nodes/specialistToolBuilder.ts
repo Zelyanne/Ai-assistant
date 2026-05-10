@@ -159,9 +159,19 @@ export function buildSpecialistContextPrompt(context: SpecialistNodeContext): st
     ? `User preferences / memory:\n${memorySections.join('\n\n')}`
     : 'User preferences / memory:\n(none available)';
 
+  const agentToolPromptBlock = context.agentToolPrompt
+    ? `General Agent prompt for this specialist:\n${context.agentToolPrompt}`
+    : null;
+
+  const relevantSkillBlock = context.relevantSkillContext
+    ? `Prompt-scoped skill context:\n${context.relevantSkillContext}`
+    : null;
+
   return [
     `Original user request: ${context.executionRun.plan_json.original_command}`,
     '',
+    agentToolPromptBlock,
+    agentToolPromptBlock ? '' : null,
     `Current step: ${context.step.title}`,
     `Current action: ${context.step.action}`,
     'Current step input:',
@@ -172,10 +182,12 @@ export function buildSpecialistContextPrompt(context: SpecialistNodeContext): st
     '',
     memoryBlock,
     '',
+    relevantSkillBlock,
+    '',
     'Instructions:',
     '- Complete only the current step using the provided tools.',
     '- If you create an artifact, include its id, URL, and what was produced.',
     '- Populate documents with meaningful initial content when asked.',
-    '- Write a concise final handoff note for the next worker.',
-  ].join('\n');
+    '- Write a concise final handoff note for the General Agent and any next specialist.',
+  ].filter((part): part is string => part !== null).join('\n');
 }

@@ -11,10 +11,6 @@ const { mockFrom } = vi.hoisted(() => ({
   mockFrom: vi.fn(),
 }));
 
-const { mockGetByTaskId } = vi.hoisted(() => ({
-  mockGetByTaskId: vi.fn(),
-}));
-
 const { mockGenerateText } = vi.hoisted(() => ({
   mockGenerateText: vi.fn(),
 }));
@@ -38,12 +34,6 @@ vi.mock('./llm/tracing.js', () => ({
   },
 }));
 
-vi.mock('./ExecutionRunService.js', () => ({
-  executionRunService: {
-    getByTaskId: mockGetByTaskId,
-  },
-}));
-
 vi.mock('./llm/factory.js', () => ({
   LLMProviderFactory: {
     getProvider: () => ({
@@ -58,7 +48,6 @@ describe('processQueuedTask', () => {
     mockInvoke.mockResolvedValue(undefined);
     mockGetHandler.mockReturnValue(null);
     mockFlush.mockResolvedValue(undefined);
-    mockGetByTaskId.mockResolvedValue(null);
     mockGenerateText.mockResolvedValue({
       data: 'Compressed session: user is iterating on a Telegram Gmail draft; preserve recipient and latest constraints.',
       usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120, latencyMs: 1 },
@@ -86,7 +75,6 @@ describe('processQueuedTask', () => {
     expect(mockInvoke).toHaveBeenCalledWith(
       expect.objectContaining({
         task: expect.objectContaining({ domain_action: 'thread.action' }),
-        execution_run: null,
       }),
       expect.objectContaining({
         runName: 'Graph: thread.action',
@@ -98,42 +86,6 @@ describe('processQueuedTask', () => {
       }),
     );
     expect(mockFlush).toHaveBeenCalledOnce();
-  });
-
-  it('passes an existing execution run into graph state', async () => {
-    mockGetByTaskId.mockResolvedValue({
-      id: 'run-1',
-      status: 'processing',
-    });
-
-    await processQueuedTask({
-      id: '55555555-5555-4555-8555-555555555555',
-      organization_id: '11111111-1111-1111-1111-111111111111',
-      user_id: '22222222-2222-4222-8222-222222222222',
-      domain_action: 'assistant.command',
-      status: 'queued',
-      payload: {
-        command: 'resume planner run',
-      },
-      result: {},
-      topic: undefined,
-    });
-
-    expect(mockGetByTaskId).toHaveBeenCalledWith('55555555-5555-4555-8555-555555555555');
-    expect(mockInvoke).toHaveBeenCalledWith(
-      expect.objectContaining({
-        execution_run: expect.objectContaining({
-          id: 'run-1',
-          status: 'processing',
-        }),
-      }),
-      expect.objectContaining({
-        metadata: expect.objectContaining({
-          executionRunId: 'run-1',
-          executionRunStatus: 'processing',
-        }),
-      }),
-    );
   });
 
   it('marks the task and command message as error when graph execution fails', async () => {
@@ -278,6 +230,8 @@ describe('processQueuedTask', () => {
     type SupabaseQueryMock = {
       select: (columns: string) => SupabaseQueryMock;
       eq: (key: string, value: unknown) => SupabaseQueryMock;
+      gte?: (key: string, value: unknown) => SupabaseQueryMock;
+      lt?: (key: string, value: unknown) => SupabaseQueryMock;
       in?: (key: string, values: unknown[]) => SupabaseQueryMock;
       neq?: (key: string, value: unknown) => SupabaseQueryMock;
       order?: (key: string, options?: { ascending?: boolean }) => SupabaseQueryMock;
@@ -314,10 +268,14 @@ describe('processQueuedTask', () => {
     ];
 
     const tasksEqSpy = vi.fn((_key: string, _value: unknown) => tasksQuery);
+    const tasksGteSpy = vi.fn((_key: string, _value: unknown) => tasksQuery);
+    const tasksLtSpy = vi.fn((_key: string, _value: unknown) => tasksQuery);
 
     const tasksQuery: SupabaseQueryMock = {
       select: () => tasksQuery,
       eq: tasksEqSpy,
+      gte: tasksGteSpy,
+      lt: tasksLtSpy,
       in: () => tasksQuery,
       neq: () => tasksQuery,
       order: () => tasksQuery,
@@ -346,6 +304,7 @@ describe('processQueuedTask', () => {
       },
       result: {},
       topic: undefined,
+      created_at: '2026-04-03T12:00:00.000Z',
     });
 
     expect(mockInvoke).toHaveBeenCalledWith(
@@ -362,6 +321,8 @@ describe('processQueuedTask', () => {
       expect.any(Object),
     );
     expect(tasksEqSpy).toHaveBeenCalledWith('user_id', userId);
+    expect(tasksGteSpy).toHaveBeenCalledWith('created_at', '2026-04-03T00:00:00.000Z');
+    expect(tasksLtSpy).toHaveBeenCalledWith('created_at', '2026-04-04T00:00:00.000Z');
   });
 
   it('compresses long telegram thread history while keeping recent turns verbatim', async () => {
@@ -375,6 +336,8 @@ describe('processQueuedTask', () => {
     type SupabaseQueryMock = {
       select: (columns: string) => SupabaseQueryMock;
       eq: (key: string, value: unknown) => SupabaseQueryMock;
+      gte?: (key: string, value: unknown) => SupabaseQueryMock;
+      lt?: (key: string, value: unknown) => SupabaseQueryMock;
       in?: (key: string, values: unknown[]) => SupabaseQueryMock;
       neq?: (key: string, value: unknown) => SupabaseQueryMock;
       order?: (key: string, options?: { ascending?: boolean }) => SupabaseQueryMock;
@@ -401,6 +364,8 @@ describe('processQueuedTask', () => {
     const tasksQuery: SupabaseQueryMock = {
       select: () => tasksQuery,
       eq: () => tasksQuery,
+      gte: () => tasksQuery,
+      lt: () => tasksQuery,
       in: () => tasksQuery,
       neq: () => tasksQuery,
       order: () => tasksQuery,
@@ -430,6 +395,7 @@ describe('processQueuedTask', () => {
       },
       result: {},
       topic: undefined,
+      created_at: '2026-04-03T12:00:00.000Z',
     });
 
     expect(mockGenerateText).toHaveBeenCalledOnce();
@@ -453,5 +419,97 @@ describe('processQueuedTask', () => {
       }),
       expect.any(Object),
     );
+  });
+
+  it('compresses telegram day history when the context message limit is exceeded', async () => {
+    const organizationId = '11111111-1111-1111-1111-111111111111';
+    const userId = '22222222-2222-4222-8222-222222222222';
+    const currentTaskId = '99999999-9999-4999-8999-999999999998';
+    const updateSpy = vi.fn(() => ({
+      eq: vi.fn().mockReturnThis(),
+    }));
+
+    type SupabaseQueryMock = {
+      select: (columns: string) => SupabaseQueryMock;
+      eq: (key: string, value: unknown) => SupabaseQueryMock;
+      gte?: (key: string, value: unknown) => SupabaseQueryMock;
+      lt?: (key: string, value: unknown) => SupabaseQueryMock;
+      in?: (key: string, values: unknown[]) => SupabaseQueryMock;
+      neq?: (key: string, value: unknown) => SupabaseQueryMock;
+      order?: (key: string, options?: { ascending?: boolean }) => SupabaseQueryMock;
+      limit?: (count: number) => SupabaseQueryMock;
+      update?: (values: Record<string, unknown>) => { eq: (key: string, value: unknown) => unknown };
+      then?: (resolve: (value: { data: unknown; error: null }) => unknown) => Promise<unknown>;
+    };
+
+    const taskRows = Array.from({ length: 45 }, (_, index) => ({
+      id: `daily-prev-${index}`,
+      domain_action: index % 2 === 0 ? 'assistant.command' : 'channel.send',
+      status: 'done',
+      payload: {
+        channel: 'telegram',
+        thread_id: 'tg-thread-daily-limit',
+        message_text: `Same-day Telegram turn ${index}`,
+        correlation_id: `daily-c-${index}`,
+      },
+      created_at: `2026-04-03T10:${String(index).padStart(2, '0')}:00.000Z`,
+    })).reverse();
+
+    const tasksQuery: SupabaseQueryMock = {
+      select: () => tasksQuery,
+      eq: () => tasksQuery,
+      gte: () => tasksQuery,
+      lt: () => tasksQuery,
+      in: () => tasksQuery,
+      neq: () => tasksQuery,
+      order: () => tasksQuery,
+      limit: () => tasksQuery,
+      update: updateSpy,
+      then: (resolve) => Promise.resolve({ data: taskRows, error: null }).then(resolve),
+    };
+
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'tasks') return tasksQuery;
+      throw new Error(`Unexpected table: ${table}`);
+    });
+
+    await processQueuedTask({
+      id: currentTaskId,
+      organization_id: organizationId,
+      user_id: userId,
+      domain_action: 'assistant.command',
+      status: 'queued',
+      payload: {
+        message_text: 'Continue the same-day Telegram thread',
+        channel: 'telegram',
+        source: 'telegram-webhook',
+        user_initiated: true,
+        thread_id: 'tg-thread-daily-limit',
+        external_message_id: 'tg-msg-daily-limit',
+      },
+      result: {},
+      topic: undefined,
+      created_at: '2026-04-03T12:00:00.000Z',
+    });
+
+    const invokedTask = (mockInvoke.mock.calls[0]?.[0] as { task?: { payload?: { conversation_context?: unknown[] } } }).task;
+    const context = invokedTask?.payload?.conversation_context ?? [];
+
+    expect(mockGenerateText).toHaveBeenCalledOnce();
+    expect(updateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          conversation_summary: expect.stringContaining('Compressed session'),
+        }),
+      }),
+    );
+    expect(context).toHaveLength(19);
+    expect(context).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: 'system', state: 'compressed' }),
+      expect.objectContaining({ content: 'Same-day Telegram turn 44' }),
+    ]));
+    expect(context).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ content: 'Same-day Telegram turn 0' }),
+    ]));
   });
 });

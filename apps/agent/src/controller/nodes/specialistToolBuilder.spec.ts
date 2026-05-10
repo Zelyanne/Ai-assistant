@@ -179,12 +179,18 @@ describe('specialistToolBuilder', () => {
         persona_memory: 'Use crisp professional writing.',
         long_term_memory: 'User prefers concise openings.',
       },
+      agentToolPrompt: 'Create the document using the General Agent handoff.',
+      relevantSkillContext: 'RELEVANT USER SKILLS\nUse short headings.',
     } as unknown as SpecialistNodeContext;
 
     const prompt = buildSpecialistContextPrompt(context);
+    expect(prompt).toContain('General Agent prompt for this specialist:');
+    expect(prompt).toContain('Create the document using the General Agent handoff.');
     expect(prompt).toContain('User preferences / memory:');
     expect(prompt).toContain('Use crisp professional writing.');
     expect(prompt).toContain('User prefers concise openings.');
+    expect(prompt).toContain('Prompt-scoped skill context:');
+    expect(prompt).toContain('Use short headings.');
     expect(prompt).toContain('Source step output:');
   });
 });

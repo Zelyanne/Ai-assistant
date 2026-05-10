@@ -14,6 +14,7 @@ import { cronSchedulerService } from './services/CronSchedulerService.js';
 import { initOTel, shutdownOTel } from './services/llm/otel-setup.js';
 import { telegramWebhookRouter } from './routes/webhooks/telegram.js';
 import { whatsAppWebhookRouter } from './routes/webhooks/whatsapp.js';
+import { automationRouter } from './routes/automation.js';
 import { processQueuedTask, recoverPendingTasks } from './services/taskSubscriber.js';
 import { messagingChannelLinkService } from './services/MessagingChannelLinkService.js';
 
@@ -50,6 +51,7 @@ app.get('/health', (req, res) => {
 
 app.use('/webhooks/telegram', telegramWebhookRouter);
 app.use('/webhooks/whatsapp', whatsAppWebhookRouter);
+app.use('/api/automation', automationRouter);
 
 // Token encryption and storage endpoint
 app.post('/api/tokens', async (req, res) => {

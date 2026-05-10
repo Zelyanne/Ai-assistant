@@ -1,0 +1,183 @@
+%% Detailed application workflow for the AI assistant.
+%% Render with any Mermaid-compatible viewer.
+flowchart TB
+  user["User"]
+  web["Command Center web"]
+  tg["Telegram or WhatsApp"]
+  gmail["Gmail mailbox"]
+  google["Google APIs"]
+
+  subgraph Supabase["Supabase runtime state"]
+    tasks[("public.tasks\nDatabase queue")]
+    cmdConv[("command_conversations")]
+    cmdMsg[("command_messages")]
+    profiles[("profiles\nmemory_file_paths")]
+    integrations[("workspace_integrations")]
+    watchTopics[("watch_topics\ntopic, keywords_array, priority, expires_at")]
+    userSchedules[("user_schedules\ncron, task_payload, next_run, remaining_runs, end_at")]
+    dispatches[("user_schedule_dispatches")]
+    ingested[("ingested_threads\nsummary, classification, is_highlighted")]
+    audit[("agent_activity_log")]
+  end
+
+  subgraph MemoryFiles["Local memory files per org/user"]
+    persona["persona.md"]
+    shortTerm["short-term.md"]
+    weekly["weekly-memory.md"]
+    longTerm["long-term.md"]
+    taskState["task-state.json\ncurrent_node, status, result_summary"]
+  end
+
+  subgraph AgentProcess["apps/agent process"]
+    realtime["Supabase realtime subscriber\nINSERT tasks where status=queued"]
+    recovery["Startup recovery\nqueued + stale processing"]
+    graph["LangGraph controller"]
+    finalize["finalizeTask\nstatus, result, audit, replies, task-state"]
+
+    subgraph GraphNodes["Graph nodes"]
+      brake["emergency_brake"]
+      init["initialize\nset task processing"]
+      loadMem["load_memory\nload persona weekly long-term task-state"]
+      protocol["load_protocol"]
+      loadShort["load_short_term_memory"]
+      perimeter["check_perimeter"]
+      workspace["load_workspace_context"]
+      route["route by domain_action"]
+      general["general_agent\nchat, schedule, watch topics, specialist tools"]
+      verifier["execution_verifier"]
+      processors["ProcessorRegistry processors\nemail calendar protocol schedules skills memory"]
+      unsupported["unsupported_domain"]
+    end
+  end
+
+  subgraph Background["Background monitors"]
+    ingestion["GoogleIngestionService\nevery 15 min"]
+    cron["CronSchedulerService\nprocess due user_schedules"]
+    briefing["BriefingScheduler"]
+    statusScheduler["StatusReportScheduler"]
+    eodScheduler["EODScheduler"]
+  end
+
+  subgraph WatchFlow["Long-running mail watch workflow"]
+    manageWatch["manage_watch_topic tool\ncreate/update scoped topic"]
+    activeFilter["Active topic filter\nexpires_at is null OR expires_at > now"]
+    triage["EmailTriageProcessor\nclassify new threads against active topics"]
+    alert["TopicWatchAlertService\ncreate web alert and optional Telegram task"]
+    reaction["User chooses reaction\ndraft reply, summarize, remind later, ignore"]
+    followupTask["New assistant.command task\nreaction can create another long-running task"]
+  end
+
+  subgraph ScheduleFlow["Scheduled and long-distance task workflow"]
+    scheduleTool["schedule_agent_request tool"]
+    scheduleManage["ScheduleManageProcessor"]
+    claim["claim_schedule_dispatch RPC\nidempotent dispatch window"]
+    scheduledTask["Queued task from schedule\npayload.scheduled=true"]
+    syncSchedule["syncScheduledTaskCompletion\nadvance next_run, failure_count, end limits"]
+  end
+
+  subgraph SpecialistFlow["Specialist execution"]
+    mcp["Workspace MCP tools"]
+    gmailAgent["Gmail specialist"]
+    calendarAgent["Calendar specialist"]
+    docsAgent["Docs specialist"]
+    sheetsAgent["Sheets specialist"]
+    slidesAgent["Slides specialist"]
+    driveAgent["Drive specialist"]
+  end
+
+  user --> web
+  user --> tg
+  web --> cmdMsg
+  tg --> tasks
+  cmdMsg --> tasks
+  tasks --> realtime
+  tasks --> recovery
+  realtime --> graph
+  recovery --> graph
+
+  graph --> brake --> init --> loadMem --> protocol --> loadShort --> perimeter --> workspace --> route
+  loadMem --> profiles
+  loadMem --> persona
+  loadMem --> weekly
+  loadMem --> longTerm
+  loadMem --> taskState
+  loadShort --> shortTerm
+  init --> taskState
+  GraphNodes --> taskState
+
+  route -->|assistant.command| general
+  route -->|registered domain_action| processors
+  route -->|calendar.create| processors
+  route -->|unsupported| unsupported
+
+  general -->|ordinary chat| finalize
+  general -->|watch or monitor mail| manageWatch
+  general -->|future or recurring| scheduleTool
+  general -->|workspace action| gmailAgent
+  general -->|workspace action| calendarAgent
+  general -->|workspace action| docsAgent
+  general -->|workspace action| sheetsAgent
+  general -->|workspace action| slidesAgent
+  general -->|workspace action| driveAgent
+
+  gmailAgent --> mcp
+  calendarAgent --> mcp
+  docsAgent --> mcp
+  sheetsAgent --> mcp
+  slidesAgent --> mcp
+  driveAgent --> mcp
+  mcp --> google
+  general -->|specialist results| verifier --> general
+  verifier -->|passed final response| finalize
+  verifier -->|retry feedback| general
+
+  manageWatch --> watchTopics
+  manageWatch --> finalize
+
+  scheduleTool --> scheduleManage --> userSchedules --> finalize
+  cron --> userSchedules
+  userSchedules --> claim --> dispatches --> scheduledTask --> tasks
+  scheduledTask --> realtime
+  finalize --> syncSchedule --> userSchedules
+
+  ingestion --> integrations
+  ingestion --> google
+  google --> gmail
+  ingestion --> ingested
+  ingestion -->|enqueue email.triage| tasks
+  tasks -->|email.triage| triage
+  triage --> activeFilter --> watchTopics
+  triage --> ingested
+  triage -->|matched highlighted topic| alert
+  alert --> cmdConv
+  alert --> cmdMsg
+  alert -->|Telegram linked| tasks
+  cmdMsg --> reaction --> followupTask --> tasks
+
+  processors --> finalize
+  unsupported --> finalize
+  finalize --> tasks
+  finalize --> audit
+  finalize --> cmdMsg
+  finalize --> shortTerm
+  finalize --> taskState
+
+  eodScheduler -->|enqueue eod.memory.rotate| tasks
+  tasks -->|eod.memory.rotate| processors
+  processors -->|EOD rotation| shortTerm
+  processors -->|daily summary| weekly
+
+  briefing -->|enqueue morning.brief| tasks
+  statusScheduler -->|enqueue status.report| tasks
+
+  classDef storage fill:#f4f7fb,stroke:#5b6b82,color:#142033;
+  classDef process fill:#fff7e6,stroke:#b7791f,color:#3d2a00;
+  classDef memory fill:#eefaf3,stroke:#2f855a,color:#12351f;
+  classDef watch fill:#fef2f2,stroke:#c53030,color:#4a1111;
+  classDef schedule fill:#eef2ff,stroke:#4c51bf,color:#171923;
+
+  class tasks,cmdConv,cmdMsg,profiles,integrations,watchTopics,userSchedules,dispatches,ingested,audit storage;
+  class realtime,recovery,graph,finalize,brake,init,loadMem,protocol,loadShort,perimeter,workspace,route,general,verifier,processors,unsupported,ingestion,cron,briefing,statusScheduler,eodScheduler process;
+  class persona,shortTerm,weekly,longTerm,taskState memory;
+  class manageWatch,activeFilter,triage,alert,reaction,followupTask watch;
+  class scheduleTool,scheduleManage,claim,scheduledTask,syncSchedule schedule;

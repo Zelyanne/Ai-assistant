@@ -235,6 +235,23 @@ describe("MemoryService", () => {
     });
   });
 
+  it("appends execution reports to short-term memory under the current day", async () => {
+    const service = new MemoryService();
+
+    await service.appendShortTermMemoryEntry(
+      "org-123",
+      "user-456",
+      "### 2026-03-20T10:00:00.000Z - Gmail specialist-agent call\n- Status: completed\n",
+    );
+
+    const shortTerm = await service.readMemory("org-123", "user-456", "short_term");
+
+    expect(shortTerm).toContain("# Short-Term Memory");
+    expect(shortTerm).toContain(`## ${new Date().toISOString().slice(0, 10)}`);
+    expect(shortTerm).toContain("Gmail specialist-agent call");
+    expect(shortTerm).toContain("Status: completed");
+  });
+
   it("serializes concurrent task-state updates behind a file lock", async () => {
     const service = new MemoryService();
     let releaseFirstWrite: (() => void) | undefined;

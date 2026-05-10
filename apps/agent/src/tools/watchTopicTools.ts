@@ -19,6 +19,8 @@ const ManageWatchTopicSchema = z.object({
   topic: z.string().trim().min(1).describe('Topic to watch in incoming mail, such as APSEC or investor updates.'),
   priority: PrioritySchema.optional().describe('Priority for matched messages. Defaults to Medium.'),
   keywords: z.array(z.string().trim().min(1)).max(20).optional().describe('Optional explicit keywords. Defaults to the topic.'),
+  duration_days: z.number().int().positive().max(366).optional().describe('Optional finite watch duration in days, such as 14 for two weeks.'),
+  expires_at: z.string().datetime().nullable().optional().describe('Optional ISO-8601 expiration datetime. Use null only to remove an existing expiration.'),
 });
 
 function serializeTopic(topic: WatchTopicRow): Record<string, unknown> {
@@ -27,6 +29,7 @@ function serializeTopic(topic: WatchTopicRow): Record<string, unknown> {
     topic: topic.topic,
     priority: topic.priority,
     keywords: topic.keywords_array,
+    expires_at: topic.expires_at,
     user_id: topic.user_id,
     updated_at: topic.updated_at,
   };
@@ -70,6 +73,8 @@ export function createManageWatchTopicTool(scope: WatchTopicToolScope): DynamicS
         topic: input.topic,
         priority: input.priority as WatchTopicPriority | undefined,
         keywords: input.keywords,
+        durationDays: input.duration_days,
+        expiresAt: input.expires_at,
       };
 
       const result = input.action === 'create'

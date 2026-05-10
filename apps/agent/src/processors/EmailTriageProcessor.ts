@@ -56,6 +56,7 @@ interface WatchTopic {
   topic: string;
   priority: string;
   keywords_array?: string[] | null;
+  expires_at?: string | null;
 }
 
 interface TriageBatchPayload {
@@ -144,8 +145,9 @@ export class EmailTriageProcessor extends BaseProcessor {
 
     let topicQuery = supabase
       .from('watch_topics')
-      .select('topic, priority, keywords_array')
-      .eq('organization_id', organization_id);
+      .select('topic, priority, keywords_array, expires_at')
+      .eq('organization_id', organization_id)
+      .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
 
     if (user_id) {
       topicQuery = topicQuery.or(`user_id.eq.${user_id},user_id.is.null`);
