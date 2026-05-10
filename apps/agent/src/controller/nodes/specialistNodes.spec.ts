@@ -167,8 +167,14 @@ describe('specialistPrompts', () => {
     }
   });
 
-  it('does not inject specialist skill playbooks into the general prompt', () => {
-    expect(getSpecialistPrompt('generalAgent')).not.toContain('PROJECT SKILL PLAYBOOK (MUST FOLLOW)');
+  it('injects the General Agent orchestration playbook into the general prompt', () => {
+    const prompt = getSpecialistPrompt('generalAgent');
+
+    expect(prompt).toContain('PROJECT SKILL PLAYBOOK (MUST FOLLOW)');
+    expect(prompt).toContain('General Agent Skill');
+    expect(prompt).toContain('Fast Decision Map');
+    expect(prompt).toContain('Long-Running Workflow Patterns');
+    expect(prompt).toContain('Completion Checklist');
   });
 
   it('should build user prompt with correct context', () => {

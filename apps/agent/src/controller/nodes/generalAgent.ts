@@ -8,7 +8,7 @@
  * @see Task 24: Intent Clarification Logic
  */
 
-import type { AssistantCommandIntent, ExecutionPlan, Task } from '@ai-assistant/shared';
+import type { Task } from '@ai-assistant/shared';
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { ChatMistralAI } from '@langchain/mistralai';
 import { createAgent, toolStrategy } from 'langchain';
@@ -16,7 +16,6 @@ import { z } from 'zod';
 import { config } from '../../config/index.js';
 import { tracingService } from '../../services/llm/tracing.js';
 import { AuditLogger } from '../../services/AuditLogger.js';
-import { executionRunService } from '../../services/ExecutionRunService.js';
 import { memoryService } from '../../services/MemoryService.js';
 import { mcpService } from '../../services/mcp.js';
 import { ScheduleManageProcessor } from '../../processors/ScheduleManageProcessor.js';
@@ -24,6 +23,7 @@ import { getSpecialistPrompt } from '../../prompts/specialistPrompts.js';
 import { createCurrentTimeTool } from '../../tools/timeDateTool.js';
 import { createSearchWebResearchTool } from '../../tools/researchTools.js';
 import { createWatchTopicTools } from '../../tools/watchTopicTools.js';
+import { createAutomationTools } from '../../tools/automationTools.js';
 import { researchAgent, type ResearchReport } from '../../agents/ResearchAgent.js';
 import type { AgentState } from '../graph.js';
 import { buildEscalationPayload } from '../escalation.js';
@@ -344,6 +344,16 @@ const GeneralAgentWatchTopicResultSchema = z.object({
 
 type GeneralAgentWatchTopicResult = z.infer<typeof GeneralAgentWatchTopicResultSchema>;
 
+const GeneralAgentAutomationResultSchema = z.object({
+  outcome: z.string().trim().min(1).optional(),
+  confirmation_message: z.string().trim().min(1).optional(),
+  total: z.number().int().nonnegative().optional(),
+  watchers: z.array(z.unknown()).optional(),
+  watcher: z.unknown().optional(),
+});
+
+type GeneralAgentAutomationResult = z.infer<typeof GeneralAgentAutomationResultSchema>;
+
 const PausedTurnResolutionSchema = z.object({
   use_previous_request: z.boolean().describe('True when the latest user message continues, confirms, or edits the paused previous request.'),
   confirmed: z.boolean().describe('True only when the latest user message clearly authorizes the paused action to proceed.'),
@@ -453,33 +463,25 @@ function createScheduleAgentRequestTool(task: Task): DynamicStructuredTool {
   });
 }
 
-// --- Intent + Plan (merged into a single LLM call) ---
-
-const PlanStepSchema = z.object({
-  key: z.string().describe('Unique step identifier (e.g. "step-1")'),
-  title: z.string().describe('Human-readable step title'),
-  worker_type: z.string().describe('Specialist agent to execute this step. Must be one of gmail, calendar, docs, sheets, slides, drive.'),
-  action: z.string().describe('Natural-language description of what the specialist should do (e.g. "create a spreadsheet with the project budget", "draft an email to the team about the meeting")'),
-  input: z.record(z.unknown()).describe('Structured input with the data the specialist needs (e.g. recipient, message, tone, language; subject/body ONLY if explicitly provided by the user). The specialist decides which tools to call.'),
-  recoverable: z.boolean().default(false).describe('Whether this step can recover from failure'),
-});
+// --- Intent + direct tool execution (single General Agent call) ---
 
 /**
  * Combined schema: one LLM call handles both intent assessment AND plan building.
  * If confidence < threshold, steps will be empty and clarification fields filled.
  */
 const GeneralAgentResponseSchema = z.object({
-  outcome: z.enum(['chat', 'plan', 'schedule', 'watch_topic', 'agent_tools']).default('plan').describe('Use "agent_tools" after calling one or more specialist-agent tools. Use "chat" for ordinary conversation that does not require Google Workspace action. Use "schedule" only after you have already created the schedule via schedule_agent_request. Use "watch_topic" only after calling a watch-topic tool.'),
+  outcome: z.enum(['chat', 'schedule', 'watch_topic', 'automation', 'agent_tools']).default('chat').describe('Use "agent_tools" after calling one or more specialist-agent tools. Use "chat" for ordinary conversation that does not require Google Workspace action. Use "schedule" only after you have already created the schedule via schedule_agent_request. Use "watch_topic" only after calling a watch-topic tool. Use "automation" only after calling an automation watcher tool.'),
   confidence: z.number().min(0).max(1).describe('Confidence in understanding the request (0-1). Be generous — most natural language requests should be >= 0.8.'),
   interpretation: z.string().describe('How you interpreted the user request'),
   needs_clarification: z.boolean().describe('True ONLY if the request is truly ambiguous (e.g. missing recipient, subject is unclear, dates are completely vague). Default false for clear requests.'),
   clarification_prompt: z.string().optional().describe('What to ask the user if clarification needed'),
-  summary: z.string().describe('One-line summary of the plan'),
-  reasoning: z.string().describe('Brief reasoning for the plan structure'),
-  steps: z.array(PlanStepSchema).describe('Ordered execution steps. Empty if clarification needed.'),
+  summary: z.string().describe('One-line summary of the response or completed tool work'),
+  reasoning: z.string().describe('Brief reasoning for the selected outcome'),
+  steps: z.array(z.unknown()).default([]).describe('Deprecated. Must remain empty; legacy router/worker plans are removed.'),
   chat_response: z.string().optional().describe('Required when outcome is "chat". A concise, natural reply to the user.'),
   schedule_result: GeneralAgentScheduleResultSchema.optional().describe('Required when outcome is "schedule". Copy the JSON returned by schedule_agent_request.'),
   watch_topic_result: GeneralAgentWatchTopicResultSchema.optional().describe('Required when outcome is "watch_topic". Copy the JSON returned by manage_watch_topic or list_watch_topics.'),
+  automation_result: GeneralAgentAutomationResultSchema.optional().describe('Required when outcome is "automation". Copy the JSON returned by create_automation_watcher or list_automation_watchers.'),
   agent_tool_summary: z.string().optional().describe('Required when outcome is "agent_tools". Summarize what the specialist-agent tool calls completed and any next step.'),
 });
 
@@ -724,23 +726,20 @@ function isLikelyWorkspaceActionRequest(userRequest: string): boolean {
 }
 
 /**
- * Build an execution plan from user input.
- * When plannerIntent exists (backward compat from assistant_command processor), uses it directly.
- * Otherwise, makes a single LLM call to assess intent AND build the plan.
+ * Execute or classify a user request through the General Agent's direct tools.
  */
 async function buildPlanFromUserInput(
   task: Task,
   userRequest: string,
-  plannerIntent: AssistantCommandIntent | null,
   memoryContextBlock: string,
   options: {
     confirmed: boolean;
     agentToolMemory?: SpecialistNodeContext['memory'];
   },
 ): Promise<{
-  plan: ExecutionPlan | null;
   scheduleResult: GeneralAgentScheduleResult | null;
   watchTopicResult: GeneralAgentWatchTopicResult | null;
+  automationResult?: GeneralAgentAutomationResult | null;
   agentToolResults: AgentToolResult[];
   agentToolSummary: string | null;
   chatResponse: string | null;
@@ -748,45 +747,8 @@ async function buildPlanFromUserInput(
   needsClarification: boolean;
   clarificationPrompt: string | null;
 }> {
-  // If we already have a planner intent, use it directly (backward compat)
-  if (plannerIntent) {
-    const plan: ExecutionPlan = {
-      version: 'v1',
-      original_command: plannerIntent.original_command,
-      summary: plannerIntent.summary,
-      ledger_entries: [],
-      replan_count: 0,
-      steps: plannerIntent.requested_steps.map((step, index) => ({
-        key: step.key,
-        title: step.title,
-        worker_type: step.worker_type,
-        action: step.action,
-        status: 'pending' as const,
-        requested_tools: [],
-        input: step.input,
-        output: {},
-        attempt_count: 0,
-        idempotency_key: step.idempotency_key ?? `${step.worker_type}-${step.action}-${index + 1}`,
-        recoverable: step.recoverable ?? false,
-      })),
-    };
-
-    return {
-      plan,
-      scheduleResult: null,
-      watchTopicResult: null,
-      agentToolResults: [],
-      agentToolSummary: null,
-      chatResponse: null,
-      confidence: 1.0,
-      needsClarification: false,
-      clarificationPrompt: null,
-    };
-  }
-
   if (isLikelyDirectResearchRequest(userRequest)) {
     return {
-      plan: null,
       scheduleResult: null,
       watchTopicResult: null,
       agentToolResults: [],
@@ -798,7 +760,7 @@ async function buildPlanFromUserInput(
     };
   }
 
-  // Single agent run: tool-aware intent assessment + plan building
+  // Single agent run: tool-aware intent assessment + direct tool execution
   const langfuseHandler = tracingService.getHandler();
   const callbacks = langfuseHandler ? [langfuseHandler] : [];
   const llm = new ChatMistralAI({
@@ -814,7 +776,6 @@ async function buildPlanFromUserInput(
     .getLastLangChainToolError?.(task.organization_id) ?? null;
   if (allMcpTools.length === 0 && mcpToolFetchError && isLikelyWorkspaceActionRequest(userRequest)) {
     return {
-      plan: null,
       scheduleResult: null,
       watchTopicResult: null,
       agentToolResults: [],
@@ -865,6 +826,7 @@ async function buildPlanFromUserInput(
     createCurrentTimeTool(),
     createScheduleAgentRequestTool(task),
     ...createWatchTopicTools({ organizationId: task.organization_id, userId: task.user_id }),
+    ...createAutomationTools({ organizationId: task.organization_id, userId: task.user_id }),
     ...createSpecialistAgentTools({
       task,
       originalCommand: userRequest,
@@ -899,16 +861,16 @@ async function buildPlanFromUserInput(
           memoryContextBlock,
           `User request: "${userRequest}"`,
           '',
-          'Interpret this request and produce an execution plan.',
+          'Interpret this request and either answer directly or complete it using the available tools.',
           '',
           'HARD CONSTRAINTS:',
           '- If the request is ordinary conversation, greeting, small talk, or a general assistant question that does not require Google Workspace action, set outcome="chat", answer in chat_response, and leave steps empty.',
           '- If EXECUTION REVIEW FEEDBACK FOR RETRY is present, correct the previous execution issue before finalizing. Do not repeat the reviewed mistake.',
           '- If EXECUTION REVIEW FEEDBACK FOR RETRY says the user must clarify or confirm something, ask the user directly and do not call specialist tools.',
-          '- For immediate Google Workspace actions, call specialist-agent tools (`ask_gmail_agent`, `ask_calendar_agent`, `ask_docs_agent`, `ask_sheets_agent`, `ask_slides_agent`, `ask_drive_agent`) instead of producing router steps.',
+          '- For immediate Google Workspace actions, call specialist-agent tools (`ask_gmail_agent`, `ask_calendar_agent`, `ask_docs_agent`, `ask_sheets_agent`, `ask_slides_agent`, `ask_drive_agent`).',
           '- Call specialist-agent tools sequentially, one at a time. Include prior specialist handoff_content in the next specialist prompt when the next action depends on it.',
           '- After specialist-agent tools run, set outcome="agent_tools", include agent_tool_summary, and leave steps empty.',
-          '- Do not use outcome="plan" for immediate workspace execution. The legacy router/worker execution plan path is disabled.',
+          '- Never produce execution plans. The legacy planner/router/worker path has been removed.',
           '- Use search_web_research only when the request needs current/public external facts, news, market data, or source-backed research. Do not use web research for greetings, small talk, private user data, or Google Workspace content.',
           '- If search_web_research returns ok=false, continue gracefully: answer that web research is unavailable or ask whether to proceed without external research.',
           '- If the request is clearly future-oriented or recurring, call get_current_time first, then call schedule_agent_request, and set outcome="schedule".',
@@ -919,8 +881,10 @@ async function buildPlanFromUserInput(
           '- If the request is to watch, monitor, alert on, list, or update mail topics, use manage_watch_topic or list_watch_topics, set outcome="watch_topic", include watch_topic_result copied from the tool output, and leave steps empty.',
           '- If a watch-topic request includes a finite duration such as "for two weeks", pass duration_days to manage_watch_topic; pass expires_at only for an explicit end datetime.',
           '- Watch-topic requests are mail triage preferences, not calendar alarms. Do not create calendar steps for them.',
-          '- worker_type MUST be one of: "gmail", "calendar", "docs", "sheets", "slides", "drive".',
-          '- Do NOT specify tool names in your plan — specialists select their own tools.',
+          '- If the request is to automate future work based on an event/trigger/source (file change, sheet update, calendar/meeting event, webhook, Slack-like topic match), use create_automation_watcher or list_automation_watchers, set outcome="automation", include automation_result copied from the tool output, and leave steps empty.',
+          '- Automation watchers are agent tools: they do not directly perform complex logic. They queue an assistant.command prompt with trigger context when an event matches.',
+          '- If the automation should follow a reusable user skill/process/style, pass skill_name to create_automation_watcher.',
+          '- Do not return router steps. Specialists select and execute their own tools inside specialist-agent calls.',
           '- If an email task has only a person name and no email after contact lookup, ask the user to provide the email address directly.',
           '- For Gmail steps: do NOT draft the final email subject/body copy unless the user explicitly provided exact text; put the core content in input.message and style requirements in input.instructions.',
         ].join('\n'),
@@ -940,7 +904,6 @@ async function buildPlanFromUserInput(
 
     if (agentToolResults.length > 0) {
       return {
-        plan: null,
         scheduleResult: null,
         watchTopicResult: null,
         agentToolResults,
@@ -953,7 +916,6 @@ async function buildPlanFromUserInput(
     }
 
     return {
-      plan: null,
       scheduleResult: null,
       watchTopicResult: null,
       agentToolResults: [],
@@ -969,7 +931,6 @@ async function buildPlanFromUserInput(
 
   if (agentToolResults.length > 0 || parsed.outcome === 'agent_tools') {
     return {
-      plan: null,
       scheduleResult: null,
       watchTopicResult: null,
       agentToolResults,
@@ -983,24 +944,11 @@ async function buildPlanFromUserInput(
     };
   }
 
-  const supportedWorkerTypeSet = new Set<string>(SUPPORTED_WORKER_TYPES);
-  const unsupportedWorkerTypes = parsed.steps
-    .map((step) => step.worker_type)
-    .filter((workerType) => !supportedWorkerTypeSet.has(workerType));
-
-  const filteredSteps = parsed.steps
-    .filter((step) => supportedWorkerTypeSet.has(step.worker_type))
-    .map((step) => ({
-      ...step,
-      worker_type: step.worker_type as (typeof SUPPORTED_WORKER_TYPES)[number],
-    }));
-
   tracingService.handleSuccess();
   await tracingService.flush();
 
   if (parsed.outcome === 'chat') {
     return {
-      plan: null,
       scheduleResult: null,
       watchTopicResult: null,
       agentToolResults: [],
@@ -1024,7 +972,6 @@ async function buildPlanFromUserInput(
     const scheduleError = scheduleResult?.error ?? null;
 
     return {
-      plan: null,
       scheduleResult: scheduleError ? null : scheduleResult,
       watchTopicResult: null,
       agentToolResults: [],
@@ -1043,7 +990,6 @@ async function buildPlanFromUserInput(
     const error = watchTopicResult ? null : 'I could not update watch topics yet. Please rephrase the topic you want me to watch.';
 
     return {
-      plan: null,
       scheduleResult: null,
       watchTopicResult,
       agentToolResults: [],
@@ -1055,56 +1001,33 @@ async function buildPlanFromUserInput(
     };
   }
 
-  const plan: ExecutionPlan = {
-    version: 'v1',
-    original_command: userRequest,
-    summary: parsed.summary,
-    ledger_entries: [],
-    replan_count: 0,
-    steps: filteredSteps.map((step, index) => ({
-      key: step.key,
-      title: step.title,
-      worker_type: step.worker_type,
-      action: step.action,
-      input: step.input,
-      requested_tools: [],
-      recoverable: step.recoverable ?? false,
-      status: 'pending' as const,
-      output: {},
-      attempt_count: 0,
-      idempotency_key: `${step.worker_type}-${step.action}-${index + 1}`,
-    })),
-  };
+  if (parsed.outcome === 'automation') {
+    const automationResult = parsed.automation_result ?? null;
+    const error = automationResult ? null : 'I could not create that automation yet. Please describe the trigger source, match condition, and action.';
 
-  const hasNoExecutableSteps = plan.steps.length === 0;
-  if (hasNoExecutableSteps && !parsed.needs_clarification && unsupportedWorkerTypes.length === 0) {
     return {
-      plan: null,
       scheduleResult: null,
       watchTopicResult: null,
+      automationResult,
       agentToolResults: [],
       agentToolSummary: null,
-      chatResponse: parsed.chat_response ?? parsed.summary,
+      chatResponse: null,
       confidence: parsed.confidence,
-      needsClarification: false,
-      clarificationPrompt: null,
+      needsClarification: parsed.needs_clarification || parsed.confidence < CONFIDENCE_THRESHOLD || Boolean(error),
+      clarificationPrompt: error ?? parsed.clarification_prompt ?? null,
     };
   }
 
   return {
-    plan,
     scheduleResult: null,
     watchTopicResult: null,
     agentToolResults: [],
     agentToolSummary: null,
     chatResponse: null,
     confidence: parsed.confidence,
-    needsClarification: parsed.needs_clarification
-      || parsed.confidence < CONFIDENCE_THRESHOLD
-      || unsupportedWorkerTypes.length > 0,
-    clarificationPrompt: unsupportedWorkerTypes.length > 0
-      ? (parsed.clarification_prompt ?? 'I could not map one or more requested steps to available specialist workers. Please rephrase the request.')
-      : (parsed.clarification_prompt ?? null),
+    needsClarification: true,
+    clarificationPrompt: parsed.clarification_prompt
+      ?? 'I could not complete this through the available agent tools. Please rephrase the request.',
   };
 }
 
@@ -1127,35 +1050,8 @@ export async function generalAgentNode(state: AgentState): Promise<Partial<Agent
 
     const userInitiatedChannel = getUserInitiatedChannel(state.task);
 
-    const existingRun = state.execution_run ?? await executionRunService.getByTaskId(state.task.id);
-    if (existingRun) {
-      const executionRunResult = executionRunService.buildTaskResult(existingRun).execution_run;
-      const prompt = 'Legacy execution-run worker orchestration has been disabled. Please submit the request again so the General Agent can run it through direct specialist-agent tools.';
-      return {
-        execution_run: existingRun,
-        router_completed_step_key: null,
-        task: {
-          ...state.task,
-          status: userInitiatedChannel ? 'paused' : 'escalation',
-          result: buildEscalationPayload({
-            reason: 'Legacy worker orchestration disabled',
-            prompt,
-            confidenceScore: 0,
-            trigger: 'approval_guardrail',
-            extra: {
-              summary: prompt,
-              ...(executionRunResult ? { execution_run: executionRunResult } : {}),
-            },
-          }),
-        },
-        trace: [AuditLogger.createStep('General Agent', 'Blocked legacy execution-run worker orchestration', { output_summary: prompt })],
-      };
-    }
-
-    const plannerIntent = state.planner_intent;
     const payload = asRecord(state.task.payload);
-    const rawUserRequest = plannerIntent?.original_command
-      ?? asNonEmptyString(payload.command)
+    const rawUserRequest = asNonEmptyString(payload.command)
       ?? asNonEmptyString(payload.command_text)
       ?? asNonEmptyString(payload.message_text)
       ?? '';
@@ -1232,17 +1128,15 @@ export async function generalAgentNode(state: AgentState): Promise<Partial<Agent
             extra: { summary: prompt },
           }),
         },
-        router_completed_step_key: null,
         trace: [AuditLogger.createStep('General Agent', userInitiatedChannel
           ? 'Paused: high-risk command requires confirmation'
           : 'Escalated: high-risk command requires confirmation', { output_summary: prompt })],
       };
     }
 
-    const { plan, scheduleResult, watchTopicResult, agentToolResults, agentToolSummary, chatResponse, confidence, clarificationPrompt } = await buildPlanFromUserInput(
+    const { scheduleResult, watchTopicResult, automationResult, agentToolResults, agentToolSummary, chatResponse, confidence, clarificationPrompt } = await buildPlanFromUserInput(
       state.task,
       userRequest,
-      plannerIntent,
       planningContextBlock,
       {
         confirmed,
@@ -1269,7 +1163,6 @@ export async function generalAgentNode(state: AgentState): Promise<Partial<Agent
             agent_tool_results: agentToolResults,
           },
         },
-        router_completed_step_key: null,
         trace: [
           AuditLogger.createStep('General Agent', `Called ${agentToolResults.length} specialist-agent tool(s)`, { output_summary: summary }),
           ...agentToolResults.map((result) => AuditLogger.createStep(
@@ -1291,7 +1184,6 @@ export async function generalAgentNode(state: AgentState): Promise<Partial<Agent
             outcome: 'chat_response',
           },
         },
-        router_completed_step_key: null,
         trace: [AuditLogger.createStep('General Agent', 'Responded conversationally', { output_summary: chatResponse })],
       };
     }
@@ -1311,7 +1203,6 @@ export async function generalAgentNode(state: AgentState): Promise<Partial<Agent
             outcome: 'schedule_created',
           },
         },
-        router_completed_step_key: null,
         trace: [
           AuditLogger.createStep('General Agent', 'Created scheduled request', {
             output_summary: summary,
@@ -1336,7 +1227,6 @@ export async function generalAgentNode(state: AgentState): Promise<Partial<Agent
             outcome: 'watch_topic_updated',
           },
         },
-        router_completed_step_key: null,
         trace: [
           AuditLogger.createStep('General Agent', 'Handled watch-topic request', {
             output_summary: summary,
@@ -1345,63 +1235,50 @@ export async function generalAgentNode(state: AgentState): Promise<Partial<Agent
       };
     }
 
-    if (!plan) {
-      const prompt = clarificationPrompt ?? 'I could not create a plan for that request. Please rephrase it.';
+    if (automationResult) {
+      const listedCount = typeof automationResult.total === 'number' ? automationResult.total : null;
+      const summary = automationResult.confirmation_message
+        ?? (listedCount !== null
+          ? `You have ${listedCount} automation watcher${listedCount === 1 ? '' : 's'}.`
+          : 'Automation watcher updated.');
+
       return {
         task: {
           ...state.task,
-          status: userInitiatedChannel ? 'paused' : 'escalation',
-          result: buildEscalationPayload({
-            reason: 'Unable to plan request',
-            prompt,
-            confidenceScore: confidence,
-            trigger: 'ambiguity_detected',
-            extra: { summary: prompt },
-          }),
+          result: {
+            summary,
+            automation: automationResult,
+            outcome: 'automation_watcher_updated',
+          },
         },
-        router_completed_step_key: null,
-        trace: [AuditLogger.createStep('General Agent', 'Unable to create plan', { output_summary: prompt })],
+        trace: [
+          AuditLogger.createStep('General Agent', 'Handled automation watcher request', {
+            output_summary: summary,
+          }),
+        ],
       };
     }
 
-    const prompt = 'I resolved this into a legacy execution plan, but the old worker/router orchestration is disabled. Please retry the request so I can execute it through direct specialist-agent tools, or make the request more explicit about the workspace apps to use.';
+    const prompt = clarificationPrompt ?? 'I could not complete this through the available agent tools. Please rephrase it.';
     return {
-      router_completed_step_key: null,
       task: {
-        ...state.task,
-        status: userInitiatedChannel ? 'paused' : 'escalation',
-        result: buildEscalationPayload({
-          reason: 'Legacy worker orchestration disabled',
+          ...state.task,
+          status: userInitiatedChannel ? 'paused' : 'escalation',
+          result: buildEscalationPayload({
+          reason: 'Unable to complete request',
           prompt,
           confidenceScore: confidence,
           trigger: 'ambiguity_detected',
           extra: { summary: prompt },
         }),
       },
-      trace: [AuditLogger.createStep('General Agent', 'Rejected legacy execution plan fallback', {
+      trace: [AuditLogger.createStep('General Agent', 'Unable to complete request', {
         confidence_score: confidence,
         output_summary: prompt,
       })],
     };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
-    if (message.startsWith('EXECUTION_RUNS_UNAVAILABLE')) {
-      return {
-        task: {
-          ...state.task,
-          status: 'escalation',
-          result: buildEscalationPayload({
-            reason: message,
-            prompt: 'Execution run system is unavailable. Please apply the required migration and retry.',
-            confidenceScore: 0,
-            trigger: 'approval_guardrail',
-          }),
-        },
-        router_completed_step_key: null,
-        trace: [AuditLogger.createStep('General Agent', message)],
-      };
-    }
-
     if (isGeneralAgentTimeoutMessage(message)) {
       tracingService.handleFailure(error);
       const userInitiatedChannel = getUserInitiatedChannel(state.task);
@@ -1431,7 +1308,6 @@ export async function generalAgentNode(state: AgentState): Promise<Partial<Agent
             },
           }),
         },
-        router_completed_step_key: null,
         trace: [
           AuditLogger.createStep(
             'General Agent',

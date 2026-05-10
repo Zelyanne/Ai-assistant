@@ -138,14 +138,6 @@ export async function reasoningNode(state: AgentState): Promise<Partial<AgentSta
     prompt = `${memorySections.join('\n\n')}\n\n${prompt}`;
   }
 
-  // Incorporate workspace context if available (AC 6.3)
-  if (state.workspace_context_items && state.workspace_context_items.length > 0) {
-    const contextLines = state.workspace_context_items.map(
-      (item) => `--- DOCUMENT: ${item.citation.description || item.citation.source_id} ---\n${item.content}`
-    );
-    prompt = `WORKSPACE CONTEXT (READ-ONLY):\n${contextLines.join('\n\n')}\n\n${prompt}`;
-  }
-
   // Task 8: Update reasoningNode to support dynamic tool injection
   const taskPayload = task.payload as any;
   if (taskPayload.tools) {

@@ -754,7 +754,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
 
     const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
 
-    expect(result.execution_run).toBeNull();
+    expect(result.execution_run).toBeUndefined();
     expect(result.task.result.outcome).toBe('agent_tools_reviewed');
     expect(result.task.result.agent_tool_results).toHaveLength(2);
     expect(result.task.result.agent_tool_verification.status).toBe('passed');
@@ -939,7 +939,6 @@ describe('Agent Controller Graph planner-worker flow', () => {
         'load_protocol',
         'load_short_term_memory',
         'check_perimeter',
-        'load_workspace_context',
         'email_draft',
         'finalize',
       ]),
@@ -1359,7 +1358,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
     });
     const generalAgentConfig = generalAgentCreateCall?.[0] as { tools?: Array<{ name?: string }> } | undefined;
 
-    expect(result.execution_run).toBeNull();
+    expect(result.execution_run).toBeUndefined();
     expect(generalAgentConfig?.tools?.map((tool) => tool.name)).toContain('search_web_research');
     expect(result.task.result).toMatchObject({
       outcome: 'chat_response',
@@ -1437,7 +1436,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
       language: 'fr',
       safesearch: 1,
     }));
-    expect(result.execution_run).toBeNull();
+    expect(result.execution_run).toBeUndefined();
     expect(result.task.result).toMatchObject({ outcome: 'chat_response' });
     expect(db.command_messages.get(assistantMessageId)).toEqual(expect.objectContaining({
       state: 'done',
@@ -1683,7 +1682,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
     const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
 
     expect(result.task.status).toBe('paused');
-    expect(result.execution_run).toBeNull();
+    expect(result.execution_run).toBeUndefined();
     expect(result.task.result.reason).toBe('High-risk command requires confirmation');
     expect(AgencyService.getTierForTopic).not.toHaveBeenCalled();
   });
@@ -1712,9 +1711,9 @@ describe('Agent Controller Graph planner-worker flow', () => {
     const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
 
     expect(result.task.status).toBe('paused');
-    expect(result.task.result.reason).toBe('Unable to plan request');
+    expect(result.task.result.reason).toBe('Unable to complete request');
     expect(result.task.result.prompt).toContain('could not reliably interpret this request');
-    expect(result.execution_run).toBeNull();
+    expect(result.execution_run).toBeUndefined();
   });
 
   it('pauses instead of crashing when General Agent times out', async () => {
@@ -1744,7 +1743,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
     expect(result.task.result.reason).toBe('General Agent execution timed out');
     expect(result.task.result.prompt).toContain('check Google Docs and Gmail');
     expect(result.task.result.outcome).toBe('execution_timeout');
-    expect(result.execution_run).toBeNull();
+    expect(result.execution_run).toBeUndefined();
     expect(mockAppendShortTermMemoryEntry).toHaveBeenCalledWith(
       task.organization_id,
       task.user_id,
@@ -1801,7 +1800,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
 
     const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
 
-    expect(result.execution_run).toBeNull();
+    expect(result.execution_run).toBeUndefined();
     expect(result.task.result.outcome).toBe('schedule_created');
     expect(result.task.result.schedule).toEqual(expect.objectContaining({
       schedule_id: 'schedule-1',
@@ -1860,7 +1859,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
 
     const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
 
-    expect(result.execution_run).toBeNull();
+    expect(result.execution_run).toBeUndefined();
     expect(result.task.result.outcome).toBe('schedule_created');
     expect(mockScheduleManageProcess).toHaveBeenCalledOnce();
 
@@ -1909,7 +1908,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
 
     const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
 
-    expect(result.execution_run).toBeNull();
+    expect(result.execution_run).toBeUndefined();
     expect(result.task.result.outcome).toBe('schedule_created');
     expect(String(result.task.result.summary)).toContain('Got it');
     expect(mockScheduleManageProcess).toHaveBeenCalledOnce();

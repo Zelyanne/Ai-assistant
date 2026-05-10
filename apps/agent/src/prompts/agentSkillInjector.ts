@@ -3,9 +3,10 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { UserSkillRow } from '../services/UserSkillsService.js';
 
-type AgentSkillTarget = 'gmail' | 'calendar' | 'docs' | 'sheets' | 'slides' | 'drive';
+type AgentSkillTarget = 'generalAgent' | 'gmail' | 'calendar' | 'docs' | 'sheets' | 'slides' | 'drive';
 
 const SKILL_FILES: Partial<Record<AgentSkillTarget, string>> = {
+  generalAgent: 'agent skill/general-agent-skill.md',
   gmail: 'agent skill/gmail-agent-skill.md',
   calendar: 'agent skill/google-calendar-agent-skill.md',
   docs: 'agent skill/google-docs-agent-skill.md',

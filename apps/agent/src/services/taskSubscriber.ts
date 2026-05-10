@@ -1,7 +1,6 @@
 import { Task } from '@ai-assistant/shared';
 import { graph } from '../controller/graph.js';
 import { tracingService } from './llm/tracing.js';
-import { executionRunService } from './ExecutionRunService.js';
 import { commandConversationContextService } from './CommandConversationContextService.js';
 import { supabase } from './supabase.js';
 
@@ -67,16 +66,12 @@ export async function processQueuedTask(task: Task): Promise<void> {
 
   try {
     const hydratedTask = await commandConversationContextService.hydrateTaskConversationContext(task);
-    const executionRun = task.id
-      ? await executionRunService.getByTaskId(task.id)
-      : null;
     const langfuseHandler = tracingService.getHandler();
     const callbacks = langfuseHandler ? [langfuseHandler] : [];
 
     await graph.invoke(
       {
         task: hydratedTask,
-        execution_run: executionRun,
       },
       {
         runName: `Graph: ${task.domain_action}`,
@@ -84,8 +79,6 @@ export async function processQueuedTask(task: Task): Promise<void> {
           taskId: task.id,
           orgId: task.organization_id,
           domain_action: task.domain_action,
-          executionRunId: executionRun?.id,
-          executionRunStatus: executionRun?.status,
           langfuseUserId: task.user_id,
         },
         tags: [task.domain_action, 'langgraph'],

@@ -11,10 +11,6 @@ const { mockFrom } = vi.hoisted(() => ({
   mockFrom: vi.fn(),
 }));
 
-const { mockGetByTaskId } = vi.hoisted(() => ({
-  mockGetByTaskId: vi.fn(),
-}));
-
 const { mockGenerateText } = vi.hoisted(() => ({
   mockGenerateText: vi.fn(),
 }));
@@ -38,12 +34,6 @@ vi.mock('./llm/tracing.js', () => ({
   },
 }));
 
-vi.mock('./ExecutionRunService.js', () => ({
-  executionRunService: {
-    getByTaskId: mockGetByTaskId,
-  },
-}));
-
 vi.mock('./llm/factory.js', () => ({
   LLMProviderFactory: {
     getProvider: () => ({
@@ -58,7 +48,6 @@ describe('processQueuedTask', () => {
     mockInvoke.mockResolvedValue(undefined);
     mockGetHandler.mockReturnValue(null);
     mockFlush.mockResolvedValue(undefined);
-    mockGetByTaskId.mockResolvedValue(null);
     mockGenerateText.mockResolvedValue({
       data: 'Compressed session: user is iterating on a Telegram Gmail draft; preserve recipient and latest constraints.',
       usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120, latencyMs: 1 },
@@ -86,7 +75,6 @@ describe('processQueuedTask', () => {
     expect(mockInvoke).toHaveBeenCalledWith(
       expect.objectContaining({
         task: expect.objectContaining({ domain_action: 'thread.action' }),
-        execution_run: null,
       }),
       expect.objectContaining({
         runName: 'Graph: thread.action',
@@ -98,42 +86,6 @@ describe('processQueuedTask', () => {
       }),
     );
     expect(mockFlush).toHaveBeenCalledOnce();
-  });
-
-  it('passes an existing execution run into graph state', async () => {
-    mockGetByTaskId.mockResolvedValue({
-      id: 'run-1',
-      status: 'processing',
-    });
-
-    await processQueuedTask({
-      id: '55555555-5555-4555-8555-555555555555',
-      organization_id: '11111111-1111-1111-1111-111111111111',
-      user_id: '22222222-2222-4222-8222-222222222222',
-      domain_action: 'assistant.command',
-      status: 'queued',
-      payload: {
-        command: 'resume planner run',
-      },
-      result: {},
-      topic: undefined,
-    });
-
-    expect(mockGetByTaskId).toHaveBeenCalledWith('55555555-5555-4555-8555-555555555555');
-    expect(mockInvoke).toHaveBeenCalledWith(
-      expect.objectContaining({
-        execution_run: expect.objectContaining({
-          id: 'run-1',
-          status: 'processing',
-        }),
-      }),
-      expect.objectContaining({
-        metadata: expect.objectContaining({
-          executionRunId: 'run-1',
-          executionRunStatus: 'processing',
-        }),
-      }),
-    );
   });
 
   it('marks the task and command message as error when graph execution fails', async () => {

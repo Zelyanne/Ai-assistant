@@ -3,15 +3,12 @@ import { RunnableConfig } from "@langchain/core/runnables";
 import { supabase } from "../services/supabase.js";
 import {
   Task,
-  type AssistantCommandIntent,
   AgencyTier,
   ReasoningStep,
   Citation,
   EscalationTrigger,
-  type ExecutionRun,
   Json,
   ThreadActionDecisionSchema,
-  WorkspaceContextItem,
   type ThreadActionDecision,
 } from "@ai-assistant/shared";
 import { ProcessorRegistry } from "../processors/ProcessorRegistry.js";
@@ -21,7 +18,6 @@ import { SafetyControlsService } from "../services/SafetyControlsService.js";
 import { reasoningNode } from "./nodes/reasoning.js";
 import { loadProtocol } from "./nodes/protocol.js";
 import { loadMemoryNode, loadShortTermMemoryNode } from "./nodes/memory.js";
-import { loadWorkspaceContext } from "./nodes/workspaceContext.js";
 import { escalateNode } from "./nodes/escalate.js";
 import { calendarConflictNode } from "./nodes/calendarConflict.js";
 import { generalAgentNode } from "./nodes/generalAgent.js";
@@ -29,7 +25,6 @@ import { executionVerifierNode } from "./nodes/executionVerifier.js";
 import { AuditLogger } from "../services/AuditLogger.js";
 import { tracingService } from "../services/llm/tracing.js";
 import { LLMProviderFactory } from "../services/llm/factory.js";
-import { executionRunService } from "../services/ExecutionRunService.js";
 import { memoryService } from "../services/MemoryService.js";
 import { channelRouter } from "../services/channelRouter.js";
 import {
@@ -136,22 +131,6 @@ export const AgentStateAnnotation = Annotation.Root({
   }),
   memory_task_state: Annotation<Json>({
     reducer: (x, y) => y ?? x,
-  }),
-  workspace_context_items: Annotation<WorkspaceContextItem[]>({
-    reducer: (x, y) => (x || []).concat(y || []),
-    default: () => [],
-  }),
-  planner_intent: Annotation<AssistantCommandIntent | null>({
-    reducer: (_x, y) => y ?? null,
-    default: () => null,
-  }),
-  execution_run: Annotation<ExecutionRun | null>({
-    reducer: (_x, y) => y ?? null,
-    default: () => null,
-  }),
-  router_completed_step_key: Annotation<string | null>({
-    reducer: (_x, y) => y ?? null,
-    default: () => null,
   }),
   review_feedback: Annotation<string | null>({
     reducer: (x, y) => (typeof y === "undefined" ? x ?? null : y),
@@ -348,14 +327,6 @@ function buildUserFacingReplyMessage(
     if (to) lines.push(`- Destinataire: ${to}`);
     if (subject) lines.push(`- Sujet: ${subject}`);
     return lines.join("\n");
-  }
-
-  const executionRun = asRecord(resultRecord.execution_run);
-  const completedSteps = Array.isArray(executionRun.completed_steps)
-    ? executionRun.completed_steps.length
-    : null;
-  if (completedSteps && completedSteps > 0) {
-    lines.push("", `Détails: ${completedSteps} étape(s) terminée(s).`);
   }
 
   return lines.join("\n");
@@ -1730,12 +1701,6 @@ async function finalizeTask(
 ): Promise<Partial<AgentState>> {
   let status: Task["status"] = "done";
 
-  if (state.execution_run?.status === "escalated" || state.execution_run?.status === "blocked") {
-    status = "escalation";
-  } else if (state.execution_run?.status === "failed") {
-    status = "error";
-  }
-
   if (
     state.task.status === "escalation" ||
     state.task.status === "error" ||
@@ -1794,12 +1759,8 @@ async function finalizeTask(
     }
 
     // 1. Update task status
-    const executionRunResult = state.execution_run
-      ? executionRunService.buildTaskResult(state.execution_run)
-      : {};
     const taskResultJson = coerceJson({
       ...(state.task.result ?? {}),
-      ...executionRunResult,
     });
     const latestDbResultJson = coerceJson(dbResult ?? {});
 
@@ -1877,9 +1838,6 @@ async function finalizeTask(
       status === "done" ? "task_completed" : `task_${status}`,
       finalTrace,
       channelCitations,
-      {
-        executionRunId: state.execution_run?.id,
-      },
     );
 
     // 3. Flush Tracing
@@ -2017,17 +1975,11 @@ function routeAfterPerimeter(state: AgentState) {
     }
     return state.task.status === "escalation" ? "escalate" : "finalize";
   }
-  return "load_workspace_context";
-}
-
-function routeAfterWorkspaceContext(state: AgentState) {
-  if (state.error || state.task.status === "escalation") return "finalize";
-
   const domainAction = state.task.domain_action;
 
   // All assistant commands go straight to the General Agent.
   // The General Agent is responsible for deciding whether the request should:
-  // - create an execution plan,
+  // - execute via General Agent tools,
   // - create a schedule,
   // - or ask for clarification.
   if (domainAction === "assistant.command") {
@@ -2140,10 +2092,6 @@ const workflow = new StateGraph(AgentStateAnnotation)
     withTaskStateTracking("load_short_term_memory", loadShortTermMemoryNode),
   )
   .addNode(
-    "load_workspace_context",
-    withTaskStateTracking("load_workspace_context", loadWorkspaceContext),
-  )
-  .addNode(
     "check_perimeter",
     withTaskStateTracking("check_perimeter", checkPerimeter),
   )
@@ -2230,7 +2178,6 @@ const workflow = new StateGraph(AgentStateAnnotation)
   .addConditionalEdges("load_protocol", routeAfterProtocol)
   .addConditionalEdges("load_short_term_memory", routeAfterShortTermMemory)
   .addConditionalEdges("check_perimeter", routeAfterPerimeter)
-  .addConditionalEdges("load_workspace_context", routeAfterWorkspaceContext)
   .addConditionalEdges("calendar_conflict", routeAfterCalendarConflict)
   .addConditionalEdges("general_agent", routeAfterGeneralAgent)
   .addEdge("mark_review", "execution_verifier")

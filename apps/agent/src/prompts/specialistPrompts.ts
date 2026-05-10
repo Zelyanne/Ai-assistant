@@ -330,7 +330,8 @@ export function getSpecialistPrompt(
   specialist: keyof typeof SPECIALIST_SYSTEM_PROMPTS,
 ): string {
   const basePrompt = SPECIALIST_SYSTEM_PROMPTS[specialist];
-  const skillTargets: Partial<Record<keyof typeof SPECIALIST_SYSTEM_PROMPTS, keyof typeof SPECIALIST_CAPABILITIES>> = {
+  const skillTargets: Partial<Record<keyof typeof SPECIALIST_SYSTEM_PROMPTS, Parameters<typeof buildAgentSkillAppendix>[0]>> = {
+    generalAgent: 'generalAgent',
     gmail: 'gmail',
     calendar: 'calendar',
     docs: 'docs',
