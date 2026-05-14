@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { graph } from './graph.js';
 import { AgencyService } from '../services/agency.js';
+import { ProcessorRegistry } from '../processors/ProcessorRegistry.js';
 
 vi.mock('../services/SafetyControlsService.js', () => ({
   SafetyControlsService: {
@@ -943,6 +944,50 @@ describe('Agent Controller Graph planner-worker flow', () => {
         'finalize',
       ]),
     );
+  });
+
+  it('logs structured thrown processor objects instead of [object Object]', async () => {
+    const task = {
+      ...baseTask,
+      domain_action: 'email.draft',
+      payload: {
+        recipient: 'alexis@example.com',
+        subject: 'Status',
+        body: 'Draft body',
+      },
+    };
+
+    const processor = {
+      process: vi.fn().mockRejectedValue({
+        message: 'permission denied for table ingested_threads',
+        code: '42501',
+        details: 'RLS blocked read access',
+        hint: 'Check policy for ingested_threads',
+      }),
+    };
+    const getProcessorSpy = vi
+      .spyOn(ProcessorRegistry, 'getProcessor')
+      .mockReturnValue(processor as never);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    db.tasks.set(task.id, clone(task));
+
+    try {
+      const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+      const processorFailureLog = errorSpy.mock.calls.find(([message]) =>
+        String(message).includes('Processor failed:'),
+      );
+
+      expect(result.error).toBe('Processor execution failed');
+      expect(processorFailureLog?.[0]).toContain('permission denied for table ingested_threads');
+      expect(processorFailureLog?.[0]).toContain('code=42501');
+      expect(processorFailureLog?.[0]).toContain('details=RLS blocked read access');
+      expect(processorFailureLog?.[0]).toContain('hint=Check policy for ingested_threads');
+      expect(processorFailureLog?.[0]).not.toContain('[object Object]');
+    } finally {
+      getProcessorSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
   });
 
   it.skip('legacy: records one automatic re-plan and continues when a recoverable worker step fails', async () => {

@@ -413,8 +413,51 @@ function isHighRiskPayload(payload: unknown): boolean {
 }
 
 function redactErrorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return new PerimeterGuard().redactPII(message);
+  const guard = new PerimeterGuard();
+
+  if (error instanceof Error) {
+    return guard.redactPII(error.message);
+  }
+
+  if (!error || typeof error !== "object") {
+    return guard.redactPII(String(error));
+  }
+
+  const record = error as Record<string, unknown>;
+  const parts: string[] = [];
+  const appendField = (label: string, value: unknown, redact = true) => {
+    if (typeof value === "string" && value.trim().length > 0) {
+      const formattedValue = redact ? guard.redactPII(value.trim()) : value.trim();
+      parts.push(label === "message" ? formattedValue : `${label}=${formattedValue}`);
+      return;
+    }
+
+    if (typeof value === "number" || typeof value === "boolean") {
+      parts.push(`${label}=${value}`);
+    }
+  };
+
+  appendField("message", record.message);
+  appendField("error", record.error);
+  appendField("description", record.description);
+  appendField("code", record.code, false);
+  appendField("details", record.details);
+  appendField("hint", record.hint);
+  appendField("status", record.status, false);
+  appendField("statusCode", record.statusCode, false);
+  appendField("statusText", record.statusText);
+
+  if (record.response && typeof record.response === "object") {
+    const response = record.response as Record<string, unknown>;
+    appendField("response.status", response.status, false);
+    appendField("response.statusText", response.statusText);
+  }
+
+  const message = parts.length > 0
+    ? parts.join(" | ")
+    : `[non-error object keys=${Object.keys(record).join(",") || "none"}]`;
+
+  return message;
 }
 
 async function checkEmergencyBrake(
