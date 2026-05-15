@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'crypto';
 import type { Database } from '@ai-assistant/shared';
+import { Effect } from 'effect';
 import { config } from '../config/index.js';
 import { supabase } from './supabase.js';
 
@@ -85,215 +86,280 @@ function normalizeWebhookUrl(url: string): string {
 }
 
 export class MessagingChannelLinkService {
-  async createTelegramLinkToken(params: { organizationId: string; userId: string }): Promise<{ token: string; deepLink: string; expiresAt: string }> {
+  createTelegramLinkTokenEffect(params: { organizationId: string; userId: string }): Effect.Effect<{ token: string; deepLink: string; expiresAt: string }, unknown> {
     if (!config.TELEGRAM_BOT_USERNAME) {
-      throw new Error('TELEGRAM_BOT_USERNAME_PROJECT_GOOGLE_ASSITANT is not configured');
+      return Effect.fail(new Error('TELEGRAM_BOT_USERNAME_PROJECT_GOOGLE_ASSITANT is not configured'));
     }
 
-    await this.ensureTelegramWebhookReady();
+    return Effect.gen(this, function* () {
+      yield* this.ensureTelegramWebhookReadyEffect();
 
-    const token = randomBytes(32).toString('base64url');
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-    const tokenHash = hashToken(token);
+      const token = yield* Effect.sync(() => randomBytes(32).toString('base64url'));
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+      const tokenHash = hashToken(token);
 
-    await supabase
-      .from('messaging_channel_links')
-      .update({
-        status: 'revoked',
-        link_token_hash: null,
-        link_token_expires_at: null,
-      })
-      .eq('organization_id', params.organizationId)
-      .eq('user_id', params.userId)
-      .eq('channel', 'telegram')
-      .eq('status', 'pending');
-
-    const { error } = await supabase
-      .from('messaging_channel_links')
-      .insert({
-        organization_id: params.organizationId,
-        user_id: params.userId,
-        channel: 'telegram',
-        status: 'pending',
-        link_token_hash: tokenHash,
-        link_token_expires_at: expiresAt,
+      yield* Effect.tryPromise({
+        try: async () => await supabase
+          .from('messaging_channel_links')
+          .update({
+            status: 'revoked',
+            link_token_hash: null,
+            link_token_expires_at: null,
+          })
+          .eq('organization_id', params.organizationId)
+          .eq('user_id', params.userId)
+          .eq('channel', 'telegram')
+          .eq('status', 'pending'),
+        catch: (error) => error,
       });
 
-    if (error) {
-      throw new Error(error.message);
+      const { error } = yield* Effect.tryPromise({
+        try: async () => await supabase
+          .from('messaging_channel_links')
+          .insert({
+            organization_id: params.organizationId,
+            user_id: params.userId,
+            channel: 'telegram',
+            status: 'pending',
+            link_token_hash: tokenHash,
+            link_token_expires_at: expiresAt,
+          }),
+        catch: (error) => error,
+      });
+
+      if (error) {
+        yield* Effect.fail(new Error(error.message));
+      }
+
+      return {
+        token,
+        deepLink: `https://t.me/${config.TELEGRAM_BOT_USERNAME}?start=${encodeURIComponent(token)}`,
+        expiresAt,
+      };
+    });
+  }
+
+  async createTelegramLinkToken(params: { organizationId: string; userId: string }): Promise<{ token: string; deepLink: string; expiresAt: string }> {
+    return Effect.runPromise(this.createTelegramLinkTokenEffect(params));
+  }
+
+  activateTelegramLinkEffect(token: string, update: unknown): Effect.Effect<TelegramLinkActivationResult, unknown> {
+    const chatId = getTelegramChatId(update);
+    if (!chatId) {
+      return Effect.succeed({ ok: false, chatId: null, message: 'Telegram chat could not be identified.' });
     }
 
-    return {
-      token,
-      deepLink: `https://t.me/${config.TELEGRAM_BOT_USERNAME}?start=${encodeURIComponent(token)}`,
-      expiresAt,
-    };
+    return Effect.gen(function* () {
+      const tokenHash = hashToken(token);
+      const { data: link, error } = yield* Effect.tryPromise({
+        try: async () => await supabase
+          .from('messaging_channel_links')
+          .select('*')
+          .eq('channel', 'telegram')
+          .eq('status', 'pending')
+          .eq('link_token_hash', tokenHash)
+          .gt('link_token_expires_at', new Date().toISOString())
+          .maybeSingle(),
+        catch: (error) => error,
+      });
+
+      if (error) {
+        yield* Effect.fail(new Error(error.message));
+      }
+
+      if (!link) {
+        return { ok: false, chatId, message: 'This Telegram link has expired or is invalid. Generate a new link from Settings.' };
+      }
+
+      yield* Effect.tryPromise({
+        try: async () => await supabase
+          .from('messaging_channel_links')
+          .update({ status: 'revoked' })
+          .eq('channel', 'telegram')
+          .eq('status', 'active')
+          .or(`and(organization_id.eq.${link.organization_id},user_id.eq.${link.user_id}),external_thread_id.eq.${chatId}`),
+        catch: (error) => error,
+      });
+
+      const now = new Date().toISOString();
+      const { data: activated, error: updateError } = yield* Effect.tryPromise({
+        try: async () => await supabase
+          .from('messaging_channel_links')
+          .update({
+            external_user_id: getTelegramUserId(update),
+            external_thread_id: chatId,
+            username: getTelegramUsername(update),
+            display_name: getTelegramDisplayName(update),
+            status: 'active',
+            link_token_hash: null,
+            link_token_expires_at: null,
+            linked_at: now,
+            last_seen_at: now,
+            metadata: {
+              telegram_chat_id: chatId,
+              telegram_user_id: getTelegramUserId(update),
+            },
+          })
+          .eq('id', link.id)
+          .select('*')
+          .single(),
+        catch: (error) => error,
+      });
+
+      if (updateError) {
+        return yield* Effect.fail(new Error(updateError.message));
+      }
+
+      if (!activated) {
+        return yield* Effect.fail(new Error('Failed to activate Telegram link'));
+      }
+
+      return {
+        ok: true,
+        link: activated,
+        chatId,
+        message: 'Telegram is connected. You can now message this bot to talk to your assistant.',
+      };
+    });
   }
 
   async activateTelegramLink(token: string, update: unknown): Promise<TelegramLinkActivationResult> {
+    return Effect.runPromise(this.activateTelegramLinkEffect(token, update));
+  }
+
+  resolveTelegramIdentityEffect(update: unknown): Effect.Effect<TelegramIdentity | null, unknown> {
     const chatId = getTelegramChatId(update);
-    if (!chatId) {
-      return { ok: false, chatId: null, message: 'Telegram chat could not be identified.' };
-    }
+    if (!chatId) return Effect.succeed(null);
 
-    const tokenHash = hashToken(token);
-    const { data: link, error } = await supabase
-      .from('messaging_channel_links')
-      .select('*')
-      .eq('channel', 'telegram')
-      .eq('status', 'pending')
-      .eq('link_token_hash', tokenHash)
-      .gt('link_token_expires_at', new Date().toISOString())
-      .maybeSingle();
+    return Effect.gen(function* () {
+      const { data: link, error } = yield* Effect.tryPromise({
+        try: async () => await supabase
+          .from('messaging_channel_links')
+          .select('organization_id, user_id')
+          .eq('channel', 'telegram')
+          .eq('status', 'active')
+          .eq('external_thread_id', chatId)
+          .maybeSingle(),
+        catch: (error) => error,
+      });
 
-    if (error) {
-      throw new Error(error.message);
-    }
+      if (error) {
+        yield* Effect.fail(new Error(error.message));
+      }
 
-    if (!link) {
-      return { ok: false, chatId, message: 'This Telegram link has expired or is invalid. Generate a new link from Settings.' };
-    }
+      if (!link) {
+        return null;
+      }
 
-    await supabase
-      .from('messaging_channel_links')
-      .update({ status: 'revoked' })
-      .eq('channel', 'telegram')
-      .eq('status', 'active')
-      .or(`and(organization_id.eq.${link.organization_id},user_id.eq.${link.user_id}),external_thread_id.eq.${chatId}`);
+      yield* Effect.tryPromise({
+        try: async () => await supabase
+          .from('messaging_channel_links')
+          .update({
+            external_user_id: getTelegramUserId(update),
+            username: getTelegramUsername(update),
+            display_name: getTelegramDisplayName(update),
+            last_seen_at: new Date().toISOString(),
+          })
+          .eq('channel', 'telegram')
+          .eq('status', 'active')
+          .eq('external_thread_id', chatId),
+        catch: (error) => error,
+      });
 
-    const now = new Date().toISOString();
-    const { data: activated, error: updateError } = await supabase
-      .from('messaging_channel_links')
-      .update({
-        external_user_id: getTelegramUserId(update),
-        external_thread_id: chatId,
-        username: getTelegramUsername(update),
-        display_name: getTelegramDisplayName(update),
-        status: 'active',
-        link_token_hash: null,
-        link_token_expires_at: null,
-        linked_at: now,
-        last_seen_at: now,
-        metadata: {
-          telegram_chat_id: chatId,
-          telegram_user_id: getTelegramUserId(update),
-        },
-      })
-      .eq('id', link.id)
-      .select('*')
-      .single();
-
-    if (updateError || !activated) {
-      throw new Error(updateError?.message ?? 'Failed to activate Telegram link');
-    }
-
-    return {
-      ok: true,
-      link: activated,
-      chatId,
-      message: 'Telegram is connected. You can now message this bot to talk to your assistant.',
-    };
+      return {
+        organization_id: link.organization_id,
+        user_id: link.user_id,
+      };
+    });
   }
 
   async resolveTelegramIdentity(update: unknown): Promise<TelegramIdentity | null> {
-    const chatId = getTelegramChatId(update);
-    if (!chatId) return null;
+    return Effect.runPromise(this.resolveTelegramIdentityEffect(update));
+  }
 
-    const { data: link, error } = await supabase
-      .from('messaging_channel_links')
-      .select('organization_id, user_id')
-      .eq('channel', 'telegram')
-      .eq('status', 'active')
-      .eq('external_thread_id', chatId)
-      .maybeSingle();
-
-    if (error) {
-      throw new Error(error.message);
+  sendTelegramTextEffect(chatId: string, text: string): Effect.Effect<void, unknown> {
+    if (!config.TELEGRAM_BOT_TOKEN) {
+      return Effect.fail(new Error('TELEGRAM_BOT_TOKEN_PROJECT_GOOGLE_ASSITANT is not configured'));
     }
 
-    if (!link) {
-      return null;
-    }
+    return Effect.gen(function* () {
+      const response = yield* Effect.tryPromise({
+        try: async () => await fetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: chatId, text }),
+        }),
+        catch: (error) => error,
+      });
 
-    await supabase
-      .from('messaging_channel_links')
-      .update({
-        external_user_id: getTelegramUserId(update),
-        username: getTelegramUsername(update),
-        display_name: getTelegramDisplayName(update),
-        last_seen_at: new Date().toISOString(),
-      })
-      .eq('channel', 'telegram')
-      .eq('status', 'active')
-      .eq('external_thread_id', chatId);
-
-    return {
-      organization_id: link.organization_id,
-      user_id: link.user_id,
-    };
+      if (!response.ok) {
+        const data = yield* Effect.promise(async () => await response.json().catch(() => null) as { description?: string } | null);
+        yield* Effect.fail(new Error(data?.description ?? response.statusText));
+      }
+    });
   }
 
   async sendTelegramText(chatId: string, text: string): Promise<void> {
-    if (!config.TELEGRAM_BOT_TOKEN) {
-      throw new Error('TELEGRAM_BOT_TOKEN_PROJECT_GOOGLE_ASSITANT is not configured');
-    }
-
-    const response = await fetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text }),
-    });
-
-    if (!response.ok) {
-      const data = await response.json().catch(() => null) as { description?: string } | null;
-      throw new Error(data?.description ?? response.statusText);
-    }
+    return Effect.runPromise(this.sendTelegramTextEffect(chatId, text));
   }
 
-  private async ensureTelegramWebhookReady(): Promise<void> {
+  private ensureTelegramWebhookReadyEffect(): Effect.Effect<void, unknown> {
     if (!config.TELEGRAM_BOT_TOKEN) {
-      throw new Error('TELEGRAM_BOT_TOKEN_PROJECT_GOOGLE_ASSITANT is not configured');
+      return Effect.fail(new Error('TELEGRAM_BOT_TOKEN_PROJECT_GOOGLE_ASSITANT is not configured'));
     }
 
     if (!config.TELEGRAM_WEBHOOK_SECRET) {
-      throw new Error('TELEGRAM_WEBHOOK_SECRET_PROJECT_GOOGLE_ASSITANT is not configured');
+      return Effect.fail(new Error('TELEGRAM_WEBHOOK_SECRET_PROJECT_GOOGLE_ASSITANT is not configured'));
     }
 
-    if (config.TELEGRAM_WEBHOOK_URL) {
-      await this.callTelegramApi<boolean>('setWebhook', {
-        url: config.TELEGRAM_WEBHOOK_URL,
-        secret_token: config.TELEGRAM_WEBHOOK_SECRET,
-        allowed_updates: ['message', 'edited_message', 'callback_query'],
-      });
-      return;
-    }
+    return Effect.gen(this, function* () {
+      if (config.TELEGRAM_WEBHOOK_URL) {
+        yield* this.callTelegramApiEffect<boolean>('setWebhook', {
+          url: config.TELEGRAM_WEBHOOK_URL,
+          secret_token: config.TELEGRAM_WEBHOOK_SECRET,
+          allowed_updates: ['message', 'edited_message', 'callback_query'],
+        });
+        return;
+      }
 
-    const info = await this.callTelegramApi<TelegramWebhookInfo>('getWebhookInfo');
-    if (!info.url) {
-      throw new Error('Telegram webhook is not configured. Set TELEGRAM_WEBHOOK_URL_PROJECT_GOOGLE_ASSITANT to your public https://.../webhooks/telegram URL, or run Telegram setWebhook manually with secret_token matching TELEGRAM_WEBHOOK_SECRET_PROJECT_GOOGLE_ASSITANT.');
-    }
+      const info = yield* this.callTelegramApiEffect<TelegramWebhookInfo>('getWebhookInfo');
+      if (!info.url) {
+        return yield* Effect.fail(new Error('Telegram webhook is not configured. Set TELEGRAM_WEBHOOK_URL_PROJECT_GOOGLE_ASSITANT to your public https://.../webhooks/telegram URL, or run Telegram setWebhook manually with secret_token matching TELEGRAM_WEBHOOK_SECRET_PROJECT_GOOGLE_ASSITANT.'));
+      }
 
-    if (normalizeWebhookUrl(info.url).endsWith('/webhooks/telegram')) {
-      return;
-    }
+      const webhookUrl = info.url;
+      if (normalizeWebhookUrl(webhookUrl).endsWith('/webhooks/telegram')) {
+        return;
+      }
 
-    throw new Error(`Telegram webhook points to ${info.url}, not this agent's /webhooks/telegram route. Set TELEGRAM_WEBHOOK_URL_PROJECT_GOOGLE_ASSITANT or update Telegram setWebhook.`);
+      yield* Effect.fail(new Error(`Telegram webhook points to ${webhookUrl}, not this agent's /webhooks/telegram route. Set TELEGRAM_WEBHOOK_URL_PROJECT_GOOGLE_ASSITANT or update Telegram setWebhook.`));
+    });
   }
 
-  private async callTelegramApi<T>(method: string, body?: Record<string, unknown>): Promise<T> {
-    const response = await fetch(telegramApiUrl(method), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: body ? JSON.stringify(body) : undefined,
+  private callTelegramApiEffect<T>(method: string, body?: Record<string, unknown>): Effect.Effect<T, unknown> {
+    return Effect.gen(function* () {
+      const response = yield* Effect.tryPromise({
+        try: async () => await fetch(telegramApiUrl(method), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: body ? JSON.stringify(body) : undefined,
+        }),
+        catch: (error) => error,
+      });
+
+      const payload = yield* Effect.promise(async () => await response.json().catch(() => null) as TelegramApiResponse<T> | null);
+      if (!response.ok) {
+        const description = payload && 'description' in payload ? payload.description : undefined;
+        return yield* Effect.fail(new Error(description ?? response.statusText));
+      }
+
+      if (!payload?.ok) {
+        const description = payload && 'description' in payload ? payload.description : undefined;
+        return yield* Effect.fail(new Error(description ?? response.statusText));
+      }
+
+      return payload.result;
     });
-
-    const payload = await response.json().catch(() => null) as TelegramApiResponse<T> | null;
-    if (!response.ok || !payload?.ok) {
-      const description = payload && 'description' in payload ? payload.description : undefined;
-      throw new Error(description ?? response.statusText);
-    }
-
-    return payload.result;
   }
 }
 

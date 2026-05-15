@@ -84,9 +84,14 @@ vi.mock('@ai-assistant/shared/utils/encryption.js', () => ({
   decrypt: vi.fn().mockReturnValue('decrypted_token'),
 }));
 
-vi.mock('./tokenService.js', () => ({
-  storeWorkspaceTokens: mockStoreWorkspaceTokens,
-}));
+vi.mock('./tokenService.js', async () => {
+  const { Effect } = await import('effect');
+  return {
+    storeWorkspaceTokens: mockStoreWorkspaceTokens,
+    storeWorkspaceTokensEffect: (...args: Parameters<typeof mockStoreWorkspaceTokens>) =>
+      Effect.promise(() => mockStoreWorkspaceTokens(...args)),
+  };
+});
 
 vi.mock('./googleAuth.js', () => ({
   googleAuthService: { refreshAccessToken: mockRefreshAccessToken },

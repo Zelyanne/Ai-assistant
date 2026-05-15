@@ -1,7 +1,7 @@
 import { supabase } from './supabase.js';
 import { encrypt } from '@ai-assistant/shared/utils/encryption.js';
 import { config } from '../config/index.js';
-
+import { Effect } from 'effect';
 
 const ENCRYPTION_SECRET = config.ENCRYPTION_SECRET;
 
@@ -16,16 +16,27 @@ export interface GoogleTokens {
   scopes?: string[];
 }
 
-export async function storeWorkspaceTokens(
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export function storeWorkspaceTokensEffect(
   organizationId: string,
   userId: string,
   provider: string,
   tokens: GoogleTokens
-): Promise<{ success: boolean; error?: string }> {
-  try {
-    const encryptedAccessToken = encrypt(tokens.access_token, ENCRYPTION_SECRET);
-    const encryptedRefreshToken = tokens.refresh_token 
-      ? encrypt(tokens.refresh_token, ENCRYPTION_SECRET) 
+): Effect.Effect<{ success: boolean; error?: string }, never> {
+  return Effect.gen(function* () {
+    const refreshToken = tokens.refresh_token;
+    const encryptedAccessToken = yield* Effect.try({
+      try: () => encrypt(tokens.access_token, ENCRYPTION_SECRET),
+      catch: (error) => error,
+    });
+    const encryptedRefreshToken = refreshToken
+      ? yield* Effect.try({
+        try: () => encrypt(refreshToken, ENCRYPTION_SECRET),
+        catch: (error) => error,
+      })
       : null;
 
     const encryptedCreds = {
@@ -35,18 +46,21 @@ export async function storeWorkspaceTokens(
       scopes: tokens.scopes ?? [],
     };
 
-    const { error } = await supabase
-      .from('workspace_integrations')
-      .upsert({
-        organization_id: organizationId,
-        user_id: userId,
-        provider,
-        encrypted_creds: encryptedCreds,
-        sync_status: 'idle',
-        updated_at: new Date().toISOString(),
-      }, {
-        onConflict: 'organization_id,provider'
-      });
+    const { error } = yield* Effect.tryPromise({
+      try: async () => await supabase
+        .from('workspace_integrations')
+        .upsert({
+          organization_id: organizationId,
+          user_id: userId,
+          provider,
+          encrypted_creds: encryptedCreds,
+          sync_status: 'idle',
+          updated_at: new Date().toISOString(),
+        }, {
+          onConflict: 'organization_id,provider'
+        }),
+      catch: (error) => error,
+    });
 
     if (error) {
       console.error('Error storing tokens:', error);
@@ -54,8 +68,19 @@ export async function storeWorkspaceTokens(
     }
 
     return { success: true };
-  } catch (err: any) {
-    console.error('Token storage failed:', err);
-    return { success: false, error: err.message };
-  }
+  }).pipe(
+    Effect.catchAll((error) => Effect.sync(() => {
+      console.error('Token storage failed:', error);
+      return { success: false, error: errorMessage(error) };
+    })),
+  );
+}
+
+export async function storeWorkspaceTokens(
+  organizationId: string,
+  userId: string,
+  provider: string,
+  tokens: GoogleTokens
+): Promise<{ success: boolean; error?: string }> {
+  return Effect.runPromise(storeWorkspaceTokensEffect(organizationId, userId, provider, tokens));
 }

@@ -26,6 +26,7 @@
     "@types/turndown": "^5.0.6",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
+    "effect": "^3.21.2",
     "express": "^5.2.1",
     "googleapis": "^170.0.0",
     "langchain": "^1.2.16",

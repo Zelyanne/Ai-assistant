@@ -1,5 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { Effect } from 'effect';
 import { supabase } from './supabase.js';
 import { decrypt } from '@ai-assistant/shared/utils/encryption.js';
 import { type CapabilityReadinessResult } from '@ai-assistant/shared';
@@ -10,7 +11,7 @@ import net from 'net';
 import { loadMcpTools } from '@langchain/mcp-adapters';
 import { StructuredTool } from '@langchain/core/tools';
 import { googleAuthService } from './googleAuth.js';
-import { storeWorkspaceTokens } from './tokenService.js';
+import { storeWorkspaceTokensEffect } from './tokenService.js';
 import { AuditLogger } from './AuditLogger.js';
 import {
   workerToolPolicyService,
@@ -313,156 +314,187 @@ export class MCPService {
     this.toolNameCache.delete(orgId);
   }
 
+  private getClientEffect(
+    orgId: string,
+    options: { forceReconnect?: boolean; forceRefresh?: boolean } = {},
+  ): Effect.Effect<Client, unknown> {
+    return Effect.gen(this, function* () {
+      yield* Effect.tryPromise({
+        try: () => this.ensureServerReady(),
+        catch: (error) => error,
+      });
+      const now = Date.now();
+    
+      // Check cache
+      const cached = this.clientCache.get(orgId);
+      const cachedStillValid = cached
+        && !options.forceReconnect
+        && cached.expiresAt !== null
+        && cached.expiresAt - now >= 300000;
+
+      if (cachedStillValid) {
+        cached.lastUsed = now;
+        return cached.client;
+      }
+
+      if (cached) {
+        yield* Effect.tryPromise({
+          try: () => this.resetOrgCache(orgId),
+          catch: (error) => error,
+        });
+      }
+
+      // 1. Get tokens for the organization
+      const integration = yield* this.getIntegrationEffect(orgId);
+      const error = integration ? null : { message: `Integration not found for organization ${orgId}` };
+
+      if (error || !integration) {
+        return yield* Effect.fail(new Error(`Integration not found for organization ${orgId}`));
+      }
+
+      if (!this.isIntegrationActive(integration)) {
+        return yield* Effect.fail(new Error(this.buildInactiveIntegrationMessage(integration)));
+      }
+
+      if (!integration.user_id) {
+        return yield* Effect.fail(new Error(`Integration user_id is missing for organization ${orgId}`));
+      }
+
+      const creds = integration.encrypted_creds as any;
+      yield* Effect.sync(() => console.log(`[MCP] Checking tokens for ${orgId}. Expiry: ${creds.expires_at}`));
+      let accessToken = yield* Effect.try({
+        try: () => decrypt(creds.access_token, ENCRYPTION_SECRET),
+        catch: (error) => error,
+      });
+      let expiresAt = creds.expires_at ? new Date(creds.expires_at).getTime() : 0;
+
+      // Check if token is expired or about to expire (within 5 mins) OR if expiry is missing
+      const isExpired = options.forceRefresh || !expiresAt || (expiresAt - now < 300000);
+    
+      if (isExpired) {
+        yield* Effect.sync(() => console.log(`[MCP] Access token for ${orgId} is ${!expiresAt ? 'missing expiry' : 'expired'}, attempting refresh...`));
+        if (creds.refresh_token) {
+          const refreshToken = yield* Effect.try({
+            try: () => decrypt(creds.refresh_token, ENCRYPTION_SECRET),
+            catch: (error) => error,
+          });
+          const refreshResult = yield* Effect.tryPromise({
+            try: () => googleAuthService.refreshAccessToken(refreshToken),
+            catch: (error) => error,
+          }).pipe(Effect.either);
+
+          if (refreshResult._tag === 'Right') {
+            const newTokens = refreshResult.right;
+            if (newTokens.access_token) {
+              accessToken = newTokens.access_token;
+
+              // Update DB
+              yield* storeWorkspaceTokensEffect(orgId, integration.user_id, 'google', {
+                access_token: accessToken,
+                refresh_token: refreshToken, // Keep the same refresh token
+                expires_at: newTokens.expiry_date ? new Date(newTokens.expiry_date).toISOString() : undefined,
+                scopes: this.getScopesFromTokenPayload(newTokens).length > 0
+                  ? this.getScopesFromTokenPayload(newTokens)
+                  : this.getStoredScopes(integration),
+              });
+              expiresAt = typeof newTokens.expiry_date === 'number' ? newTokens.expiry_date : expiresAt;
+              yield* Effect.sync(() => console.log(`Successfully refreshed access token for ${orgId}`));
+            }
+          } else {
+            const refreshErr = refreshResult.left;
+            yield* Effect.sync(() => console.error(`Failed to refresh token for ${orgId}:`, refreshErr));
+            // If it was strictly expired, we might want to throw here,
+            // but for now we'll let the 401 happen naturally to trigger retry logic elsewhere.
+          }
+        } else {
+          yield* Effect.sync(() => console.warn(`No refresh token found for ${orgId}, cannot refresh.`));
+        }
+      }
+
+      // 2. Setup MCP Client with Bearer Token in Streamable HTTP transport
+      // This is the native client for the server's 'streamable-http' transport.
+      // It correctly handles session ID handshakes and header propagation.
+      const transport = new StreamableHTTPClientTransport(new URL(MCP_SERVER_URL), {
+        requestInit: {
+          headers: new Headers({
+            'Authorization': `Bearer ${accessToken}`
+          })
+        }
+      });
+
+
+      const client = new Client(
+        { name: 'agent-controller', version: '1.0.0' },
+        { capabilities: {} }
+      );
+
+      // Bind error handler BEFORE connect
+      transport.onerror = async (err: any) => {
+        // Redact PII from error details before logging
+        const sanitizer = new PerimeterGuard();
+
+        const errorDetails = {
+          message: err.message,
+          code: err.code,
+          stack: sanitizer.redactPII(err.stack || ''),
+          timestamp: new Date().toISOString(),
+          // Surgical extraction and redaction of event data to avoid log bloat and PII leak
+          eventMessage: sanitizer.redactPII(String(err.event?.message || err.event?.data || (err as any).data || '')),
+          eventType: err.event?.type
+        };
+        console.error('[MCP Transport Error]', JSON.stringify(errorDetails, null, 2));
+
+        try {
+          await AuditLogger.flush(
+            orgId,
+            null,
+            'agent-controller',
+            'mcp_transport_error',
+            [AuditLogger.createStep('MCP Transport', `Error: ${err.message}`, {
+              input_summary: `Code: ${err.code}`,
+              output_summary: errorDetails.eventMessage
+            })],
+            []
+          );
+        } catch (logErr) {
+          console.error('Failed to log MCP transport error to DB:', logErr);
+        }
+
+        if (this.isAuthError(err)) {
+          await this.resetOrgCache(orgId);
+        }
+      };
+
+      const connectResult = yield* Effect.tryPromise({
+        try: () => client.connect(transport),
+        catch: (error) => error,
+      }).pipe(Effect.either);
+
+      if (connectResult._tag === 'Left') {
+        const err = connectResult.left as { message?: unknown };
+        yield* Effect.sync(() => console.error(`[MCP] Failed to connect to server for org ${orgId}:`, err.message));
+        // The transport.onerror will likely have caught more detail, but we throw here to fail the request
+        return yield* Effect.fail(connectResult.left);
+      }
+
+      this.clientCache.set(orgId, {
+        client,
+        lastUsed: now,
+        expiresAt: Number.isFinite(expiresAt) && expiresAt > 0 ? expiresAt : null,
+      });
+
+      return client;
+    });
+  }
+
   private async getClient(
     orgId: string,
     options: { forceReconnect?: boolean; forceRefresh?: boolean } = {},
   ): Promise<Client> {
-    await this.ensureServerReady();
-    const now = Date.now();
-    
-    // Check cache
-    const cached = this.clientCache.get(orgId);
-    const cachedStillValid = cached
-      && !options.forceReconnect
-      && cached.expiresAt !== null
-      && cached.expiresAt - now >= 300000;
-
-    if (cachedStillValid) {
-      cached.lastUsed = now;
-      return cached.client;
-    }
-
-    if (cached) {
-      await this.resetOrgCache(orgId);
-    }
-
-    // 1. Get tokens for the organization
-    const integration = await this.getIntegration(orgId);
-    const error = integration ? null : { message: `Integration not found for organization ${orgId}` };
-
-    if (error || !integration) {
-      throw new Error(`Integration not found for organization ${orgId}`);
-    }
-
-    if (!this.isIntegrationActive(integration)) {
-      throw new Error(this.buildInactiveIntegrationMessage(integration));
-    }
-
-    if (!integration.user_id) {
-        throw new Error(`Integration user_id is missing for organization ${orgId}`);
-    }
-
-    const creds = integration.encrypted_creds as any;
-    console.log(`[MCP] Checking tokens for ${orgId}. Expiry: ${creds.expires_at}`);
-    let accessToken = decrypt(creds.access_token, ENCRYPTION_SECRET);
-    let expiresAt = creds.expires_at ? new Date(creds.expires_at).getTime() : 0;
-
-    // Check if token is expired or about to expire (within 5 mins) OR if expiry is missing
-    const isExpired = options.forceRefresh || !expiresAt || (expiresAt - now < 300000);
-    
-    if (isExpired) {
-      console.log(`[MCP] Access token for ${orgId} is ${!expiresAt ? 'missing expiry' : 'expired'}, attempting refresh...`);
-      if (creds.refresh_token) {
-        const refreshToken = decrypt(creds.refresh_token, ENCRYPTION_SECRET);
-        try {
-          const newTokens = await googleAuthService.refreshAccessToken(refreshToken);
-          if (newTokens.access_token) {
-            accessToken = newTokens.access_token;
-            
-            // Update DB
-            await storeWorkspaceTokens(orgId, integration.user_id!, 'google', {
-              access_token: accessToken,
-              refresh_token: refreshToken, // Keep the same refresh token
-              expires_at: newTokens.expiry_date ? new Date(newTokens.expiry_date).toISOString() : undefined,
-              scopes: this.getScopesFromTokenPayload(newTokens).length > 0
-                ? this.getScopesFromTokenPayload(newTokens)
-                : this.getStoredScopes(integration),
-            });
-            expiresAt = typeof newTokens.expiry_date === 'number' ? newTokens.expiry_date : expiresAt;
-            console.log(`Successfully refreshed access token for ${orgId}`);
-          }
-        } catch (refreshErr) {
-          console.error(`Failed to refresh token for ${orgId}:`, refreshErr);
-          // If it was strictly expired, we might want to throw here, 
-          // but for now we'll let the 401 happen naturally to trigger retry logic elsewhere
-        }
-      } else {
-        console.warn(`No refresh token found for ${orgId}, cannot refresh.`);
-      }
-    }
-
-    // 2. Setup MCP Client with Bearer Token in Streamable HTTP transport
-    // This is the native client for the server's 'streamable-http' transport.
-    // It correctly handles session ID handshakes and header propagation.
-    const transport = new StreamableHTTPClientTransport(new URL(MCP_SERVER_URL), {
-      requestInit: {
-        headers: new Headers({
-          'Authorization': `Bearer ${accessToken}`
-        })
-      }
-    });
-
-
-    const client = new Client(
-      { name: 'agent-controller', version: '1.0.0' },
-      { capabilities: {} }
-    );
-
-    // Bind error handler BEFORE connect
-    transport.onerror = async (err: any) => {
-      // Redact PII from error details before logging
-      const sanitizer = new PerimeterGuard();
-      
-      const errorDetails = {
-        message: err.message,
-        code: err.code,
-        stack: sanitizer.redactPII(err.stack || ''),
-        timestamp: new Date().toISOString(),
-        // Surgical extraction and redaction of event data to avoid log bloat and PII leak
-        eventMessage: sanitizer.redactPII(String(err.event?.message || err.event?.data || (err as any).data || '')),
-        eventType: err.event?.type
-      };
-      console.error('[MCP Transport Error]', JSON.stringify(errorDetails, null, 2));
-      
-      try {
-        await AuditLogger.flush(
-          orgId,
-          null,
-          'agent-controller',
-          'mcp_transport_error',
-          [AuditLogger.createStep('MCP Transport', `Error: ${err.message}`, {
-            input_summary: `Code: ${err.code}`,
-            output_summary: errorDetails.eventMessage
-          })],
-          []
-        );
-      } catch (logErr) {
-        console.error('Failed to log MCP transport error to DB:', logErr);
-      }
-
-      if (this.isAuthError(err)) {
-        await this.resetOrgCache(orgId);
-      }
-    };
-
-    try {
-      await client.connect(transport);
-    } catch (err: any) {
-      console.error(`[MCP] Failed to connect to server for org ${orgId}:`, err.message);
-      // The transport.onerror will likely have caught more detail, but we throw here to fail the request
-      throw err;
-    }
-
-    this.clientCache.set(orgId, {
-      client,
-      lastUsed: now,
-      expiresAt: Number.isFinite(expiresAt) && expiresAt > 0 ? expiresAt : null,
-    });
-
-    return client;
+    return Effect.runPromise(this.getClientEffect(orgId, options));
   }
 
-  private async getIntegration(orgId: string): Promise<IntegrationRow> {
+  private getIntegrationEffect(orgId: string): Effect.Effect<IntegrationRow, unknown> {
     const query = supabase
       .from('workspace_integrations')
       .select('encrypted_creds, user_id, sync_status')
@@ -472,17 +504,26 @@ export class MCPService {
         single?: () => Promise<{ data: unknown; error: { message: string } | null }>;
       };
 
-    const { data, error } = query.maybeSingle
-      ? await query.maybeSingle()
-      : query.single
-        ? await query.single()
-        : { data: null, error: { message: 'Supabase query does not support single-row fetch.' } };
+    return Effect.gen(function* () {
+      const { data, error } = yield* Effect.tryPromise({
+        try: async () => query.maybeSingle
+          ? await query.maybeSingle()
+          : query.single
+            ? await query.single()
+            : { data: null, error: { message: 'Supabase query does not support single-row fetch.' } },
+        catch: (error) => error,
+      });
 
-    if (error) {
-      throw new Error(error.message);
-    }
+      if (error) {
+        return yield* Effect.fail(new Error(error.message));
+      }
 
-    return (data as IntegrationRow) ?? null;
+      return (data as IntegrationRow) ?? null;
+    });
+  }
+
+  private async getIntegration(orgId: string): Promise<IntegrationRow> {
+    return Effect.runPromise(this.getIntegrationEffect(orgId));
   }
 
   private isIntegrationActive(integration: IntegrationRow): boolean {
@@ -773,75 +814,104 @@ export class MCPService {
     args: any,
     allowRetry = true,
   ): Promise<any> {
-    let client: Client;
-    
-    try {
-      client = await this.getClient(orgId, {
+    return Effect.runPromise(this.executeToolEffect(orgId, toolName, args, allowRetry));
+  }
+
+  executeToolEffect(
+    orgId: string,
+    toolName: string,
+    args: any,
+    allowRetry = true,
+  ): Effect.Effect<any, unknown> {
+    return Effect.gen(this, function* () {
+      const clientResult = yield* this.getClientEffect(orgId, {
         forceReconnect: !allowRetry,
         forceRefresh: !allowRetry,
-      });
-    } catch (err: any) {
-      console.error(`Failed to get MCP client for ${orgId}:`, err);
-      await AuditLogger.flush(
-        orgId,
-        null,
-        'agent-controller',
-        `mcp_client_init_error: ${toolName}`,
-        [AuditLogger.createStep('MCP Client Init', `Failed to initialize client for ${toolName}`, {
-          input_summary: `Tool: ${toolName}`,
-          output_summary: err.message || 'Unknown error'
-        })],
-        []
-      );
-      throw err;
-    }
+      }).pipe(Effect.either);
 
-    try {
-      const result = await client.callTool({
-        name: toolName,
-        arguments: args,
-      });
+      if (clientResult._tag === 'Left') {
+        const err = clientResult.left as { message?: unknown };
+        yield* Effect.sync(() => console.error(`Failed to get MCP client for ${orgId}:`, err));
+        yield* Effect.tryPromise({
+          try: () => AuditLogger.flush(
+            orgId,
+            null,
+            'agent-controller',
+            `mcp_client_init_error: ${toolName}`,
+            [AuditLogger.createStep('MCP Client Init', `Failed to initialize client for ${toolName}`, {
+              input_summary: `Tool: ${toolName}`,
+              output_summary: typeof err.message === 'string' ? err.message : 'Unknown error'
+            })],
+            []
+          ),
+          catch: (error) => error,
+        });
+        return yield* Effect.fail(clientResult.left);
+      }
+
+      const client = clientResult.right;
+      const callResult = yield* Effect.tryPromise({
+        try: () => client.callTool({
+          name: toolName,
+          arguments: args,
+        }),
+        catch: (error) => error,
+      }).pipe(Effect.either);
+
+      if (callResult._tag === 'Left') {
+        const err = callResult.left as { message?: unknown };
+        yield* Effect.sync(() => console.error(`MCP tool execution failed: ${toolName}`, err));
+
+        const isAuthError = this.isAuthError(err);
+
+        yield* Effect.tryPromise({
+          try: () => this.resetOrgCache(orgId),
+          catch: (error) => error,
+        });
+
+        if (isAuthError && allowRetry) {
+          yield* Effect.sync(() => console.log(`Auth error detected for ${orgId}, retrying tool ${toolName} once with a fresh MCP client...`));
+          return yield* this.executeToolEffect(orgId, toolName, args, false);
+        }
+
+        yield* Effect.tryPromise({
+          try: () => AuditLogger.flush(
+            orgId,
+            null,
+            'agent-controller',
+            `mcp_tool_error: ${toolName}`,
+            [AuditLogger.createStep('MCP Tool Execution', `Tool execution failed: ${toolName}`, {
+              input_summary: JSON.stringify(args).substring(0, 500),
+              output_summary: typeof err.message === 'string' ? err.message : 'Unknown error'
+            })],
+            []
+          ),
+          catch: (error) => error,
+        });
+        return yield* Effect.fail(callResult.left);
+      }
+
+      const result = callResult.right;
 
       const redactedResult = this.redactResult(result);
 
-      await AuditLogger.flush(
-        orgId,
-        null,
-        'agent-controller',
-        `mcp_tool_call: ${toolName}`,
-        [AuditLogger.createStep('MCP Tool Execution', `Executed tool: ${toolName}`, {
-          input_summary: JSON.stringify(args).substring(0, 500),
-          output_summary: JSON.stringify(redactedResult).substring(0, 500)
-        })],
-        []
-      );
+      yield* Effect.tryPromise({
+        try: () => AuditLogger.flush(
+          orgId,
+          null,
+          'agent-controller',
+          `mcp_tool_call: ${toolName}`,
+          [AuditLogger.createStep('MCP Tool Execution', `Executed tool: ${toolName}`, {
+            input_summary: JSON.stringify(args).substring(0, 500),
+            output_summary: JSON.stringify(redactedResult).substring(0, 500)
+          })],
+          []
+        ),
+        catch: (error) => error,
+      });
 
       return redactedResult;
-    } catch (err: any) {
-      console.error(`MCP tool execution failed: ${toolName}`, err);
-
-      const isAuthError = this.isAuthError(err);
-
-      await this.resetOrgCache(orgId);
-
-      if (isAuthError && allowRetry) {
-        console.log(`Auth error detected for ${orgId}, retrying tool ${toolName} once with a fresh MCP client...`);
-        return this.executeTool(orgId, toolName, args, false);
-      }
-      
-      await AuditLogger.flush(
-        orgId,
-        null,
-        'agent-controller',
-        `mcp_tool_error: ${toolName}`,
-        [AuditLogger.createStep('MCP Tool Execution', `Tool execution failed: ${toolName}`, {
-          input_summary: JSON.stringify(args).substring(0, 500),
-          output_summary: err.message || 'Unknown error'
-        })],
-        []
-      );
-      throw err;
-    }
+    });
   }
 
   async cleanup(maxAgeMs: number = 3600000) {
