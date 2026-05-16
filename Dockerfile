@@ -53,5 +53,4 @@ FROM caddy:latest AS web
 COPY deploy/Caddyfile /etc/caddy/Caddyfile
 COPY --from=build /app/apps/web/dist /usr/share/caddy
 EXPOSE 80
-EXPOSE 443
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD wget -qO- http://127.0.0.1/health >/dev/null || exit 1

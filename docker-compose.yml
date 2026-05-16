@@ -56,8 +56,8 @@ services:
       TRIAGE_BATCH_INPUT_TOKENS_PROJECT_GOOGLE_ASSITANT:
       TRIAGE_BATCH_CONCURRENCY_PROJECT_GOOGLE_ASSITANT:
       TRIAGE_BATCH_OUTPUT_TOKENS_PROJECT_GOOGLE_ASSITANT:
-    ports:
-      - "3001:3001"
+    expose:
+      - "3001"
     restart: unless-stopped
 
   web:
@@ -69,10 +69,16 @@ services:
         VITE_SUPABASE_URL_PROJECT_GOOGLE_ASSITANT: ${VITE_SUPABASE_URL_PROJECT_GOOGLE_ASSITANT:-}
         VITE_SUPABASE_ANON_KEY_PROJECT_GOOGLE_ASSITANT: ${VITE_SUPABASE_ANON_KEY_PROJECT_GOOGLE_ASSITANT:-}
         VITE_AGENT_URL_PROJECT_GOOGLE_ASSITANT: ${VITE_AGENT_URL_PROJECT_GOOGLE_ASSITANT:-https://aizelyan.duckdns.org}
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+    networks:
+      default:
+      caddy:
+        aliases:
+          - ai-assistant-web
     depends_on:
       - agent
     restart: unless-stopped
+
+networks:
+  caddy:
+    external: true
+    name: lin-app-_lin-network

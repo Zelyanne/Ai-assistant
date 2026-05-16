@@ -9,7 +9,7 @@
 	file_server
 }
 
-aizelyan.duckdns.org {
+:80 {
 	handle /api* {
 		reverse_proxy agent:3001
 	}
