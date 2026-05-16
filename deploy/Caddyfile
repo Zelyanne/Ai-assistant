@@ -10,5 +10,9 @@
 }
 
 aizelyan.duckdns.org {
+	handle /webhooks/telegram* {
+		reverse_proxy agent:3001
+	}
+
 	import static_site
 }
