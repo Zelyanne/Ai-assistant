@@ -6,6 +6,7 @@ import Message from 'primevue/message';
 import Tag from 'primevue/tag';
 import { supabase } from '../services/supabase';
 import { useUserStore } from '../stores/user';
+import { agentApiUrl } from '../services/agentApi';
 
 const userStore = useUserStore();
 const loading = ref(false);
@@ -45,8 +46,7 @@ const handleConnect = async () => {
     const organizationId = userStore.profile?.organization_id;
     if (!organizationId) throw new Error('Organization ID not found in user profile');
 
-    const agentUrl = import.meta.env.VITE_AGENT_URL_PROJECT_GOOGLE_ASSITANT || 'http://localhost:3001';
-    const response = await fetch(`${agentUrl}/api/auth/google/url?organizationId=${organizationId}&userId=${user.id}`);
+    const response = await fetch(agentApiUrl(`/api/auth/google/url?organizationId=${organizationId}&userId=${user.id}`));
     const { url } = await response.json();
 
     if (url) {

@@ -1,4 +1,5 @@
 import { supabase } from '../services/supabase';
+import { agentApiUrl } from '../services/agentApi';
 
 export function useAuth() {
   const signInWithGoogle = async () => {
@@ -34,8 +35,7 @@ export function useAuth() {
       const userId = session.user.id;
       
       if (organizationId) {
-        const agentUrl = import.meta.env.VITE_AGENT_URL_PROJECT_GOOGLE_ASSITANT || 'http://localhost:3001';
-        await fetch(`${agentUrl}/api/tokens`, {
+        await fetch(agentApiUrl('/api/tokens'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

@@ -3,6 +3,7 @@ import { ref, onMounted, defineProps, defineEmits, watch } from 'vue';
 import Checkbox from 'primevue/checkbox';
 import Message from 'primevue/message';
 import ProgressSpinner from 'primevue/progressspinner';
+import { agentApiUrl } from '../services/agentApi';
 
 const props = defineProps<{
   organizationId: string;
@@ -20,8 +21,7 @@ const fetchLabels = async () => {
   loading.value = true;
   error.value = null;
   try {
-    const agentUrl = import.meta.env.VITE_AGENT_URL_PROJECT_GOOGLE_ASSITANT || 'http://localhost:3001';
-    const response = await fetch(`${agentUrl}/api/gmail/labels?organizationId=${props.organizationId}`);
+    const response = await fetch(agentApiUrl(`/api/gmail/labels?organizationId=${props.organizationId}`));
     
     if (!response.ok) {
         throw new Error('Failed to fetch labels');

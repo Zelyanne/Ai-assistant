@@ -24,7 +24,6 @@ import { createCurrentTimeTool } from '../../tools/timeDateTool.js';
 import { createSearchWebResearchTool } from '../../tools/researchTools.js';
 import { createWatchTopicTools } from '../../tools/watchTopicTools.js';
 import { createAutomationTools } from '../../tools/automationTools.js';
-import { researchAgent, type ResearchReport } from '../../agents/ResearchAgent.js';
 import type { AgentState } from '../graph.js';
 import { buildEscalationPayload } from '../escalation.js';
 import { createSpecialistAgentTools } from './agentToolRegistry.js';
@@ -534,77 +533,6 @@ function isGeneralAgentTimeoutMessage(message: string): boolean {
     || message.includes('General Agent timed out');
 }
 
-function isLikelyDirectResearchRequest(userRequest: string): boolean {
-  const lower = userRequest.toLowerCase();
-  const asksForResearch = /\b(news|actualit[eé]s?|recherche|chercher|cherche|web|internet|sources?|r[eé]cent(?:e|es|s)?|latest|current|202\d)\b/.test(lower)
-    || lower.includes('entendu parler')
-    || lower.includes('explique')
-    || lower.includes('expliquer')
-    || lower.includes('qu est-ce')
-    || lower.includes("qu'est-ce");
-  const asksWorkspaceAction = /\b(gmail|email|mail|agenda|calendar|drive|doc|docs|document|sheet|sheets|slide|slides|envoie|envoyer|send|draft|brouillon|cr[eé]e|create|modifie|update)\b/.test(lower);
-
-  return asksForResearch && !asksWorkspaceAction;
-}
-
-function detectResearchLanguage(userRequest: string): string | undefined {
-  const lower = userRequest.toLowerCase();
-  if (/[àâçéèêëîïôùûüÿœ]/i.test(userRequest)
-    || /\b(stp|s'il|salut|actualit[eé]s?|explique|peux|quoi|ovni|je|tu|les|des)\b/.test(lower)) {
-    return 'fr';
-  }
-
-  return undefined;
-}
-
-function formatResearchSourceList(report: ResearchReport): string[] {
-  return report.sources.slice(0, 5).map((source, index) => {
-    const title = source.title.replace(/\s+/g, ' ').trim();
-    return `${index + 1}. ${title}: ${source.url}`;
-  });
-}
-
-function formatDirectResearchResponse(userRequest: string, report: ResearchReport): string {
-  const lines: string[] = [];
-
-  if (/\bovni\b|\bufo\b/i.test(userRequest)) {
-    lines.push('Un OVNI est simplement un Objet Volant Non Identifie: un phenomene observe dans le ciel qu on ne sait pas encore identifier. Ca ne veut pas dire automatiquement extraterrestre; ca peut aussi etre un drone, un avion, un phenomene météo, un ballon, une erreur d observation, ou quelque chose qui merite une vraie enquete.');
-    lines.push('');
-  }
-
-  if (report.key_findings.length > 0) {
-    lines.push(`J ai trouve ${report.sources.length} source${report.sources.length === 1 ? '' : 's'} recentes. Points principaux:`);
-    for (const finding of report.key_findings.slice(0, 5)) {
-      lines.push(`- ${finding}`);
-    }
-  } else {
-    lines.push('J ai pu interroger la recherche web, mais aucune source exploitable n est remontee pour cette question.');
-  }
-
-  const sourceLines = formatResearchSourceList(report);
-  if (sourceLines.length > 0) {
-    lines.push('');
-    lines.push('Sources:');
-    lines.push(...sourceLines);
-  }
-
-  return lines.join('\n');
-}
-
-async function buildDirectResearchChatResponse(userRequest: string): Promise<string> {
-  try {
-    const report = await researchAgent.run({
-      query: userRequest,
-      language: detectResearchLanguage(userRequest),
-      safesearch: 1,
-    });
-
-    return formatDirectResearchResponse(userRequest, report);
-  } catch {
-    return 'Je n arrive pas a interroger la recherche web pour le moment. Reessaie dans quelques instants, ou pose-moi la question sans les actualites recentes et je te repondrai avec mes connaissances generales.';
-  }
-}
-
 async function resolvePausedTurnWithAgent(
   currentUserMessage: string,
   pendingTurn: PendingPausedTurn,
@@ -747,19 +675,6 @@ async function buildPlanFromUserInput(
   needsClarification: boolean;
   clarificationPrompt: string | null;
 }> {
-  if (isLikelyDirectResearchRequest(userRequest)) {
-    return {
-      scheduleResult: null,
-      watchTopicResult: null,
-      agentToolResults: [],
-      agentToolSummary: null,
-      chatResponse: await buildDirectResearchChatResponse(userRequest),
-      confidence: 1,
-      needsClarification: false,
-      clarificationPrompt: null,
-    };
-  }
-
   // Single agent run: tool-aware intent assessment + direct tool execution
   const langfuseHandler = tracingService.getHandler();
   const callbacks = langfuseHandler ? [langfuseHandler] : [];

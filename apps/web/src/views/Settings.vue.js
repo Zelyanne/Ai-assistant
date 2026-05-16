@@ -9,6 +9,7 @@ import WorkspaceIntegration from '../components/WorkspaceIntegration.vue';
 import SecurityPerimeterSettings from '../components/SecurityPerimeterSettings.vue';
 import GmailLabelSelector from '../components/GmailLabelSelector.vue';
 import ScheduleManager from '../components/schedules/ScheduleManager.vue';
+import { agentApiUrl } from '../services/agentApi';
 const SOCIAL_PROVIDERS = ['telegram', 'whatsapp'];
 const userStore = useUserStore();
 const toast = useToast();
@@ -94,8 +95,7 @@ async function connectTelegram() {
         if (!accessToken) {
             throw new Error('Sign in again before connecting Telegram.');
         }
-        const agentUrl = import.meta.env.VITE_AGENT_URL_PROJECT_GOOGLE_ASSITANT || 'http://localhost:3001';
-        const response = await fetch(`${agentUrl}/api/integrations/telegram/link-token`, {
+        const response = await fetch(agentApiUrl('/api/integrations/telegram/link-token'), {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${accessToken}`,

@@ -1418,26 +1418,16 @@ describe('Agent Controller Graph planner-worker flow', () => {
     );
   });
 
-  it('answers current web research requests directly without creating an execution run', async () => {
-    mockResearchRun.mockResolvedValueOnce({
-      summary: 'Research completed for OVNI using 2 sources.',
-      key_findings: [
-        '1. France Culture: Pourquoi les ovnis reviennent dans la politique americaine.',
-        '2. France 24: Les scientifiques rappellent que la recherche reste prudente.',
-      ],
-      sources: [
-        {
-          title: 'France Culture OVNI',
-          url: 'https://example.com/france-culture-ovni',
-          snippet: 'Pourquoi les ovnis reviennent dans la politique americaine.',
-        },
-        {
-          title: 'France 24 OVNI',
-          url: 'https://example.com/france24-ovni',
-          snippet: 'La recherche reste prudente.',
-        },
-      ],
-    });
+  it('routes current web research requests through the General Agent tool path', async () => {
+    mockChatMistralResponse.current = {
+      outcome: 'chat',
+      confidence: 1,
+      needs_clarification: false,
+      interpretation: 'Research question that should be handled by General Agent tools.',
+      summary: 'Je peux faire cette recherche via l outil de recherche web.',
+      reasoning: 'The General Agent decides whether to call search_web_research.',
+      chat_response: 'Je peux faire cette recherche via l outil de recherche web.',
+    };
 
     const conversationId = '223e4567-e89b-42d3-a456-426614174010';
     const correlationId = 'command-correlation-web-research';
@@ -1474,20 +1464,64 @@ describe('Agent Controller Graph planner-worker flow', () => {
     });
 
     const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+    const generalAgentCreateCall = createAgentMock.mock.calls.find(([arg]) => {
+      const config = arg as { responseFormat?: unknown; tools?: Array<{ name?: string }> };
+      return Boolean(config.responseFormat) && config.tools?.some((tool) => tool.name === 'search_web_research');
+    });
 
-    expect(createAgentMock).not.toHaveBeenCalled();
-    expect(mockResearchRun).toHaveBeenCalledWith(expect.objectContaining({
-      query: 'stp explique moi les actualites OVNI en 2026',
-      language: 'fr',
-      safesearch: 1,
-    }));
+    expect(generalAgentCreateCall).toBeDefined();
+    expect(mockResearchRun).not.toHaveBeenCalled();
     expect(result.execution_run).toBeUndefined();
     expect(result.task.result).toMatchObject({ outcome: 'chat_response' });
     expect(db.command_messages.get(assistantMessageId)).toEqual(expect.objectContaining({
       state: 'done',
-      content: expect.stringContaining('Un OVNI est simplement'),
+      content: 'Je peux faire cette recherche via l outil de recherche web.',
       source_task_id: task.id,
     }));
+  });
+
+  it('does not route explicit watch-topic requests through direct web research', async () => {
+    mockChatMistralResponse.current = {
+      outcome: 'watch_topic',
+      confidence: 1,
+      needs_clarification: false,
+      interpretation: 'Create a mail watch topic for current replies.',
+      summary: 'Watch topic created.',
+      reasoning: 'The user explicitly asked for a watch topic.',
+      watch_topic_result: {
+        outcome: 'created',
+        confirmation_message: 'Watch topic created: archives departementales de Guyane replies (Medium priority).',
+        topic: {
+          topic: 'archives departementales de Guyane replies',
+          priority: 'Medium',
+        },
+      },
+    };
+
+    const task = {
+      ...baseTask,
+      id: '123e4567-e89b-12d3-a456-426614174336',
+      topic: 'Command Center',
+      domain_action: 'assistant.command',
+      payload: {
+        command: 'stp ajoute un watch topic pour surveiller les actualites des archives departementales de Guyane',
+        channel: 'web',
+        source: 'dashboard-command-center',
+        user_initiated: true,
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+
+    expect(mockResearchRun).not.toHaveBeenCalled();
+    expect(createAgentMock).toHaveBeenCalled();
+    expect(result.execution_run).toBeUndefined();
+    expect(result.task.result).toMatchObject({
+      outcome: 'watch_topic_updated',
+      summary: 'Watch topic created: archives departementales de Guyane replies (Medium priority).',
+    });
   });
 
   it('persists completed Command Center chat replies back to command messages', async () => {
