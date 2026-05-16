@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1.7
 
-ARG NODE_VERSION=20-bookworm-slim
+ARG NODE_VERSION=24.14.1-bookworm-slim
+
+FROM ghcr.io/astral-sh/uv:latest AS uv
 
 FROM node:${NODE_VERSION} AS base
 ENV PNPM_HOME=/pnpm
@@ -36,6 +38,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm install --filter @a
 FROM base AS agent
 ENV NODE_ENV=production
 ENV PORT=3001
+COPY --from=uv /uv /uvx /usr/local/bin/
 COPY --from=agent-deps /app/node_modules ./node_modules
 COPY --from=agent-deps /app/apps/agent/node_modules ./apps/agent/node_modules
 COPY --from=agent-deps /app/packages/shared/node_modules ./packages/shared/node_modules
