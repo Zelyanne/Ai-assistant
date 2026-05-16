@@ -10,6 +10,10 @@
 }
 
 aizelyan.duckdns.org {
+	handle /api* {
+		reverse_proxy agent:3001
+	}
+
 	handle /webhooks/telegram* {
 		reverse_proxy agent:3001
 	}
