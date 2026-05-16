@@ -24,7 +24,9 @@ services:
         VITE_SUPABASE_ANON_KEY_PROJECT_GOOGLE_ASSITANT: ${VITE_SUPABASE_ANON_KEY_PROJECT_GOOGLE_ASSITANT:-}
         VITE_AGENT_URL_PROJECT_GOOGLE_ASSITANT: ${VITE_AGENT_URL_PROJECT_GOOGLE_ASSITANT:-http://localhost:3001}
     ports:
-      - "8080:80"
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
     depends_on:
       - agent
     restart: unless-stopped

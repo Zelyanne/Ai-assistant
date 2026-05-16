@@ -1,0 +1,14 @@
+(static_site) {
+	root * /usr/share/caddy
+
+	handle /health {
+		respond "ok" 200
+	}
+
+	try_files {path} {path}/ /index.html
+	file_server
+}
+
+aizelyan.duckdns.org {
+	import static_site
+}
