@@ -13,7 +13,9 @@ export function resolveAgentBaseUrl(configured, pageProtocol, pageOrigin) {
     if (pageProtocol === 'https:'
         && configuredUrl.protocol === 'http:'
         && !(isLocalAgent && isLocalPage)) {
-        return pageOrigin;
+        const fallbackUrl = new URL(pageOrigin);
+        fallbackUrl.pathname = configuredUrl.pathname;
+        return trimTrailingSlash(fallbackUrl.toString());
     }
     return trimTrailingSlash(configuredUrl.toString());
 }

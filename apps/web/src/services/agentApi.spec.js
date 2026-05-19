@@ -7,6 +7,9 @@ describe('agentApi', () => {
     it('falls back to same-origin HTTPS when configured agent URL is insecure', async () => {
         expect(resolveAgentBaseUrl('http://46.62.218.169:3001', 'https:', 'https://aizelyan.duckdns.org')).toBe('https://aizelyan.duckdns.org');
     });
+    it('preserves configured subpaths when falling back to same-origin HTTPS', async () => {
+        expect(resolveAgentBaseUrl('http://46.62.218.169:3001/agent/', 'https:', 'https://aizelyan.duckdns.org')).toBe('https://aizelyan.duckdns.org/agent');
+    });
     it('does not keep localhost when the page is deployed over HTTPS', async () => {
         expect(resolveAgentBaseUrl('http://localhost:3001', 'https:', 'https://aizelyan.duckdns.org')).toBe('https://aizelyan.duckdns.org');
     });
