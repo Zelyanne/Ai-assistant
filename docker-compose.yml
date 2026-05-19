@@ -58,6 +58,11 @@ services:
       TRIAGE_BATCH_OUTPUT_TOKENS_PROJECT_GOOGLE_ASSITANT:
     expose:
       - "3001"
+    networks:
+      default:
+      caddy:
+        aliases:
+          - ai-assistant-agent
     restart: unless-stopped
 
   web:
