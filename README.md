@@ -51,10 +51,11 @@ Default exposed ports:
 - Web dashboard: `http://<server-ip>:8080`
 - Agent API and webhooks: `http://<server-ip>:3001`
 
-Set `VITE_AGENT_URL_PROJECT_GOOGLE_ASSITANT` in `apps/web/.env` to the public URL that browsers should use for the agent, for example `https://api.example.com` or `http://<server-ip>:3001`. Vite embeds this value at image build time, so rebuild the `web` image after changing it.
+Set `VITE_AGENT_URL_PROJECT_GOOGLE_ASSITANT` in `apps/web/.env` to the public URL that browsers should use for the agent, for example `https://api.example.com`, `https://your-domain.example/agent`, or `http://<server-ip>:3001`. Vite embeds this value at image build time, so rebuild the `web` image after changing it.
 
 For reverse-proxy deployments, route these public paths to the agent service:
 
+- `/agent/*` (strip `/agent` before proxying)
 - `/api/*`
 - `/webhooks/telegram`
 - `/webhooks/whatsapp`
