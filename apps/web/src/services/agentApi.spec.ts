@@ -27,12 +27,12 @@ describe('agentApi', () => {
     )).toBe('https://aizelyan.duckdns.org/agent');
   });
 
-  it('does not keep localhost when the page is deployed over HTTPS', async () => {
+  it('uses the same-origin agent subpath when the default local URL reaches production HTTPS', async () => {
     expect(resolveAgentBaseUrl(
       'http://localhost:3001',
       'https:',
       'https://aizelyan.duckdns.org',
-    )).toBe('https://aizelyan.duckdns.org');
+    )).toBe('https://aizelyan.duckdns.org/agent');
   });
 
   it('keeps explicitly configured HTTPS agent URLs', async () => {

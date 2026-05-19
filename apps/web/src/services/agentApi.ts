@@ -20,7 +20,7 @@ export function resolveAgentBaseUrl(configured: string, pageProtocol: string, pa
     && !(isLocalAgent && isLocalPage)
   ) {
     const fallbackUrl = new URL(pageOrigin);
-    fallbackUrl.pathname = configuredUrl.pathname;
+    fallbackUrl.pathname = configuredUrl.pathname === '/' && isLocalAgent ? '/agent' : configuredUrl.pathname;
     return trimTrailingSlash(fallbackUrl.toString());
   }
 
