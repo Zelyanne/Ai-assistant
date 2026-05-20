@@ -54,6 +54,7 @@ const {
   mockAppendShortTermMemoryEntry,
   mockUpdateTaskState,
   mockChannelEnqueueOutbound,
+  mockChannelPersistDeliveryEvent,
 } = vi.hoisted(() => ({
   mockCheckCapabilityReadiness: vi.fn(),
   mockResolveToolName: vi.fn(),
@@ -66,6 +67,7 @@ const {
   mockAppendShortTermMemoryEntry: vi.fn(),
   mockUpdateTaskState: vi.fn(),
   mockChannelEnqueueOutbound: vi.fn(),
+  mockChannelPersistDeliveryEvent: vi.fn(),
 }));
 
 vi.mock('langchain', () => ({
@@ -159,6 +161,7 @@ vi.mock('../services/MemoryService.js', () => ({
 vi.mock('../services/channelRouter.js', () => ({
   channelRouter: {
     enqueueOutbound: mockChannelEnqueueOutbound,
+    persistDeliveryEvent: mockChannelPersistDeliveryEvent,
   },
 }));
 
@@ -537,6 +540,7 @@ describe('Agent Controller Graph planner-worker flow', () => {
       '# Short-Term Memory\n\n- Current draft\n',
     );
     mockAppendShortTermMemoryEntry.mockResolvedValue('/memory/org/user/short-term.md');
+    mockChannelPersistDeliveryEvent.mockResolvedValue(null);
     mockUpdateTaskState.mockImplementation(async (_orgId, _userId, taskId, state) => ({
       task_id: taskId,
       ...state,
@@ -1414,8 +1418,47 @@ describe('Agent Controller Graph planner-worker flow', () => {
         channel: 'telegram',
         thread_id: 'tg-chat-hello',
         message_text: 'Salut ! Ça va bien, merci. Et toi ?',
+        channel_metadata: expect.objectContaining({
+          generated_by: 'agent_finalize',
+          reply_to_task_id: task.id,
+          reply_to_domain_action: 'assistant.command',
+          reply_to_user_initiated: true,
+        }),
       }),
     );
+  });
+
+  it('bypasses restricted-topic perimeter for trusted user-facing channel replies', async () => {
+    vi.mocked(AgencyService.getTierForTopic).mockResolvedValueOnce('Restricted');
+    const replyToTaskId = '123e4567-e89b-12d3-a456-426614174444';
+    const task = {
+      ...baseTask,
+      id: '123e4567-e89b-12d3-a456-426614174445',
+      domain_action: 'channel.send',
+      payload: {
+        channel: 'web',
+        thread_id: 'web-thread-reply',
+        external_message_id: `reply-${replyToTaskId}`,
+        message_text: 'Salut ! Je suis ton assistant.',
+        channel_metadata: {
+          generated_by: 'agent_finalize',
+          reply_to_task_id: replyToTaskId,
+          reply_to_domain_action: 'assistant.command',
+          reply_to_user_initiated: true,
+        },
+      },
+    };
+
+    db.tasks.set(task.id, clone(task));
+
+    const result = await graph.invoke({ task } as Parameters<typeof graph.invoke>[0]) as any;
+    const persistedTask = db.tasks.get(task.id);
+    const persistedResult = persistedTask?.result as Record<string, unknown> | undefined;
+
+    expect(AgencyService.getTierForTopic).not.toHaveBeenCalled();
+    expect(result.result.delivery_state).toBe('sent');
+    expect(persistedTask?.status).toBe('done');
+    expect(persistedResult?.delivery_state).toBe('sent');
   });
 
   it('routes current web research requests through the General Agent tool path', async () => {

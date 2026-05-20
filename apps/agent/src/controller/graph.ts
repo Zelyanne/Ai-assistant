@@ -225,6 +225,35 @@ function getUserInitiatedCommandChannel(task: Task): UserInitiatedChannel | null
   return null;
 }
 
+function getTrustedOutboundReplyChannel(task: Task): UserInitiatedChannel | null {
+  if (task.domain_action !== "channel.send") {
+    return null;
+  }
+
+  const payload = asRecord(task.payload);
+  const channel = payload.channel;
+  if (channel !== "web" && channel !== "telegram" && channel !== "whatsapp") {
+    return null;
+  }
+
+  const metadata = asRecord(payload.channel_metadata);
+  const replyToTaskId = asNonEmptyString(metadata.reply_to_task_id);
+  const externalMessageId = asNonEmptyString(payload.external_message_id);
+  const threadId = asNonEmptyString(payload.thread_id);
+
+  if (
+    metadata.generated_by !== "agent_finalize" ||
+    metadata.reply_to_user_initiated !== true ||
+    !replyToTaskId ||
+    externalMessageId !== `reply-${replyToTaskId}` ||
+    !threadId
+  ) {
+    return null;
+  }
+
+  return channel;
+}
+
 function isUserInitiatedConversationTask(task: Task): boolean {
   const payload = asRecord(task.payload);
   const channel = payload.channel;
@@ -694,18 +723,23 @@ async function checkPerimeter(state: AgentState): Promise<Partial<AgentState>> {
   const task = state.task;
   const topic = task.topic || "General";
   const userInitiatedChannel = getUserInitiatedCommandChannel(task);
+  const trustedOutboundReplyChannel = getTrustedOutboundReplyChannel(task);
+  const perimeterBypassChannel = userInitiatedChannel ?? trustedOutboundReplyChannel;
 
   console.log(`[Graph][${task.id}] Checking perimeter for topic: ${topic}...`);
 
-  if (userInitiatedChannel) {
+  if (perimeterBypassChannel) {
     const channelContext = extractChannelContext(task.payload);
     const channelSummary = channelContext.channel
       ? `, Channel: ${channelContext.channel}, ExternalMessageId: ${channelContext.externalMessageId ?? "n/a"}`
       : "";
+    const bypassSummary = userInitiatedChannel
+      ? `trusted user-initiated ${userInitiatedChannel} command`
+      : `trusted ${trustedOutboundReplyChannel} reply`;
 
     const step = AuditLogger.createStep(
       "Perimeter Check",
-      `Perimeter tier handling bypassed for trusted user-initiated ${userInitiatedChannel} command`,
+      `Perimeter tier handling bypassed for ${bypassSummary}`,
       {
         confidence_score: 1,
         confidence_threshold: CONFIDENCE_THRESHOLD,
@@ -1928,7 +1962,12 @@ async function finalizeTask(
               external_message_id: replyExternalMessageId,
               thread_id: threadId,
               message_text: messageText,
-              channel_metadata: {},
+              channel_metadata: {
+                generated_by: "agent_finalize",
+                reply_to_task_id: state.task.id,
+                reply_to_domain_action: state.task.domain_action,
+                reply_to_user_initiated: true,
+              },
               correlation_id: responseChannel.correlationId,
             });
           }
